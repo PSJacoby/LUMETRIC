@@ -1,0 +1,1030 @@
+import javax.swing.*;
+import javax.swing.table.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.*;
+import java.io.*;
+import java.util.prefs.Preferences;
+
+// Global configuration storage
+class MicroscopeConfig {
+    Map pinToChannel = new HashMap();
+    String cameraConfigGroup = "Hamamatsu";
+    String cameraSnapConfig = "Snapping_and_Live";
+    String cameraTriggerConfig = "GlobalResetLevelTriggerArduinoMode";
+    String spectralConfigGroup = "SpectrAmazing";
+    String spectralDefaultConfig = "BrightLight";
+    String serialPort = "COM4";
+    String configFilePath = "";
+    
+    // Load configuration from file
+    boolean loadFromFile(String filePath) {
+        try {
+            pinToChannel.clear();
+            BufferedReader reader = new BufferedReader(new FileReader(filePath));
+            String line;
+            
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                // Skip comments and empty lines
+                if (line.startsWith("#") || line.isEmpty()) {
+                    continue;
+                }
+                
+                // Parse key = value
+                if (line.contains("=")) {
+                    String[] parts = line.split("=", 2);
+                    String key = parts[0].trim();
+                    String value = parts[1].trim();
+                    
+                    if (key.startsWith("PIN_")) {
+                        try {
+                            int pinNum = Integer.parseInt(key.substring(4));
+                            pinToChannel.put(pinNum, value);
+                        } catch (NumberFormatException e) {
+                            print("Warning: Invalid pin number in line: " + line);
+                        }
+                    } else if (key.equals("CAMERA_CONFIG_GROUP")) {
+                        cameraConfigGroup = value;
+                    } else if (key.equals("CAMERA_SNAP_CONFIG")) {
+                        cameraSnapConfig = value;
+                    } else if (key.equals("CAMERA_TRIGGER_CONFIG")) {
+                        cameraTriggerConfig = value;
+                    } else if (key.equals("SPECTRAL_CONFIG_GROUP")) {
+                        spectralConfigGroup = value;
+                    } else if (key.equals("SPECTRAL_DEFAULT_CONFIG")) {
+                        spectralDefaultConfig = value;
+                    } else if (key.equals("SERIAL_PORT")) {
+                        serialPort = value;
+                    }
+                }
+            }
+            reader.close();
+            configFilePath = filePath;
+            print("Configuration loaded from: " + filePath);
+            return true;
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(null, "Error loading config file: " + e.getMessage(), 
+                                          "Config Error", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+    }
+    
+    // Get list of available channels (excluding Camera on PIN_1)
+    List getAvailableChannels() {
+        List channels = new ArrayList();
+        for (Map.Entry entry : pinToChannel.entrySet()) {
+            int pin = (Integer)entry.getKey();
+            String channel = (String)entry.getValue();
+            if (pin > 1) { // Skip PIN_1 (Camera)
+                channels.add(channel);
+            }
+        }
+        return channels;
+    }
+    
+    // Get pin number for a channel name
+    int getPinForChannel(String channelName) {
+        for (Map.Entry entry : pinToChannel.entrySet()) {
+            if (((String)entry.getValue()).equals(channelName)) {
+                return (Integer)entry.getKey();
+            }
+        }
+        return -1;
+    }
+}
+
+// Simple FileFilter for config files
+class ConfigFileFilter extends javax.swing.filechooser.FileFilter {
+    public boolean accept(File f) {
+        return f.isDirectory() || f.getName().toLowerCase().endsWith(".txt");
+    }
+    public String getDescription() {
+        return "Configuration Files (*.txt)";
+    }
+}
+
+// Global config instance
+config = new MicroscopeConfig();
+
+// Preferences for remembering last config
+prefs = Preferences.userNodeForPackage(MicroscopeConfig.class);
+
+// Table Model for the acquisition sequence
+class AcquisitionTableModel extends DefaultTableModel {
+    
+    String[] columnNames = {"Channel", "Exposure [ms]", "Frame Rate [ms]", 
+                            "Frames", "Loop Goto", "Loop Times", "Constant Illum", "Loop Switch Goto"};
+    Set userModifiedLoopGoto = new HashSet(); // Track which rows have user-modified Loop Goto
+    
+    public AcquisitionTableModel() {
+        super();
+        setColumnIdentifiers(columnNames);
+        // Add one default row with upper limits as defaults
+        addRow(new Object[]{"", "250", "10000", "10000", "1", "", "", ""});
+    }
+    
+    public int getColumnCount() {
+        return columnNames.length;
+    }
+    
+    public String getColumnName(int col) {
+        return columnNames[col];
+    }
+    
+    public Class getColumnClass(int col) {
+        return String.class;
+    }
+    
+    public boolean isCellEditable(int row, int col) {
+        return true;
+    }
+    
+    public void setValueAt(Object value, int row, int col) {
+        // Track if user manually edits Loop Goto column (col 4)
+        if (col == 4) {
+            String oldValue = (String)getValueAt(row, col);
+            String newValue = value.toString();
+            // If value changed and it's not empty, mark as user-modified
+            if (!newValue.equals(oldValue) && !newValue.isEmpty()) {
+                userModifiedLoopGoto.add(row);
+            }
+        }
+        
+        // Validate and clamp numeric fields
+        Object correctedValue = value;
+        if (col == 1) { // Exposure [ms] - limit 250
+            correctedValue = clampValue(value.toString(), 0, 250);
+        } else if (col == 2) { // Frame Rate [ms] - limit 10000
+            correctedValue = clampValue(value.toString(), 0, 10000);
+        } else if (col == 3) { // Frames - limit 10000
+            correctedValue = clampValue(value.toString(), 0, 10000);
+        } else if (col == 5) { // Loop Times - limit 10000
+            correctedValue = clampValue(value.toString(), 0, 10000);
+        }
+        
+        super.setValueAt(correctedValue, row, col);
+        
+        // If Channel column (col 0) changed, update Constant Illum (col 6)
+        if (col == 0) {
+            updateConstantIllumForRow(row);
+        }
+    }
+    
+    String clampValue(String valueStr, int min, int max) {
+        if (valueStr == null || valueStr.trim().isEmpty()) {
+            return valueStr;
+        }
+        try {
+            int val = Integer.parseInt(valueStr.trim());
+            if (val < min) return String.valueOf(min);
+            if (val > max) return String.valueOf(max);
+            return String.valueOf(val);
+        } catch (NumberFormatException e) {
+            // Return max value if invalid number
+            return String.valueOf(max);
+        }
+    }
+    
+    void updateConstantIllumForRow(int row) {
+        String channels = (String)getValueAt(row, 0);
+        String constIllum = (String)getValueAt(row, 6);
+        
+        if (channels.isEmpty() || constIllum.isEmpty()) {
+            return;
+        }
+        
+        // Parse selected channels
+        String[] selectedChannels = channels.split(",");
+        Set channelSet = new HashSet();
+        for (String ch : selectedChannels) {
+            channelSet.add(ch.trim());
+        }
+        
+        // Parse constant illum and remove conflicts
+        String[] constChannels = constIllum.split(",");
+        StringBuilder newConstIllum = new StringBuilder();
+        for (String ch : constChannels) {
+            String trimmed = ch.trim();
+            if (!channelSet.contains(trimmed)) {
+                if (newConstIllum.length() > 0) newConstIllum.append(",");
+                newConstIllum.append(trimmed);
+            }
+        }
+        
+        // Update only if changed
+        String newValue = newConstIllum.toString();
+        if (!newValue.equals(constIllum)) {
+            super.setValueAt(newValue, row, 6);
+        }
+    }
+    
+    void updateLoopGotoDefaults() {
+        int rowCount = getRowCount();
+        for (int i = 0; i < rowCount; i++) {
+            // Only update if not user-modified
+            if (!userModifiedLoopGoto.contains(i)) {
+                int nextRow = i + 2; // Row numbers are 1-based, and we want next row
+                if (nextRow <= rowCount) {
+                    super.setValueAt(String.valueOf(nextRow), i, 4);
+                } else {
+                    super.setValueAt("1", i, 4); // Last row loops to first
+                }
+            }
+        }
+    }
+    
+    public void addRow(Object[] rowData) {
+        super.addRow(rowData);
+        updateLoopGotoDefaults();
+    }
+    
+    public void removeRow(int row) {
+        userModifiedLoopGoto.remove(row);
+        // Adjust indices for rows after the removed one
+        Set newModified = new HashSet();
+        for (Object obj : userModifiedLoopGoto) {
+            int idx = (Integer)obj;
+            if (idx > row) {
+                newModified.add(idx - 1);
+            } else {
+                newModified.add(idx);
+            }
+        }
+        userModifiedLoopGoto = newModified;
+        
+        super.removeRow(row);
+        updateLoopGotoDefaults();
+    }
+}
+
+// Custom cell editor for channel selection with popup dialog
+class ChannelEditor extends AbstractCellEditor implements TableCellEditor {
+    
+    String currentValue = "";
+    JTable parentTable;
+    int editingRow;
+    int editingColumn;
+    List excludedChannels = new ArrayList();
+    
+    public ChannelEditor() {
+    }
+    
+    public Component getTableCellEditorComponent(JTable table, Object value,
+                                                  boolean isSelected, int row, int column) {
+        parentTable = table;
+        editingRow = row;
+        editingColumn = column;
+        currentValue = value != null ? value.toString() : "";
+        
+        // Determine which channels to exclude (for Constant Illum column)
+        excludedChannels.clear();
+        if (column == 6) { // Constant Illum column
+            String channelCol = table.getValueAt(row, 0).toString();
+            if (!channelCol.isEmpty()) {
+                String[] parts = channelCol.split(",");
+                for (String ch : parts) {
+                    excludedChannels.add(ch.trim());
+                }
+            }
+        }
+        
+        // Show dialog immediately
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() {
+                showChannelDialog();
+            }
+        });
+        
+        // Return a dummy label (won't be displayed as dialog opens immediately)
+        JLabel label = new JLabel(currentValue.isEmpty() ? "none" : currentValue);
+        return label;
+    }
+    
+    void showChannelDialog() {
+        JDialog dialog = new JDialog((JFrame)SwingUtilities.getWindowAncestor(parentTable), 
+                                      "Select Channels", true);
+        dialog.setLayout(new BorderLayout(10, 10));
+        
+        // Create checkbox panel with grid layout
+        JPanel checkboxPanel = new JPanel(new GridLayout(0, 4, 5, 5));
+        checkboxPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        
+        List channels = config.getAvailableChannels();
+        List checkBoxes = new ArrayList();
+        
+        for (String channel : channels) {
+            // Skip excluded channels
+            if (excludedChannels.contains(channel)) {
+                continue;
+            }
+            
+            JCheckBox box = new JCheckBox(channel);
+            box.setSelected(currentValue.contains(channel));
+            checkBoxes.add(box);
+            checkboxPanel.add(box);
+        }
+        
+        // Buttons
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton okButton = new JButton("OK");
+        JButton cancelButton = new JButton("Cancel");
+        
+        okButton.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                StringBuilder sb = new StringBuilder();
+                for (Object obj : checkBoxes) {
+                    JCheckBox box = (JCheckBox)obj;
+                    if (box.isSelected()) {
+                        if (sb.length() > 0) sb.append(",");
+                        sb.append(box.getText());
+                    }
+                }
+                currentValue = sb.toString();
+                dialog.dispose();
+                fireEditingStopped();
+            }
+        });
+        
+        cancelButton.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                dialog.dispose();
+                fireEditingCanceled();
+            }
+        });
+        
+        buttonPanel.add(okButton);
+        buttonPanel.add(cancelButton);
+        
+        dialog.add(new JScrollPane(checkboxPanel), BorderLayout.CENTER);
+        dialog.add(buttonPanel, BorderLayout.SOUTH);
+        dialog.pack();
+        dialog.setLocationRelativeTo(parentTable);
+        dialog.setVisible(true);
+    }
+    
+    public Object getCellEditorValue() {
+        return currentValue;
+    }
+}
+
+// Custom cell renderer for channel display
+class ChannelRenderer extends DefaultTableCellRenderer {
+    public Component getTableCellRendererComponent(JTable table, Object value,
+                                                   boolean isSelected, boolean hasFocus,
+                                                   int row, int column) {
+        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+        
+        String val = value != null ? value.toString() : "";
+        if (val.isEmpty()) {
+            setText("none");
+            setForeground(Color.GRAY);
+        } else {
+            String[] channels = val.split(",");
+            if (channels.length <= 3) {
+                setText(val);
+            } else {
+                setText(channels[0] + ", " + channels[1] + " +" + (channels.length - 2) + " more");
+            }
+            setForeground(isSelected ? table.getSelectionForeground() : table.getForeground());
+        }
+        
+        return this;
+    }
+}
+
+// Custom cell renderer for Loop Times - shows infinity symbol when empty
+class LoopTimesRenderer extends DefaultTableCellRenderer {
+    public Component getTableCellRendererComponent(JTable table, Object value,
+                                                   boolean isSelected, boolean hasFocus,
+                                                   int row, int column) {
+        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+        
+        String val = value != null ? value.toString() : "";
+        if (val.isEmpty() || val.equals("0")) {
+            setText("∞");
+            setForeground(Color.GRAY);
+            setHorizontalAlignment(SwingConstants.CENTER);
+        } else {
+            setText(val);
+            setForeground(isSelected ? table.getSelectionForeground() : table.getForeground());
+            setHorizontalAlignment(SwingConstants.RIGHT);
+        }
+        
+        return this;
+    }
+}
+
+// Custom cell renderer for Loop Switch Goto - shows "none" when empty
+class LoopSwitchGotoRenderer extends DefaultTableCellRenderer {
+    public Component getTableCellRendererComponent(JTable table, Object value,
+                                                   boolean isSelected, boolean hasFocus,
+                                                   int row, int column) {
+        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+        
+        String val = value != null ? value.toString() : "";
+        if (val.isEmpty() || val.equalsIgnoreCase("none")) {
+            setText("none");
+            setForeground(Color.GRAY);
+            setHorizontalAlignment(SwingConstants.CENTER);
+        } else {
+            setText(val);
+            setForeground(isSelected ? table.getSelectionForeground() : table.getForeground());
+            setHorizontalAlignment(SwingConstants.CENTER);
+        }
+        
+        return this;
+    }
+}
+
+// Main GUI
+JFrame frame = new JFrame("LUMETRIC - Hardware control");
+frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+frame.setSize(1300, 600);
+
+// Create tabbed pane
+JTabbedPane tabbedPane = new JTabbedPane();
+
+// ===== SETTINGS TAB =====
+JPanel settingsPanel = new JPanel(new BorderLayout(10, 10));
+settingsPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+JPanel configInfoPanel = new JPanel(new GridLayout(0, 2, 5, 5));
+configInfoPanel.setBorder(BorderFactory.createTitledBorder("Current Configuration"));
+
+JLabel configFileLabel = new JLabel("Config File: Not loaded");
+JLabel cameraGroupLabel = new JLabel("Camera Group: -");
+JLabel spectralGroupLabel = new JLabel("Spectral Group: -");
+JLabel serialPortLabel = new JLabel("Serial Port: -");
+JTextArea channelsTextArea = new JTextArea(5, 40);
+channelsTextArea.setEditable(false);
+channelsTextArea.setBorder(BorderFactory.createTitledBorder("Available Channels"));
+
+JButton loadConfigButton = new JButton("Load Configuration File");
+JButton reloadConfigButton = new JButton("Reload Current Config");
+
+configInfoPanel.add(new JLabel("Config File:"));
+configInfoPanel.add(configFileLabel);
+configInfoPanel.add(new JLabel("Camera Group:"));
+configInfoPanel.add(cameraGroupLabel);
+configInfoPanel.add(new JLabel("Spectral Group:"));
+configInfoPanel.add(spectralGroupLabel);
+configInfoPanel.add(new JLabel("Serial Port:"));
+configInfoPanel.add(serialPortLabel);
+
+JPanel configButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+configButtonPanel.add(loadConfigButton);
+configButtonPanel.add(reloadConfigButton);
+
+settingsPanel.add(configInfoPanel, BorderLayout.NORTH);
+settingsPanel.add(new JScrollPane(channelsTextArea), BorderLayout.CENTER);
+settingsPanel.add(configButtonPanel, BorderLayout.SOUTH);
+
+// ===== SEQUENCE TAB =====
+sequencePanel = new JPanel(new BorderLayout());
+
+// Create the table
+tableModel = new AcquisitionTableModel();
+table = new JTable(tableModel);
+table.setRowHeight(30);
+
+// Make table headers darker and more visible
+JTableHeader header = table.getTableHeader();
+header.setFont(header.getFont().deriveFont(Font.BOLD, 12f));
+header.setForeground(Color.BLACK);
+
+// Set custom editor for channel column
+channelEditor = new ChannelEditor();
+table.getColumnModel().getColumn(0).setCellEditor(channelEditor);
+table.getColumnModel().getColumn(0).setCellRenderer(new ChannelRenderer());
+table.getColumnModel().getColumn(0).setPreferredWidth(150);
+
+// Set column widths for better visibility
+table.getColumnModel().getColumn(1).setPreferredWidth(100); // Exposure
+table.getColumnModel().getColumn(2).setPreferredWidth(110); // Frame Rate
+table.getColumnModel().getColumn(3).setPreferredWidth(80);  // Frames
+table.getColumnModel().getColumn(4).setPreferredWidth(90);  // Loop Goto
+table.getColumnModel().getColumn(5).setPreferredWidth(90);  // Loop Times
+table.getColumnModel().getColumn(6).setPreferredWidth(150); // Constant Illum
+table.getColumnModel().getColumn(7).setPreferredWidth(130); // Loop Switch Goto
+
+// Set custom renderer for Loop Times column (shows infinity symbol)
+table.getColumnModel().getColumn(5).setCellRenderer(new LoopTimesRenderer());
+
+// Set custom editor and renderer for constant illum column
+table.getColumnModel().getColumn(6).setCellEditor(new ChannelEditor());
+table.getColumnModel().getColumn(6).setCellRenderer(new ChannelRenderer());
+
+// Set custom renderer for Loop Switch Goto column (shows "none" when empty)
+table.getColumnModel().getColumn(7).setCellRenderer(new LoopSwitchGotoRenderer());
+
+// Add scrollpane for table
+JScrollPane scrollPane = new JScrollPane(table);
+sequencePanel.add(scrollPane, BorderLayout.CENTER);
+
+// Control panel
+JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+
+JButton addButton = new JButton("Add Row ✓");
+addButton.setBackground(Color.GREEN);
+addButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        int nextRow = tableModel.getRowCount() + 1;
+        tableModel.addRow(new Object[]{"", "250", "10000", "10000", String.valueOf(nextRow), "", "", ""});
+    }
+});
+
+JButton removeButton = new JButton("Remove Row");
+removeButton.setBackground(Color.ORANGE);
+removeButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        int selectedRow = table.getSelectedRow();
+        if (selectedRow != -1) {
+            tableModel.removeRow(selectedRow);
+        } else {
+            JOptionPane.showMessageDialog(frame, "Please select a row to remove.");
+        }
+    }
+});
+
+JButton validateButton = new JButton("Validate Sequence");
+validateButton.setBackground(Color.CYAN);
+validateButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        validateSequence();
+    }
+});
+
+JButton okButton = new JButton("OK - Start Acquisition");
+okButton.setBackground(Color.GREEN);
+okButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        if (validateSequence()) {
+            // Export table to CSV before starting acquisition
+            if (exportTableToCSV()) {
+                printSequenceData();
+                JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
+                    "Ready", JOptionPane.INFORMATION_MESSAGE);
+                // frame.dispose(); // Uncomment to close when OK
+            }
+        }
+    }
+});
+
+JButton cancelButton = new JButton("Cancel");
+cancelButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        frame.dispose();
+    }
+});
+
+controlPanel.add(addButton);
+controlPanel.add(removeButton);
+controlPanel.add(validateButton);
+controlPanel.add(okButton);
+controlPanel.add(cancelButton);
+
+// Data directory panel
+JPanel dataDirPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+JLabel dataDirLabel = new JLabel("Data Directory: ");
+dataDirLabel.setFont(dataDirLabel.getFont().deriveFont(Font.BOLD));
+JLabel dataDirPathLabel = new JLabel("Not selected");
+dataDirPathLabel.setForeground(Color.GRAY);
+
+JButton selectFolderButton = new JButton("Select Folder");
+selectFolderButton.setBackground(new Color(200, 220, 255)); // Light blue
+selectFolderButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        JFileChooser dirChooser = new JFileChooser();
+        dirChooser.setDialogTitle("Select Directory for Acquisition Data");
+        dirChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        
+        String lastSavePath = prefs.get("lastSavePath", "");
+        if (!lastSavePath.isEmpty() && new File(lastSavePath).exists()) {
+            dirChooser.setCurrentDirectory(new File(lastSavePath));
+        }
+        
+        int result = dirChooser.showDialog(frame, "Select Folder");
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File saveDir = dirChooser.getSelectedFile();
+            String newPath = saveDir.getAbsolutePath();
+            prefs.put("lastSavePath", newPath);
+            dataDirPathLabel.setText(newPath);
+            dataDirPathLabel.setForeground(Color.BLACK);
+        }
+    }
+});
+
+dataDirPanel.add(dataDirLabel);
+dataDirPanel.add(dataDirPathLabel);
+dataDirPanel.add(selectFolderButton);
+
+// Checkboxes for modes
+JPanel modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+JCheckBox fretMode = new JCheckBox("FRET Mode");
+JCheckBox livePics = new JCheckBox("Live Pictures");
+modePanel.add(fretMode);
+modePanel.add(livePics);
+
+// Layout sequence tab
+JPanel bottomPanel = new JPanel(new BorderLayout());
+JPanel topBottomPanel = new JPanel(new BorderLayout());
+topBottomPanel.add(dataDirPanel, BorderLayout.NORTH);
+topBottomPanel.add(modePanel, BorderLayout.SOUTH);
+bottomPanel.add(topBottomPanel, BorderLayout.NORTH);
+bottomPanel.add(controlPanel, BorderLayout.SOUTH);
+sequencePanel.add(bottomPanel, BorderLayout.SOUTH);
+
+// Add tabs
+tabbedPane.addTab("Settings", settingsPanel);
+tabbedPane.addTab("Acquisition Sequence", sequencePanel);
+
+// Set default tab to Acquisition Sequence
+tabbedPane.setSelectedIndex(1);
+
+// Layout
+frame.setLayout(new BorderLayout());
+frame.add(tabbedPane, BorderLayout.CENTER);
+
+// Function to update settings display
+void updateSettingsDisplay() {
+    if (config.configFilePath.isEmpty()) {
+        configFileLabel.setText("Not loaded");
+        cameraGroupLabel.setText("-");
+        spectralGroupLabel.setText("-");
+        serialPortLabel.setText("-");
+        channelsTextArea.setText("No configuration loaded.\nPlease load a configuration file.");
+    } else {
+        configFileLabel.setText(config.configFilePath);
+        cameraGroupLabel.setText(config.cameraConfigGroup);
+        spectralGroupLabel.setText(config.spectralConfigGroup);
+        serialPortLabel.setText(config.serialPort);
+        
+        StringBuilder channelText = new StringBuilder();
+        for (Map.Entry entry : config.pinToChannel.entrySet()) {
+            channelText.append("PIN_").append(entry.getKey())
+                      .append(" = ").append(entry.getValue()).append("\n");
+        }
+        channelsTextArea.setText(channelText.toString());
+    }
+}
+
+// Load config button action
+loadConfigButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Select Configuration File");
+        fileChooser.setFileFilter(new ConfigFileFilter());
+        
+        // Start in the script directory
+        String lastPath = prefs.get("lastConfigPath", "");
+        if (!lastPath.isEmpty()) {
+            fileChooser.setCurrentDirectory(new File(lastPath).getParentFile());
+        }
+        
+        int result = fileChooser.showOpenDialog(frame);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File selectedFile = fileChooser.getSelectedFile();
+            if (config.loadFromFile(selectedFile.getAbsolutePath())) {
+                // Save this path for next time
+                prefs.put("lastConfigPath", selectedFile.getAbsolutePath());
+                updateSettingsDisplay();
+                JOptionPane.showMessageDialog(frame, 
+                    "Configuration loaded successfully!\nChannels updated in Sequence tab.", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+    }
+});
+
+// Reload config button action
+reloadConfigButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        if (config.configFilePath.isEmpty()) {
+            JOptionPane.showMessageDialog(frame, 
+                "No configuration file loaded yet.", 
+                "Info", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            if (config.loadFromFile(config.configFilePath)) {
+                updateSettingsDisplay();
+                JOptionPane.showMessageDialog(frame, 
+                    "Configuration reloaded successfully!", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+    }
+});
+
+// Try to load last used config on startup
+String lastConfigPath = prefs.get("lastConfigPath", "");
+if (!lastConfigPath.isEmpty() && new File(lastConfigPath).exists()) {
+    config.loadFromFile(lastConfigPath);
+    updateSettingsDisplay();
+    print("Auto-loaded last configuration: " + lastConfigPath);
+}
+
+// Initialize data directory display
+String savedDataPath = prefs.get("lastSavePath", "");
+if (!savedDataPath.isEmpty() && new File(savedDataPath).exists()) {
+    dataDirPathLabel.setText(savedDataPath);
+    dataDirPathLabel.setForeground(Color.BLACK);
+}
+
+frame.setVisible(true);
+
+// Validation function
+boolean validateSequence() {
+    int rowCount = tableModel.getRowCount();
+    StringBuilder errors = new StringBuilder();
+    
+    for (int i = 0; i < rowCount; i++) {
+        // Note: Empty channels are allowed (e.g., for delay rows)
+        
+        // Validate numeric fields (should be auto-corrected, but double-check)
+        try {
+            String exposure = tableModel.getValueAt(i, 1).toString();
+            if (!exposure.isEmpty()) {
+                int exp = Integer.parseInt(exposure);
+                if (exp < 0 || exp > 250) {
+                    errors.append("Row " + (i+1) + ": Exposure must be 0-250 ms\n");
+                }
+            }
+        } catch (NumberFormatException e) {
+            errors.append("Row " + (i+1) + ": Invalid exposure value\n");
+        }
+        
+        try {
+            String frameRate = tableModel.getValueAt(i, 2).toString();
+            if (!frameRate.isEmpty()) {
+                int fr = Integer.parseInt(frameRate);
+                if (fr < 0 || fr > 10000) {
+                    errors.append("Row " + (i+1) + ": Frame rate must be 0-10000 ms\n");
+                }
+            }
+        } catch (NumberFormatException e) {
+            errors.append("Row " + (i+1) + ": Invalid frame rate value\n");
+        }
+        
+        try {
+            String frames = tableModel.getValueAt(i, 3).toString();
+            if (!frames.isEmpty()) {
+                int f = Integer.parseInt(frames);
+                if (f < 0 || f > 10000) {
+                    errors.append("Row " + (i+1) + ": Frames must be 0-10000\n");
+                }
+            }
+        } catch (NumberFormatException e) {
+            errors.append("Row " + (i+1) + ": Invalid frames value\n");
+        }
+        
+        // Validate Loop Times
+        try {
+            String loopTimes = tableModel.getValueAt(i, 5).toString();
+            if (!loopTimes.isEmpty()) {
+                int lt = Integer.parseInt(loopTimes);
+                if (lt < 0 || lt > 10000) {
+                    errors.append("Row " + (i+1) + ": Loop Times must be 0-10000\n");
+                }
+            }
+        } catch (NumberFormatException e) {
+            errors.append("Row " + (i+1) + ": Invalid Loop Times value\n");
+        }
+        
+        // Validate goto references
+        String loopGoto = tableModel.getValueAt(i, 4).toString();
+        if (!loopGoto.isEmpty()) {
+            try {
+                int gotoRow = Integer.parseInt(loopGoto);
+                if (gotoRow < 1 || gotoRow > rowCount) {
+                    errors.append("Row " + (i+1) + ": Loop Goto references non-existent row " + gotoRow + "\n");
+                }
+            } catch (NumberFormatException e) {
+                errors.append("Row " + (i+1) + ": Invalid Loop Goto value\n");
+            }
+        }
+        
+        String switchGoto = tableModel.getValueAt(i, 7).toString().trim();
+        if (!switchGoto.isEmpty() && !switchGoto.equalsIgnoreCase("none")) {
+            try {
+                int gotoRow = Integer.parseInt(switchGoto);
+                if (gotoRow < 1 || gotoRow > rowCount) {
+                    errors.append("Row " + (i+1) + ": Loop Switch Goto references non-existent row " + gotoRow + "\n");
+                }
+            } catch (NumberFormatException e) {
+                errors.append("Row " + (i+1) + ": Invalid Loop Switch Goto value (use row number or 'none')\n");
+            }
+        }
+    }
+    
+    if (errors.length() > 0) {
+        JOptionPane.showMessageDialog(frame, errors.toString(), "Validation Errors", JOptionPane.ERROR_MESSAGE);
+        return false;
+    } else {
+        JOptionPane.showMessageDialog(frame, "Sequence is valid!", "Success", JOptionPane.INFORMATION_MESSAGE);
+        return true;
+    }
+}
+
+// Print sequence data for debugging
+void printSequenceData() {
+    print("\n=== Acquisition Sequence ===");
+    print("FRET Mode: " + fretMode.isSelected());
+    print("Live Pictures: " + livePics.isSelected());
+    print("\nSequence Steps:");
+    
+    for (int i = 0; i < tableModel.getRowCount(); i++) {
+        print("Step " + (i+1) + ":");
+        print("  Channel: " + tableModel.getValueAt(i, 0));
+        print("  Exposure: " + tableModel.getValueAt(i, 1) + " ms");
+        print("  Frame Rate: " + tableModel.getValueAt(i, 2) + " ms");
+        print("  Frames: " + tableModel.getValueAt(i, 3));
+        print("  Loop Goto: " + tableModel.getValueAt(i, 4));
+        print("  Loop Times: " + tableModel.getValueAt(i, 5));
+        print("  Constant Illum: " + tableModel.getValueAt(i, 6));
+        print("  Loop Switch Goto: " + tableModel.getValueAt(i, 7));
+    }
+    print("===========================\n");
+}
+
+// Export table to CSV with auto-incrementing filename
+boolean exportTableToCSV() {
+    // Get save directory from preferences
+    String lastSavePath = prefs.get("lastSavePath", "");
+    
+    // Force path selection if no path is saved
+    if (lastSavePath.isEmpty() || !new File(lastSavePath).exists()) {
+        JFileChooser dirChooser = new JFileChooser();
+        dirChooser.setDialogTitle("Select Directory for Acquisition Data");
+        dirChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        
+        int result = dirChooser.showDialog(frame, "Select Folder");
+        if (result != JFileChooser.APPROVE_OPTION) {
+            JOptionPane.showMessageDialog(frame, 
+                "You must select a save directory to start acquisition.", 
+                "Save Directory Required", JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
+        
+        File saveDir = dirChooser.getSelectedFile();
+        lastSavePath = saveDir.getAbsolutePath();
+        prefs.put("lastSavePath", lastSavePath);
+        
+        // Update the display label
+        dataDirPathLabel.setText(lastSavePath);
+        dataDirPathLabel.setForeground(Color.BLACK);
+    }
+    
+    File saveDir = new File(lastSavePath);
+    
+    // Find next available filename
+    File csvFileReadable = new File(saveDir, "AquisitionSettings.csv");
+    File csvFileArduino = new File(saveDir, "AquisitionSettings_Arduino.csv");
+    int counter = 1;
+    while (csvFileReadable.exists() || csvFileArduino.exists()) {
+        csvFileReadable = new File(saveDir, "AquisitionSettings_" + counter + ".csv");
+        csvFileArduino = new File(saveDir, "AquisitionSettings_Arduino_" + counter + ".csv");
+        counter++;
+    }
+    
+    try {
+        // ===== HUMAN-READABLE VERSION =====
+        PrintWriter writerReadable = new PrintWriter(new FileWriter(csvFileReadable));
+        
+        // Write header
+        writerReadable.println("Channel,Exposure [ms],Frame Rate [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
+        
+        // Write data rows (display format)
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            StringBuilder row = new StringBuilder();
+            for (int j = 0; j < tableModel.getColumnCount(); j++) {
+                String value = tableModel.getValueAt(i, j).toString();
+                
+                // Format display values
+                if (j == 0 && value.isEmpty()) { // Channel
+                    value = "none";
+                } else if (j == 5 && value.isEmpty()) { // Loop Times
+                    value = "∞";
+                } else if (j == 6 && value.isEmpty()) { // Constant Illum
+                    value = "none";
+                } else if (j == 7 && value.isEmpty()) { // Loop Switch Goto
+                    value = "none";
+                }
+                
+                // Escape commas and quotes in CSV
+                if (value.contains(",") || value.contains("\"")) {
+                    value = "\"" + value.replace("\"", "\"\"") + "\"";
+                }
+                row.append(value);
+                if (j < tableModel.getColumnCount() - 1) {
+                    row.append(",");
+                }
+            }
+            writerReadable.println(row.toString());
+        }
+        
+        // Write mode settings as comments
+        writerReadable.println("");
+        writerReadable.println("# FRET Mode: " + fretMode.isSelected());
+        writerReadable.println("# Live Pictures: " + livePics.isSelected());
+        
+        writerReadable.close();
+        
+        // ===== ARDUINO VERSION =====
+        PrintWriter writerArduino = new PrintWriter(new FileWriter(csvFileArduino));
+        
+        // Write header
+        writerArduino.println("Channel,Exposure [ms],Frame Rate [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
+        
+        // Write data rows (Arduino format)
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            StringBuilder row = new StringBuilder();
+            for (int j = 0; j < tableModel.getColumnCount(); j++) {
+                String value = tableModel.getValueAt(i, j).toString();
+                String arduinoValue = value;
+                
+                // Convert to Arduino format
+                if (j == 0) { // Channel
+                    if (value.isEmpty()) {
+                        // none channel: 1 if Exposure > 0 (camera only), 0 if Exposure = 0
+                        String exposureStr = tableModel.getValueAt(i, 1).toString();
+                        try {
+                            int exposure = exposureStr.isEmpty() ? 0 : Integer.parseInt(exposureStr);
+                            arduinoValue = exposure > 0 ? "1" : "0";
+                        } catch (NumberFormatException e) {
+                            arduinoValue = "0";
+                        }
+                    } else {
+                        // Convert channel names to binary sum for Arduino
+                        // PIN_1 (Camera) = 1, PIN_2 = 2, PIN_3 = 4, PIN_4 = 8, etc.
+                        String[] channels = value.split(",");
+                        int binarySum = 1; // Camera (PIN_1) is always on
+                        for (String ch : channels) {
+                            String channelName = ch.trim();
+                            int pinNum = config.getPinForChannel(channelName);
+                            if (pinNum != -1) {
+                                // Calculate power of 2 for this pin
+                                binarySum += (1 << (pinNum - 1));
+                            }
+                        }
+                        arduinoValue = String.valueOf(binarySum);
+                    }
+                } else if (j == 5) { // Loop Times
+                    if (value.isEmpty()) {
+                        arduinoValue = "0"; // infinity = 0
+                    }
+                } else if (j == 6) { // Constant Illum
+                    if (value.isEmpty()) {
+                        arduinoValue = "0"; // none = 0
+                    } else {
+                        // Convert constant illum channel names to binary sum for Arduino
+                        String[] channels = value.split(",");
+                        int binarySum = 0; // No camera base for constant illum
+                        for (String ch : channels) {
+                            String channelName = ch.trim();
+                            int pinNum = config.getPinForChannel(channelName);
+                            if (pinNum != -1) {
+                                // Calculate power of 2 for this pin
+                                binarySum += (1 << (pinNum - 1));
+                            }
+                        }
+                        arduinoValue = String.valueOf(binarySum);
+                    }
+                } else if (j == 7) { // Loop Switch Goto
+                    if (value.isEmpty()) {
+                        arduinoValue = "0"; // none = 0
+                    }
+                }
+                
+                // Escape commas and quotes in CSV
+                if (arduinoValue.contains(",") || arduinoValue.contains("\"")) {
+                    arduinoValue = "\"" + arduinoValue.replace("\"", "\"\"") + "\"";
+                }
+                row.append(arduinoValue);
+                if (j < tableModel.getColumnCount() - 1) {
+                    row.append(",");
+                }
+            }
+            writerArduino.println(row.toString());
+        }
+        
+        // Write mode settings as comments
+        writerArduino.println("");
+        writerArduino.println("# FRET Mode: " + fretMode.isSelected());
+        writerArduino.println("# Live Pictures: " + livePics.isSelected());
+        
+        writerArduino.close();
+        
+        print("Tables exported to:");
+        print("  Readable: " + csvFileReadable.getAbsolutePath());
+        print("  Arduino:  " + csvFileArduino.getAbsolutePath());
+        return true;
+        
+    } catch (IOException e) {
+        JOptionPane.showMessageDialog(frame, 
+            "Error saving file: " + e.getMessage(), 
+            "Export Error", JOptionPane.ERROR_MESSAGE);
+        return false;
+    }
+}
+
+print("GUI Test loaded. Close the window to exit.");
