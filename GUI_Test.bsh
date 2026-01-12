@@ -1144,6 +1144,119 @@ frame.setVisible(true);
         print("===========================\n");
     }
 
+// ==================== Generic CSV Export Helper ====================
+
+// Write generic CSV data to file
+// data: 2D array or List of Lists - each inner list is a row
+// headers: Array/List of column headers
+// comments: Optional array/list of comment lines (will be prefixed with #)
+boolean writeCSV(File csvFile, Object headers, Object data, Object comments) {
+    try {
+        PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
+        
+        // Write headers
+        if (headers != null) {
+            StringBuilder headerRow = new StringBuilder();
+            if (headers instanceof Object[]) {
+                Object[] headerArray = (Object[]) headers;
+                for (int i = 0; i < headerArray.length; i++) {
+                    if (i > 0) headerRow.append(",");
+                    headerRow.append(escapeCSV(headerArray[i].toString()));
+                }
+            } else if (headers instanceof List) {
+                List headerList = (List) headers;
+                for (int i = 0; i < headerList.size(); i++) {
+                    if (i > 0) headerRow.append(",");
+                    headerRow.append(escapeCSV(headerList.get(i).toString()));
+                }
+            }
+            writer.println(headerRow.toString());
+        }
+        
+        // Write data rows
+        if (data != null) {
+            if (data instanceof Object[][]) {
+                Object[][] dataArray = (Object[][]) data;
+                for (int i = 0; i < dataArray.length; i++) {
+                    StringBuilder row = new StringBuilder();
+                    for (int j = 0; j < dataArray[i].length; j++) {
+                        if (j > 0) row.append(",");
+                        row.append(escapeCSV(dataArray[i][j].toString()));
+                    }
+                    writer.println(row.toString());
+                }
+            } else if (data instanceof List) {
+                List dataList = (List) data;
+                for (int i = 0; i < dataList.size(); i++) {
+                    StringBuilder row = new StringBuilder();
+                    Object rowData = dataList.get(i);
+                    if (rowData instanceof Object[]) {
+                        Object[] rowArray = (Object[]) rowData;
+                        for (int j = 0; j < rowArray.length; j++) {
+                            if (j > 0) row.append(",");
+                            row.append(escapeCSV(rowArray[j].toString()));
+                        }
+                    } else if (rowData instanceof List) {
+                        List rowList = (List) rowData;
+                        for (int j = 0; j < rowList.size(); j++) {
+                            if (j > 0) row.append(",");
+                            row.append(escapeCSV(rowList.get(j).toString()));
+                        }
+                    }
+                    writer.println(row.toString());
+                }
+            }
+        }
+        
+        // Write comments
+        if (comments != null) {
+            writer.println("");
+            if (comments instanceof Object[]) {
+                Object[] commentArray = (Object[]) comments;
+                for (int i = 0; i < commentArray.length; i++) {
+                    writer.println("# " + commentArray[i].toString());
+                }
+            } else if (comments instanceof List) {
+                List commentList = (List) comments;
+                for (int i = 0; i < commentList.size(); i++) {
+                    writer.println("# " + commentList.get(i).toString());
+                }
+            } else if (comments instanceof String) {
+                writer.println("# " + comments.toString());
+            }
+        }
+        
+        writer.close();
+        return true;
+        
+    } catch (IOException e) {
+        JOptionPane.showMessageDialog(frame, 
+            "Error writing CSV file: " + e.getMessage(), 
+            "Export Error", JOptionPane.ERROR_MESSAGE);
+        return false;
+    }
+}
+
+// Escape special characters for CSV format
+String escapeCSV(String value) {
+    if (value == null) return "";
+    if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+        return "\"" + value.replace("\"", "\"\"") + "\"";
+    }
+    return value;
+}
+
+// Find next available filename with counter
+File getNextAvailableFile(File directory, String baseName, String extension) {
+    File file = new File(directory, baseName + extension);
+    int counter = 1;
+    while (file.exists()) {
+        file = new File(directory, baseName + "_" + counter + extension);
+        counter++;
+    }
+    return file;
+}
+
     // Export table to CSV with auto-incrementing filename
 boolean exportTableToCSV() {
     // Get save directory from preferences
@@ -1175,14 +1288,9 @@ boolean exportTableToCSV() {
     File saveDir = new File(lastSavePath);
     
     // Find next available filename
-    File csvFileReadable = new File(saveDir, "AquisitionSettings.csv");
-    File csvFileArduino = new File(saveDir, "AquisitionSettings_Arduino.csv");
-    int counter = 1;
-    while (csvFileReadable.exists() || csvFileArduino.exists()) {
-        csvFileReadable = new File(saveDir, "AquisitionSettings_" + counter + ".csv");
-        csvFileArduino = new File(saveDir, "AquisitionSettings_Arduino_" + counter + ".csv");
-        counter++;
-    }
+    File csvFileReadable = getNextAvailableFile(saveDir, "AquisitionSettings", ".csv");
+    String baseName = csvFileReadable.getName().replace(".csv", "");
+    File csvFileArduino = new File(saveDir, baseName + "_Arduino.csv");
     
     try {
         // ===== HUMAN-READABLE VERSION =====
@@ -1201,18 +1309,14 @@ boolean exportTableToCSV() {
                 if (j == 1 && value.isEmpty()) { // Channel
                     value = "none";
                 } else if (j == 6 && value.isEmpty()) { // Loop Times
-                    value = "∞";
+                    value = "always";
                 } else if (j == 7 && value.isEmpty()) { // Constant Illum
                     value = "none";
                 } else if (j == 8 && value.isEmpty()) { // Loop Switch Goto
                     value = "none";
                 }
                 
-                // Escape commas and quotes in CSV
-                if (value.contains(",") || value.contains("\"")) {
-                    value = "\"" + value.replace("\"", "\"\"") + "\"";
-                }
-                row.append(value);
+                row.append(escapeCSV(value));
                 if (j < tableModel.getColumnCount() - 1) {
                     row.append(",");
                 }
@@ -1292,11 +1396,7 @@ boolean exportTableToCSV() {
                     }
                 }
                 
-                // Escape commas and quotes in CSV
-                if (arduinoValue.contains(",") || arduinoValue.contains("\"")) {
-                    arduinoValue = "\"" + arduinoValue.replace("\"", "\"\"") + "\"";
-                }
-                row.append(arduinoValue);
+                row.append(escapeCSV(arduinoValue));
                 if (j < tableModel.getColumnCount() - 1) {
                     row.append(",");
                 }
