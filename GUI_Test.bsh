@@ -501,7 +501,7 @@ class VisualizationTableModel extends DefaultTableModel {
             {"2", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE},
             {"3", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE},
             {"4", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE}
-        }, new String[]{"Channel", "Type", "1st Frame", "2nd Frame", "3rd Frame", "4th Frame"});
+        }, new String[]{"Graph", "Type", "every", "every 2nd", "every 3rd", "every 4th"});
     }
     
     public Class getColumnClass(int col) {
@@ -746,12 +746,32 @@ okButton.setBackground(Color.GREEN);
 okButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         if (validateSequence()) {
-            // Export table to CSV before starting acquisition
-            if (exportTableToCSV()) {
-                printSequenceData();
-                JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
-                    "Ready", JOptionPane.INFORMATION_MESSAGE);
-                // frame.dispose(); // Uncomment to close when OK
+            // Check if visualization is needed and setup ROIs
+            if (isVisualizationNeeded()) {
+                // Run ROI setup in separate thread to avoid EDT blocking
+                new Thread(new Runnable() {
+                    public void run() {
+                        if (!setupVisualizationROIs()) {
+                            return;
+                        }
+                        
+                        if (exportTableToCSV()) {
+                            printSequenceData();
+                            SwingUtilities.invokeLater(new Runnable() {
+                                public void run() {
+                                    JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
+                                        "Ready", JOptionPane.INFORMATION_MESSAGE);
+                                }
+                            });
+                        }
+                    }
+                }).start();
+            } else {
+                if (exportTableToCSV()) {
+                    printSequenceData();
+                    JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
+                        "Ready", JOptionPane.INFORMATION_MESSAGE);
+                }
             }
         }
     }
@@ -886,12 +906,32 @@ vizStartButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         // Validate sequence first
         if (validateSequence()) {
-            // Export table to CSV before starting acquisition
-            if (exportTableToCSV()) {
-                printSequenceData();
-                JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
-                    "Ready", JOptionPane.INFORMATION_MESSAGE);
-                // frame.dispose(); // Uncomment to close when OK
+            // Check if visualization is needed and setup ROIs
+            if (isVisualizationNeeded()) {
+                // Run ROI setup in separate thread to avoid EDT blocking
+                new Thread(new Runnable() {
+                    public void run() {
+                        if (!setupVisualizationROIs()) {
+                            return;
+                        }
+                        
+                        if (exportTableToCSV()) {
+                            printSequenceData();
+                            SwingUtilities.invokeLater(new Runnable() {
+                                public void run() {
+                                    JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
+                                        "Ready", JOptionPane.INFORMATION_MESSAGE);
+                                }
+                            });
+                        }
+                    }
+                }).start();
+            } else {
+                if (exportTableToCSV()) {
+                    printSequenceData();
+                    JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
+                        "Ready", JOptionPane.INFORMATION_MESSAGE);
+                }
             }
         } else {
             // Switch to Acquisition Sequence tab to show errors
@@ -1255,6 +1295,143 @@ File getNextAvailableFile(File directory, String baseName, String extension) {
         counter++;
     }
     return file;
+}
+
+// ==================== ROI Setup for Visualization ====================
+
+// Check if any visualization channels are configured
+boolean isVisualizationNeeded() {
+    for (int i = 0; i < vizTableModel.getRowCount(); i++) {
+        String type = (String) vizTableModel.getValueAt(i, 1);
+        if (!type.equals("none")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Setup ROIs for visualization - returns true if successful, false if cancelled
+boolean setupVisualizationROIs() {
+    print("========== ROI SETUP START ==========");
+    
+    // Close the main GUI to avoid window interference
+    frame.dispose();
+    
+    import ij.IJ;
+    import ij.ImagePlus;
+    import ij.plugin.frame.RoiManager;
+    import ij.process.ImageProcessor;
+    
+    // Snap an image
+    print("Snapping image...");
+    mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+    List images = mm.live().snap(false);
+    org.micromanager.data.Image image = images.get(0);
+    print("Image snapped");
+    
+    if (images == null || images.isEmpty()) {
+        print("ERROR: Failed to snap image");
+        return false;
+    }
+    
+    // Create ImageJ display
+    ImageProcessor ip = mm.data().ij().createProcessor(image);
+    ImagePlus imp = new ImagePlus("ROI Selection - Draw your ROIs", ip);
+    imp.show();
+    print("Image displayed");
+    
+    // Open ROI Manager
+    IJ.run("ROI Manager...", "");
+    ij.plugin.frame.RoiManager rm = ij.plugin.frame.RoiManager.getInstance();
+    rm.runCommand(imp, "Show All");
+    print("ROI Manager ready");
+    
+    // Create control window
+    final boolean[] done = {false};
+    final boolean[] cancelled = {false};
+    
+    JFrame btnFrame = new JFrame("ROI Setup");
+    btnFrame.setSize(400, 150);
+    btnFrame.setAlwaysOnTop(true);
+    btnFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+    
+    JPanel infoPanel = new JPanel(new BorderLayout());
+    JLabel infoLabel = new JLabel("<html><div style='text-align: center; padding: 10px;'>"
+        + "<b>Draw ROIs on the image and add them to ROI Manager</b><br>"
+        + "Press 't' to add ROIs, then click Done"
+        + "</div></html>", SwingConstants.CENTER);
+    infoPanel.add(infoLabel, BorderLayout.CENTER);
+    
+    JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 10));
+    JButton doneButton = new JButton("ROIs Done");
+    doneButton.setBackground(Color.GREEN);
+    JButton cancelButton = new JButton("Cancel");
+    cancelButton.setBackground(Color.ORANGE);
+    
+    doneButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            print("Done button clicked!");
+            done[0] = true;
+            btnFrame.dispose();
+        }
+    });
+    
+    cancelButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            print("Cancel button clicked!");
+            cancelled[0] = true;
+            btnFrame.dispose();
+        }
+    });
+    
+    buttonPanel.add(doneButton);
+    buttonPanel.add(cancelButton);
+    
+    btnFrame.setLayout(new BorderLayout());
+    btnFrame.add(infoPanel, BorderLayout.CENTER);
+    btnFrame.add(buttonPanel, BorderLayout.SOUTH);
+    btnFrame.setLocationRelativeTo(null);
+    btnFrame.setVisible(true);
+    
+    print("Waiting for button click...");
+    int count = 0;
+    while (done[0] == false && cancelled[0] == false) {
+        count++;
+        if (count % 10 == 0) {
+            print("Still waiting... " + count);
+        }
+        Thread.sleep(100);
+    }
+    
+    print("Button clicked! done=" + done[0] + ", cancelled=" + cancelled[0]);
+    
+    // Clean up ImageJ window
+    if (imp.getWindow() != null) {
+        imp.getWindow().close();
+    }
+    
+    if (cancelled[0]) {
+        print("ROI setup cancelled");
+        return false;
+    }
+    
+    // Save ROI set
+    print("ROI count = " + rm.getCount());
+    if (rm.getCount() > 0) {
+        String lastSavePath = prefs.get("lastSavePath", "");
+        if (!lastSavePath.isEmpty()) {
+            File saveDir = new File(lastSavePath);
+            File roiFile = getNextAvailableFile(saveDir, "RoiSet", ".zip");
+            print("Saving ROIs to: " + roiFile.getAbsolutePath());
+            rm.runCommand("Save", roiFile.getAbsolutePath());
+            if (roiFile.exists()) {
+                print("SUCCESS: ROI set saved (" + roiFile.length() + " bytes)");
+            }
+        }
+    }
+    
+    print("========== ROI SETUP COMPLETE ==========");
+    return true;
 }
 
     // Export table to CSV with auto-incrementing filename

@@ -11,13 +11,13 @@ PIN_5 = Cy3 (555/28)
 PIN_6 = Cy5 (635/22)
 
 # Camera Configuration Settings (MicroManager config names)
-CAMERA_CONFIG_GROUP = Camera
-CAMERA_SNAP_CONFIG = HighRes
-CAMERA_TRIGGER_CONFIG = MedRes
+CAMERA_CONFIG_GROUP = Hamamatsu
+CAMERA_SNAP_CONFIG = Snapping_and_Live
+CAMERA_TRIGGER_CONFIG = GlobalResetLevelTriggerArduinoMode
 
 # Spectral Configuration Settings
-SPECTRAL_CONFIG_GROUP = LightPath
-SPECTRAL_DEFAULT_CONFIG = Camera-left
+SPECTRAL_CONFIG_GROUP = SpectrAmazing
+SPECTRAL_DEFAULT_CONFIG = BrightLight
 
 # Serial Port
 SERIAL_PORT = COM4
