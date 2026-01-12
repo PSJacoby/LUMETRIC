@@ -2,6 +2,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.GridLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -23,6 +24,7 @@ import javax.swing.AbstractCellEditor;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
@@ -488,6 +490,126 @@ class LoopSwitchGotoRenderer extends DefaultTableCellRenderer {
     }
 }
 
+// ==================== Data Visualization Table Classes ====================
+
+// Table Model for visualization configuration
+class VisualizationTableModel extends DefaultTableModel {
+    
+    public VisualizationTableModel() {
+        super(new Object[][]{
+            {"1", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE},
+            {"2", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE},
+            {"3", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE},
+            {"4", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE}
+        }, new String[]{"Channel", "Type", "1st Frame", "2nd Frame", "3rd Frame", "4th Frame"});
+    }
+    
+    public Class getColumnClass(int col) {
+        if (col >= 2) {
+            return Boolean.class;
+        }
+        return String.class;
+    }
+    
+    public boolean isCellEditable(int row, int col) {
+        if (col == 0) return false;
+        if (col == 1) return true;
+        String type = (String) getValueAt(row, 1);
+        return !type.equals("none");
+    }
+    
+    public void setValueAt(Object value, int row, int col) {
+        if (col == 0) return;
+        
+        if (col == 1) {
+            String newType = (String) value;
+            String oldType = (String) super.getValueAt(row, col);
+            super.setValueAt(newType, row, col);
+            
+            if (newType.equals("none")) {
+                for (int i = 2; i < 6; i++) {
+                    super.setValueAt(Boolean.FALSE, row, i);
+                }
+            } else if (oldType.equals("none")) {
+                for (int i = 2; i < 6; i++) {
+                    super.setValueAt(Boolean.FALSE, row, i);
+                }
+            }
+            
+            fireTableRowsUpdated(row, row);
+            return;
+        }
+        
+        if (col >= 2) {
+            String type = (String) super.getValueAt(row, 1);
+            if (type.equals("none")) return;
+            
+            boolean newValue = ((Boolean) value).booleanValue();
+            int checkedCount = 0;
+            for (int i = 2; i < 6; i++) {
+                if (((Boolean) super.getValueAt(row, i)).booleanValue()) {
+                    checkedCount++;
+                }
+            }
+            
+            if (type.equals("Frame ratio")) {
+                if (newValue && checkedCount >= 2) {
+                    return;
+                }
+            } else {
+                if (newValue && checkedCount >= 1) {
+                    return;
+                }
+            }
+            
+            super.setValueAt(value, row, col);
+        }
+    }
+}
+
+// Custom cell editor for Type column (dropdown)
+class VisualizationTypeEditor extends DefaultCellEditor {
+    public VisualizationTypeEditor() {
+        super(new JComboBox(new String[]{"none", "Intensity", "Split ratio (horizontal)", "Frame ratio"}));
+    }
+}
+
+// Custom cell renderer for checkboxes that disables when type is "none"
+class VisualizationCheckBoxRenderer extends JCheckBox implements javax.swing.table.TableCellRenderer {
+    public VisualizationCheckBoxRenderer() {
+        setHorizontalAlignment(SwingConstants.CENTER);
+    }
+    
+    public Component getTableCellRendererComponent(JTable table, Object value,
+                                                   boolean isSelected, boolean hasFocus,
+                                                   int row, int column) {
+        String type = (String) table.getValueAt(row, 1);
+        boolean enabled = !type.equals("none");
+        
+        setEnabled(enabled);
+        setSelected(value != null && ((Boolean) value).booleanValue());
+        
+        if (isSelected) {
+            setBackground(table.getSelectionBackground());
+            setForeground(table.getSelectionForeground());
+        } else {
+            setBackground(table.getBackground());
+            setForeground(table.getForeground());
+        }
+        
+        return this;
+    }
+}
+
+// Custom cell editor for checkboxes
+class VisualizationCheckBoxEditor extends DefaultCellEditor {
+    public VisualizationCheckBoxEditor() {
+        super(new JCheckBox());
+        JCheckBox checkBox = (JCheckBox) getComponent();
+        checkBox.setHorizontalAlignment(SwingConstants.CENTER);
+    }
+}
+
 // Main GUI
 JFrame frame = new JFrame("LUMETRIC - Hardware control");
 frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
@@ -537,6 +659,7 @@ sequencePanel = new JPanel(new BorderLayout());
 // Create the table
 tableModel = new AcquisitionTableModel();
 table = new JTable(tableModel);
+channelEditor = new ChannelEditor();
 table.setRowHeight(30);
 
 // Make table headers darker and more visible
@@ -558,7 +681,6 @@ table.getColumnModel().getColumn(0).setCellRenderer(new DefaultTableCellRenderer
 table.getColumnModel().getColumn(0).setPreferredWidth(50); // Row number
 
 // Set custom editor for channel column
-channelEditor = new ChannelEditor();
 table.getColumnModel().getColumn(1).setCellEditor(channelEditor);
 table.getColumnModel().getColumn(1).setCellRenderer(new ChannelRenderer());
 table.getColumnModel().getColumn(1).setPreferredWidth(150);
@@ -683,12 +805,8 @@ dataDirPanel.add(dataDirLabel);
 dataDirPanel.add(dataDirPathLabel);
 dataDirPanel.add(selectFolderButton);
 
-// Checkboxes for modes
+// Mode panel placeholder (Live Pictures moved to Data Visualization tab)
 JPanel modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-JCheckBox fretMode = new JCheckBox("FRET Mode");
-JCheckBox livePics = new JCheckBox("Live Pictures");
-modePanel.add(fretMode);
-modePanel.add(livePics);
 
 // Layout sequence tab
 JPanel bottomPanel = new JPanel(new BorderLayout());
@@ -699,11 +817,108 @@ bottomPanel.add(topBottomPanel, BorderLayout.NORTH);
 bottomPanel.add(controlPanel, BorderLayout.SOUTH);
 sequencePanel.add(bottomPanel, BorderLayout.SOUTH);
 
+// ==================== Data Visualization Tab ====================
+JPanel visualizationPanel = new JPanel(new BorderLayout());
+visualizationPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+// Create visualization table and model
+vizTableModel = new VisualizationTableModel();
+vizTable = new JTable(vizTableModel);
+
+// Title
+JLabel vizTitleLabel = new JLabel("Data Visualization Configuration", SwingConstants.CENTER);
+vizTitleLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
+JPanel vizTitlePanel = new JPanel(new BorderLayout());
+vizTitlePanel.add(vizTitleLabel, BorderLayout.CENTER);
+vizTitlePanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+
+// Instructions
+JLabel vizInfoLabel = new JLabel("<html><div style='text-align: center;'>"
+        + "Configure up to 4 live graphs to display during the experiment.<br>"
+        + "<b>Frame ratio</b> requires 2 frames to be selected. <b>Intensity</b> and <b>Split ratio</b> require 1 frame."
+        + "</div></html>", SwingConstants.CENTER);
+vizInfoLabel.setBorder(BorderFactory.createEmptyBorder(5, 10, 10, 10));
+
+// Set table properties
+vizTable.setRowHeight(30);
+
+// Make table headers darker and more visible
+JTableHeader vizHeader = vizTable.getTableHeader();
+vizHeader.setFont(vizHeader.getFont().deriveFont(Font.BOLD, 12f));
+vizHeader.setForeground(Color.BLACK);
+
+// Column 0: Channel (centered, not editable)
+vizTable.getColumnModel().getColumn(0).setCellRenderer(new DefaultTableCellRenderer() {
+    public Component getTableCellRendererComponent(JTable table, Object value,
+                                                   boolean isSelected, boolean hasFocus,
+                                                   int row, int column) {
+        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+        setFont(getFont().deriveFont(Font.BOLD));
+        setHorizontalAlignment(SwingConstants.CENTER);
+        return this;
+    }
+});
+vizTable.getColumnModel().getColumn(0).setPreferredWidth(80);
+
+// Column 1: Type (dropdown)
+vizTable.getColumnModel().getColumn(1).setCellEditor(new VisualizationTypeEditor());
+vizTable.getColumnModel().getColumn(1).setPreferredWidth(180);
+
+// Columns 2-5: Frame checkboxes
+for (int i = 2; i < 6; i++) {
+    vizTable.getColumnModel().getColumn(i).setCellRenderer(new VisualizationCheckBoxRenderer());
+    vizTable.getColumnModel().getColumn(i).setCellEditor(new VisualizationCheckBoxEditor());
+    vizTable.getColumnModel().getColumn(i).setPreferredWidth(100);
+}
+
+JScrollPane vizScrollPane = new JScrollPane(vizTable);
+
+// Bottom panel with Live Pictures and Start Acquisition button
+JPanel vizBottomPanel = new JPanel(new BorderLayout());
+JPanel vizModePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+JCheckBox livePics = new JCheckBox("Live Pictures");
+vizModePanel.add(livePics);
+
+JPanel vizButtonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+JButton vizStartButton = new JButton("OK - Start Acquisition");
+vizStartButton.setBackground(Color.GREEN);
+vizStartButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        // Validate sequence first
+        if (validateSequence()) {
+            // Export table to CSV before starting acquisition
+            if (exportTableToCSV()) {
+                printSequenceData();
+                JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
+                    "Ready", JOptionPane.INFORMATION_MESSAGE);
+                // frame.dispose(); // Uncomment to close when OK
+            }
+        } else {
+            // Switch to Acquisition Sequence tab to show errors
+            tabbedPane.setSelectedIndex(1);
+        }
+    }
+});
+vizButtonPanel.add(vizStartButton);
+
+vizBottomPanel.add(vizModePanel, BorderLayout.WEST);
+vizBottomPanel.add(vizButtonPanel, BorderLayout.CENTER);
+
+// Layout visualization panel
+JPanel vizTopPanel = new JPanel(new BorderLayout());
+vizTopPanel.add(vizTitlePanel, BorderLayout.NORTH);
+vizTopPanel.add(vizInfoLabel, BorderLayout.CENTER);
+
+visualizationPanel.add(vizTopPanel, BorderLayout.NORTH);
+visualizationPanel.add(vizScrollPane, BorderLayout.CENTER);
+visualizationPanel.add(vizBottomPanel, BorderLayout.SOUTH);
+
 // Add tabs
 tabbedPane.addTab("Settings", settingsPanel);
 tabbedPane.addTab("Acquisition Sequence", sequencePanel);
+tabbedPane.addTab("Data Visualization", visualizationPanel);
 
-// Set default tab to Acquisition Sequence
+// Set default tab to Acquisition Sequence (middle tab)
 tabbedPane.setSelectedIndex(1);
 
 // Layout
@@ -798,6 +1013,14 @@ frame.setVisible(true);
 
 // Validation function
     boolean validateSequence() {
+        // Stop any active cell editing to commit current edits
+        if (table.isEditing()) {
+            javax.swing.table.TableCellEditor editor = table.getCellEditor();
+            if (editor != null) {
+                editor.stopCellEditing();
+            }
+        }
+        
         int rowCount = tableModel.getRowCount();
         StringBuilder errors = new StringBuilder();
 
@@ -904,7 +1127,6 @@ frame.setVisible(true);
     // Print sequence data for debugging
     void printSequenceData() {
         print("\n=== Acquisition Sequence ===");
-        print("FRET Mode: " + fretMode.isSelected());
         print("Live Pictures: " + livePics.isSelected());
         print("\nSequence Steps:");
 
@@ -1000,7 +1222,6 @@ boolean exportTableToCSV() {
         
         // Write mode settings as comments
         writerReadable.println("");
-        writerReadable.println("# FRET Mode: " + fretMode.isSelected());
         writerReadable.println("# Live Pictures: " + livePics.isSelected());
         
         writerReadable.close();
@@ -1085,7 +1306,6 @@ boolean exportTableToCSV() {
         
         // Write mode settings as comments
         writerArduino.println("");
-        writerArduino.println("# FRET Mode: " + fretMode.isSelected());
         writerArduino.println("# Live Pictures: " + livePics.isSelected());
         
         writerArduino.close();
