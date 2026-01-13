@@ -2058,11 +2058,11 @@ void createInlineAcquisitionWindow() {
             javax.swing.JSplitPane.HORIZONTAL_SPLIT);
         splitPane.setResizeWeight(0.7);
         
-        // Live view (left, large)
-        JPanel liveViewPanel = new JPanel(new BorderLayout());
+        // Live view (left, large) - create panel that will hold ImageCanvas
+        final JPanel liveViewPanel = new JPanel(new BorderLayout());
         liveViewPanel.setBorder(BorderFactory.createTitledBorder("Live View"));
         liveViewPanel.setBackground(Color.DARK_GRAY);
-        JLabel liveLabel = new JLabel("Live camera view", SwingConstants.CENTER);
+        JLabel liveLabel = new JLabel("Waiting for first frame...", SwingConstants.CENTER);
         liveLabel.setForeground(Color.LIGHT_GRAY);
         liveViewPanel.add(liveLabel, BorderLayout.CENTER);
         
@@ -2133,10 +2133,10 @@ void createInlineAcquisitionWindow() {
         if (hasLiveView) {
             splitPane.setResizeWeight(0.6);
             
-            JPanel liveViewPanel = new JPanel(new BorderLayout());
+            final JPanel liveViewPanel = new JPanel(new BorderLayout());
             liveViewPanel.setBorder(BorderFactory.createTitledBorder("Live View"));
             liveViewPanel.setBackground(Color.DARK_GRAY);
-            JLabel liveLabel = new JLabel("Live camera view", SwingConstants.CENTER);
+            JLabel liveLabel = new JLabel("Waiting for first frame...", SwingConstants.CENTER);
             liveLabel.setForeground(Color.LIGHT_GRAY);
             liveViewPanel.add(liveLabel, BorderLayout.CENTER);
             splitPane.setLeftComponent(liveViewPanel);
@@ -2215,6 +2215,27 @@ void createInlineAcquisitionWindow() {
     acqFrame.add(topPanel, BorderLayout.NORTH);
     acqFrame.add(mainPanel, BorderLayout.CENTER);
     
+    // Store live view panel reference
+    final JPanel[] liveViewPanelRef = new JPanel[1];
+    // Find and store the liveViewPanel from the layout
+    Component[] components = mainPanel.getComponents();
+    for (Component comp : components) {
+        if (comp instanceof javax.swing.JSplitPane) {
+            javax.swing.JSplitPane sp = (javax.swing.JSplitPane) comp;
+            Component left = sp.getLeftComponent();
+            if (left instanceof JPanel) {
+                JPanel panel = (JPanel) left;
+                if (panel.getBorder() instanceof javax.swing.border.TitledBorder) {
+                    javax.swing.border.TitledBorder border = (javax.swing.border.TitledBorder) panel.getBorder();
+                    if (border.getTitle().equals("Live View")) {
+                        liveViewPanelRef[0] = panel;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
     acqFrame.setVisible(true);
     
     // ChartFactory.createXYLineChart() provides a renderer with lines enabled by default
@@ -2279,7 +2300,7 @@ void createInlineAcquisitionWindow() {
         public void run() {
             print("Acquisition thread started!");
             try {
-                runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0]);
+                runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0]);
             } catch (Exception ex) {
                 print("ERROR in acquisition thread: " + ex.getMessage());
                 ex.printStackTrace();
@@ -2336,7 +2357,7 @@ boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
 }
 
 // ==================== Main Acquisition Loop ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime) {
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel) {
     import ij.IJ;
     import ij.ImagePlus;
     import ij.plugin.frame.RoiManager;
@@ -2352,6 +2373,8 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
     print("Using " + config.storedROIs.size() + " stored ROIs");
     
     int frameNumber = 0;
+    long lastGuiUpdateTime = 0; // Track last GUI update for throttling
+    final long GUI_UPDATE_INTERVAL_MS = 250; // Update GUI at most every 250ms
     
     while (running[0]) {
         try {
@@ -2369,8 +2392,49 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
             ImageProcessor ip = mm.data().ij().createProcessor(image);
             
             long currentTime = System.currentTimeMillis() - startTime;
+            boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
             
-            // STEP 1: Measure ALL ROIs (regardless of graph filtering)
+            // Update live view if panel exists AND enough time has passed (throttle)
+            if (liveViewPanel != null && shouldUpdateGui) {
+                final ImageProcessor ipCopy = ip.duplicate();
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        try {
+                            // Create scaled ImagePlus to fit panel
+                            ImagePlus imp = new ImagePlus("Live", ipCopy);
+                            
+                            // Get panel dimensions
+                            int panelWidth = liveViewPanel.getWidth();
+                            int panelHeight = liveViewPanel.getHeight();
+                            
+                            if (panelWidth > 0 && panelHeight > 0) {
+                                // Calculate scale to fit panel while maintaining aspect ratio
+                                double scaleX = (double) panelWidth / imp.getWidth();
+                                double scaleY = (double) panelHeight / imp.getHeight();
+                                double scale = Math.min(scaleX, scaleY);
+                                scale = Math.max(0.1, Math.min(scale, 4.0)); // Clamp between 0.1x and 4x
+                                
+                                ij.gui.ImageCanvas canvas = new ij.gui.ImageCanvas(imp);
+                                canvas.setMagnification(scale);
+                                canvas.setSize((int)(imp.getWidth() * scale), (int)(imp.getHeight() * scale));
+                                
+                                // Remove old content and add canvas in center-aligned panel
+                                liveViewPanel.removeAll();
+                                JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+                                centerPanel.setBackground(Color.DARK_GRAY);
+                                centerPanel.add(canvas);
+                                liveViewPanel.add(centerPanel, BorderLayout.CENTER);
+                                liveViewPanel.revalidate();
+                                liveViewPanel.repaint();
+                            }
+                        } catch (Exception e) {
+                            print("ERROR updating live view: " + e.getMessage());
+                        }
+                    }
+                });
+            }
+            
+            // STEP 1: Measure ALL ROIs (always, regardless of GUI throttle)
             ArrayList roiValues = new ArrayList();
             for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
                 ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
@@ -2411,35 +2475,42 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                     continue;
                 }
                 
-                // Update this graph with ALL ROI values
-                final int gIdx = graphIdx;
-                final long time = currentTime;
-                final ArrayList roiValsCopy = new ArrayList(roiValues);
-                
-                SwingUtilities.invokeLater(new Runnable() {
-                    public void run() {
-                        XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                        // Add all ROI values to this graph's series - auto-notification enabled
-                        for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
-                            double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
-                            XYSeries series = dataset.getSeries(roiIdx);
-                            series.add(time, value, true); // true = notify listeners
+                // Update this graph with ALL ROI values (throttled)
+                if (shouldUpdateGui) {
+                    final int gIdx = graphIdx;
+                    final long time = currentTime;
+                    final ArrayList roiValsCopy = new ArrayList(roiValues);
+                    
+                    SwingUtilities.invokeLater(new Runnable() {
+                        public void run() {
+                            XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                            // Add all ROI values to this graph's series - auto-notification enabled
+                            for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
+                                double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
+                                XYSeries series = dataset.getSeries(roiIdx);
+                                series.add(time, value, true); // true = notify listeners
+                            }
+                            // Force chart panel update (like working test code)
+                            if (chartPanels.get(gIdx) != null) {
+                                ChartPanel cp = (ChartPanel) chartPanels.get(gIdx);
+                                cp.revalidate();
+                                cp.repaint();
+                            }
                         }
-                        // Force chart panel update (like working test code)
-                        if (chartPanels.get(gIdx) != null) {
-                            ChartPanel cp = (ChartPanel) chartPanels.get(gIdx);
-                            cp.revalidate();
-                            cp.repaint();
-                        }
-                    }
-                });
+                    });
+                }
+            }
+            
+            // Update GUI timestamp if we just updated
+            if (shouldUpdateGui) {
+                lastGuiUpdateTime = currentTime;
             }
             
             // Store row for CSV export
             dataRows.add(dataRow);
             
-            // Wait 1 second before next snap
-            Thread.sleep(1000);
+            // Wait 100ms before next snap (fast test mode)
+            Thread.sleep(100);
             
         } catch (InterruptedException ie) {
             print("Acquisition interrupted");
