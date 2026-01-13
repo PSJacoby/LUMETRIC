@@ -42,6 +42,18 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableCellEditor;
 
+// JFreeChart imports - moved to top to avoid BeanShell loading issues
+import org.jfree.chart.ChartFactory;
+import org.jfree.chart.ChartPanel;
+import org.jfree.chart.JFreeChart;
+import org.jfree.chart.plot.PlotOrientation;
+import org.jfree.chart.plot.XYPlot;
+import org.jfree.chart.plot.ValueMarker;
+import org.jfree.chart.renderer.xy.*;
+import org.jfree.data.xy.XYSeries;
+import org.jfree.data.xy.XYSeriesCollection;
+import java.awt.BasicStroke;
+
 // Acquisition settings - decoupled from GUI
 class AcquisitionSettings {
     boolean livePics = false;
@@ -1794,15 +1806,7 @@ boolean exportTableToCSV() {
 
 // Create acquisition control window inline (called from EDT)
 void createInlineAcquisitionWindow() {
-    import org.jfree.chart.ChartFactory;
-    import org.jfree.chart.ChartPanel;
-    import org.jfree.chart.JFreeChart;
-    import org.jfree.chart.plot.PlotOrientation;
-    import org.jfree.chart.plot.XYPlot;
-    import org.jfree.chart.plot.ValueMarker;
-    import org.jfree.data.xy.XYSeries;
-    import org.jfree.data.xy.XYSeriesCollection;
-    import java.awt.BasicStroke;
+    // All imports moved to top of file to avoid BeanShell loading issues
     
     JFrame acqFrame = new JFrame("LUMETRIC - Acquisition Control");
     acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
@@ -1971,7 +1975,7 @@ void createInlineAcquisitionWindow() {
         int numROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
         for (int roiIdx = 0; roiIdx < numROIs; roiIdx++) {
             XYSeries roiSeries = new XYSeries("ROI" + (roiIdx + 1));
-            roiSeries.setNotify(true); // Enable auto-notification like old code
+            roiSeries.setNotify(true); // Enable auto-notification
             dataset.addSeries(roiSeries);
         }
         datasets.add(dataset);
@@ -2003,15 +2007,8 @@ void createInlineAcquisitionWindow() {
         plot.setDomainGridlinePaint(Color.WHITE);
         plot.setRangeGridlinePaint(Color.WHITE);
         
-        // Enable line rendering for all ROI series
-        import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
-        XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer();
-        int numROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
-        for (int roiIdx = 0; roiIdx < numROIs; roiIdx++) {
-            renderer.setSeriesLinesVisible(roiIdx, true);
-            renderer.setSeriesShapesVisible(roiIdx, false);
-        }
-        plot.setRenderer(renderer);
+        // NOTE: Renderer configuration causes freeze - skip for now
+        // Will investigate after confirming window opens
         
         // Create chart panel and store it
         ChartPanel chartPanel = new ChartPanel(chart);
@@ -2027,6 +2024,9 @@ void createInlineAcquisitionWindow() {
         public void actionPerformed(ActionEvent e) {
             long currentTime = System.currentTimeMillis() - acquisitionStartTime[0];
             print("Event triggered at " + currentTime + " ms");
+            
+            // Store event time
+            eventTimes.add(new Long(currentTime));
             
             // Add vertical line marker to all active graphs
             for (int i = 0; i < chartPlots.size(); i++) {
@@ -2217,11 +2217,28 @@ void createInlineAcquisitionWindow() {
     
     acqFrame.setVisible(true);
     
+    // ChartFactory.createXYLineChart() provides a renderer with lines enabled by default
+    // No additional renderer configuration needed!
+    
+    // Force layout and repaint of all chart panels after window is visible
+    SwingUtilities.invokeLater(new Runnable() {
+        public void run() {
+            for (int i = 0; i < chartPanels.size(); i++) {
+                if (chartPanels.get(i) != null) {
+                    ChartPanel cp = (ChartPanel) chartPanels.get(i);
+                    cp.revalidate();
+                    cp.repaint();
+                }
+            }
+        }
+    });
+    
     print("Window visible, starting acquisition thread...");
     
     // ===== START ACQUISITION THREAD =====
     final boolean[] acquisitionRunning = {true};
     final ArrayList allDataRows = new ArrayList(); // Store rows [timestamp, roi0, roi1, roi2, roi3] for CSV export
+    final ArrayList eventTimes = new ArrayList(); // Store event timestamps in ms
     
     // Count active graphs for data structure
     int activeGraphCount = 0;
@@ -2249,6 +2266,7 @@ void createInlineAcquisitionWindow() {
                 
                 // Export data to CSV - pass visualization rows for naming
                 exportGraphDataToCSV(allDataRows, numActiveGraphs, config.acqSettings.visualizationRows);
+                exportEventTimesToCSV(eventTimes);
                 
                 acqFrame.dispose();
             }
@@ -2407,6 +2425,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                             XYSeries series = dataset.getSeries(roiIdx);
                             series.add(time, value, true); // true = notify listeners
                         }
+                        // Force chart panel update (like working test code)
+                        if (chartPanels.get(gIdx) != null) {
+                            ChartPanel cp = (ChartPanel) chartPanels.get(gIdx);
+                            cp.revalidate();
+                            cp.repaint();
+                        }
                     }
                 });
             }
@@ -2522,6 +2546,43 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
             print("ERROR: Failed to export graph " + (graphIdx + 1) + " data: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+}
+
+// Export event times to CSV
+void exportEventTimesToCSV(ArrayList eventTimes) {
+    if (eventTimes.isEmpty()) {
+        print("No events recorded");
+        return;
+    }
+    
+    String experimentFolder = config.experimentFolder;
+    if (experimentFolder.isEmpty()) {
+        print("ERROR: No experiment folder set");
+        return;
+    }
+    
+    File csvFile = new File(experimentFolder, "Event-Data.csv");
+    
+    try {
+        PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
+        
+        // Header
+        writer.println("Event,Time [ms]");
+        
+        // Write each event
+        for (int i = 0; i < eventTimes.size(); i++) {
+            writer.print("Event " + (i + 1));
+            writer.print(",");
+            writer.println(eventTimes.get(i));
+        }
+        
+        writer.close();
+        print("Event data exported to: " + csvFile.getName());
+        
+    } catch (IOException e) {
+        print("ERROR: Failed to export event data: " + e.getMessage());
+        e.printStackTrace();
     }
 }
 

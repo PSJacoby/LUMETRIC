@@ -1,0 +1,149 @@
+// Minimal graph test to debug line display issue
+import org.jfree.chart.*;
+import org.jfree.chart.plot.*;
+import org.jfree.chart.renderer.xy.*;
+import org.jfree.data.xy.*;
+import javax.swing.*;
+import java.awt.*;
+
+print("========== MINIMAL GRAPH TEST ==========");
+
+// Create dataset with 2 series
+XYSeriesCollection dataset = new XYSeriesCollection();
+XYSeries series1 = new XYSeries("ROI1");
+series1.setNotify(true);
+XYSeries series2 = new XYSeries("ROI2");
+series2.setNotify(true);
+dataset.addSeries(series1);
+dataset.addSeries(series2);
+
+print("Dataset created with 2 series");
+
+// Create chart
+JFreeChart chart = ChartFactory.createXYLineChart(
+    "Test Graph - Intensity",
+    "Time (ms)",
+    "Intensity [A.U.]",
+    dataset,
+    PlotOrientation.VERTICAL,
+    true, false, false
+);
+
+print("Chart created");
+
+// Customize appearance
+chart.setBackgroundPaint(Color.WHITE);
+XYPlot plot = chart.getXYPlot();
+plot.setBackgroundPaint(Color.LIGHT_GRAY);
+plot.setDomainGridlinePaint(Color.WHITE);
+plot.setRangeGridlinePaint(Color.WHITE);
+
+// Enable line rendering
+XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer();
+renderer.setSeriesLinesVisible(0, true);
+renderer.setSeriesShapesVisible(0, false);
+renderer.setSeriesLinesVisible(1, true);
+renderer.setSeriesShapesVisible(1, false);
+plot.setRenderer(renderer);
+
+print("Renderer configured: lines visible, shapes hidden");
+
+// Create SECOND chart for multi-graph test
+XYSeriesCollection dataset2 = new XYSeriesCollection();
+XYSeries series3 = new XYSeries("ROI3");
+series3.setNotify(true);
+XYSeries series4 = new XYSeries("ROI4");
+series4.setNotify(true);
+dataset2.addSeries(series3);
+dataset2.addSeries(series4);
+
+JFreeChart chart2 = ChartFactory.createXYLineChart(
+    "Test Graph 2 - Intensity",
+    "Time (ms)",
+    "Intensity [A.U.]",
+    dataset2,
+    PlotOrientation.VERTICAL,
+    true, false, false
+);
+chart2.setBackgroundPaint(Color.WHITE);
+XYPlot plot2 = chart2.getXYPlot();
+plot2.setBackgroundPaint(Color.LIGHT_GRAY);
+plot2.setDomainGridlinePaint(Color.WHITE);
+plot2.setRangeGridlinePaint(Color.WHITE);
+
+print("Second chart created");
+
+// Create ChartPanels
+ChartPanel chartPanel1 = new ChartPanel(chart);
+chartPanel1.setMouseWheelEnabled(true);
+ChartPanel chartPanel2 = new ChartPanel(chart2);
+chartPanel2.setMouseWheelEnabled(true);
+
+// Create window with JSplitPane layout (like main code)
+JFrame frame = new JFrame("Multi-Graph Debug Test");
+frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+frame.setLayout(new BorderLayout());
+
+// Use vertical split pane for two graphs
+javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(
+    javax.swing.JSplitPane.VERTICAL_SPLIT,
+    chartPanel1,
+    chartPanel2);
+splitPane.setResizeWeight(0.5);
+
+frame.add(splitPane, BorderLayout.CENTER);
+
+JButton stopButton = new JButton("Stop");
+final boolean[] stopped = new boolean[] { false };
+stopButton.addActionListener(new java.awt.event.ActionListener() {
+    public void actionPerformed(java.awt.event.ActionEvent e) {
+        stopped[0] = true;
+    }
+});
+frame.add(stopButton, BorderLayout.SOUTH);
+
+frame.setSize(800, 600);
+frame.setVisible(true);
+
+print("Window created and visible");
+print("Starting data generation...");
+
+// Background thread to add data
+Thread dataThread = new Thread(new Runnable() {
+    public void run() {
+        int count = 0;
+        while (!stopped[0] && count < 20) {
+            count++;
+            final long time = count * 1000;
+            final double value1 = 100 + Math.random() * 200;
+            final double value2 = 150 + Math.random() * 150;
+            final double value3 = 120 + Math.random() * 180;
+            final double value4 = 140 + Math.random() * 160;
+            
+            print("Adding data point " + count + ": time=" + time + ", ROI1=" + value1 + ", ROI2=" + value2 + ", ROI3=" + value3 + ", ROI4=" + value4);
+            
+            // Add to both charts
+            series1.add(time, value1, true);
+            series2.add(time, value2, true);
+            series3.add(time, value3, true);
+            series4.add(time, value4, true);
+            
+            try {
+                Thread.sleep(1000);
+            } catch (Exception e) {
+                print("Sleep interrupted: " + e);
+            }
+        }
+        print("Data generation complete. Total points: " + count);
+        print("Series1 item count: " + series1.getItemCount());
+        print("Series2 item count: " + series2.getItemCount());
+        print("Series3 item count: " + series3.getItemCount());
+        print("Series4 item count: " + series4.getItemCount());
+    }
+});
+
+dataThread.start();
+
+print("========== TEST RUNNING ==========");
+print("Watch BOTH graphs - you should see lines updating every second in vertical split");
+print("Click 'Stop' button when done");
