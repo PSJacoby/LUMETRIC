@@ -42,6 +42,52 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableCellEditor;
 
+// Acquisition settings - decoupled from GUI
+class AcquisitionSettings {
+    boolean livePics = false;
+    String saveDirectory = "";
+    ArrayList sequenceRows = new ArrayList(); // Each row is ArrayList of column values
+    ArrayList visualizationRows = new ArrayList();
+    
+    void captureFromGUI(DefaultTableModel tableModel, DefaultTableModel vizTableModel, 
+                       JCheckBox livePicsCheckbox, String savePath) {
+        // Capture mode
+        livePics = livePicsCheckbox.isSelected();
+        saveDirectory = savePath;
+        
+        // Capture sequence table
+        sequenceRows.clear();
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            ArrayList row = new ArrayList();
+            for (int j = 0; j < tableModel.getColumnCount(); j++) {
+                row.add(tableModel.getValueAt(i, j));
+            }
+            sequenceRows.add(row);
+        }
+        
+        // Capture visualization table
+        visualizationRows.clear();
+        for (int i = 0; i < vizTableModel.getRowCount(); i++) {
+            ArrayList row = new ArrayList();
+            for (int j = 0; j < vizTableModel.getColumnCount(); j++) {
+                row.add(vizTableModel.getValueAt(i, j));
+            }
+            visualizationRows.add(row);
+        }
+    }
+    
+    boolean isVisualizationNeeded() {
+        for (int i = 0; i < visualizationRows.size(); i++) {
+            ArrayList row = visualizationRows.get(i);
+            String type = (String) row.get(1);
+            if (type != null && !type.trim().isEmpty() && !type.equals("Off")) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
 // Global configuration storage
 class MicroscopeConfig {
     Map pinToChannel = new HashMap();
@@ -52,6 +98,8 @@ class MicroscopeConfig {
     String spectralDefaultConfig = "BrightLight";
     String serialPort = "COM4";
     String configFilePath = "";
+    
+    AcquisitionSettings acqSettings = new AcquisitionSettings();
 
     // Load configuration from file
     boolean loadFromFile(String filePath) {
@@ -497,15 +545,15 @@ class VisualizationTableModel extends DefaultTableModel {
     
     public VisualizationTableModel() {
         super(new Object[][]{
-            {"1", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE},
-            {"2", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE},
-            {"3", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE},
-            {"4", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE}
-        }, new String[]{"Graph", "Type", "every", "every 2nd", "every 3rd", "every 4th"});
+            {"1", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"},
+            {"2", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"},
+            {"3", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"},
+            {"4", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"}
+        }, new String[]{"Graph", "Type", "every", "every 2nd (odd)", "every 2nd (even)", "Custom"});
     }
     
     public Class getColumnClass(int col) {
-        if (col >= 2) {
+        if (col >= 2 && col <= 4) {
             return Boolean.class;
         }
         return String.class;
@@ -515,7 +563,9 @@ class VisualizationTableModel extends DefaultTableModel {
         if (col == 0) return false;
         if (col == 1) return true;
         String type = (String) getValueAt(row, 1);
-        return !type.equals("none");
+        if (type.equals("none")) return false;
+        if (col == 5) return true; // Custom column always editable when type != none
+        return true;
     }
     
     public void setValueAt(Object value, int row, int col) {
@@ -527,38 +577,60 @@ class VisualizationTableModel extends DefaultTableModel {
             super.setValueAt(newType, row, col);
             
             if (newType.equals("none")) {
-                for (int i = 2; i < 6; i++) {
+                for (int i = 2; i <= 4; i++) {
                     super.setValueAt(Boolean.FALSE, row, i);
                 }
+                super.setValueAt("Off", row, 5);
             } else if (oldType.equals("none")) {
-                for (int i = 2; i < 6; i++) {
+                for (int i = 2; i <= 4; i++) {
                     super.setValueAt(Boolean.FALSE, row, i);
                 }
+                super.setValueAt("Off", row, 5);
             }
             
             fireTableRowsUpdated(row, row);
             return;
         }
         
-        if (col >= 2) {
+        if (col >= 2 && col <= 4) {
             String type = (String) super.getValueAt(row, 1);
             if (type.equals("none")) return;
             
             boolean newValue = ((Boolean) value).booleanValue();
             int checkedCount = 0;
-            for (int i = 2; i < 6; i++) {
+            for (int i = 2; i <= 4; i++) {
                 if (((Boolean) super.getValueAt(row, i)).booleanValue()) {
                     checkedCount++;
                 }
             }
             
+            // Check if custom is active
+            String customValue = (String) super.getValueAt(row, 5);
+            boolean customActive = !customValue.equals("Off");
+            
             if (type.equals("Frame ratio")) {
-                if (newValue && checkedCount >= 2) {
+                if (newValue && (checkedCount >= 2 || customActive)) {
                     return;
                 }
             } else {
-                if (newValue && checkedCount >= 1) {
+                if (newValue && (checkedCount >= 1 || customActive)) {
                     return;
+                }
+            }
+            
+            super.setValueAt(value, row, col);
+        }
+        
+        if (col == 5) {
+            String type = (String) super.getValueAt(row, 1);
+            if (type.equals("none")) return;
+            
+            String newValue = (String) value;
+            
+            // If setting custom to something other than "Off", uncheck all checkboxes
+            if (!newValue.equals("Off")) {
+                for (int i = 2; i <= 4; i++) {
+                    super.setValueAt(Boolean.FALSE, row, i);
                 }
             }
             
@@ -571,6 +643,24 @@ class VisualizationTableModel extends DefaultTableModel {
 class VisualizationTypeEditor extends DefaultCellEditor {
     public VisualizationTypeEditor() {
         super(new JComboBox(new String[]{"none", "Intensity", "Split ratio (horizontal)", "Frame ratio"}));
+    }
+}
+
+// Custom cell editor for Custom column (dropdown with interval/offset options)
+class VisualizationCustomEditor extends DefaultCellEditor {
+    public VisualizationCustomEditor() {
+        super(new JComboBox(new String[]{
+            "Off",
+            "every 3rd",
+            "every 3rd (offset 1)",
+            "every 3rd (offset 2)",
+            "every 4th",
+            "every 4th (offset 1)",
+            "every 4th (offset 2)",
+            "every 4th (offset 3)",
+            "every 5th",
+            "every 10th"
+        }));
     }
 }
 
@@ -741,38 +831,139 @@ validateButton.addActionListener(new ActionListener() {
     }
 });
 
+JButton testButton = new JButton("TEST Window");
+testButton.setBackground(Color.MAGENTA);
+testButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        print("TEST: Button clicked");
+        frame.setVisible(false);
+        print("TEST: Main frame hidden");
+        
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() {
+                print("TEST: On EDT, creating test window...");
+                JFrame testFrame = new JFrame("TEST WINDOW");
+                testFrame.setSize(400, 300);
+                testFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+                JLabel label = new JLabel("TEST - If you see this, window creation works!", SwingConstants.CENTER);
+                label.setFont(new Font("SansSerif", Font.BOLD, 16));
+                testFrame.add(label);
+                print("TEST: Test window created, making visible...");
+                testFrame.setVisible(true);
+                print("TEST: Test window should be visible now");
+                frame.dispose();
+                print("TEST: Old frame disposed");
+            }
+        });
+    }
+});
+
 JButton okButton = new JButton("OK - Start Acquisition");
 okButton.setBackground(Color.GREEN);
 okButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         if (validateSequence()) {
-            // Check if visualization is needed and setup ROIs
-            if (isVisualizationNeeded()) {
-                // Run ROI setup in separate thread to avoid EDT blocking
-                new Thread(new Runnable() {
-                    public void run() {
+            // Ensure save directory is selected BEFORE starting threads
+            String lastSavePath = prefs.get("lastSavePath", "");
+            if (lastSavePath.isEmpty() || !new File(lastSavePath).exists()) {
+                JFileChooser dirChooser = new JFileChooser();
+                dirChooser.setDialogTitle("Select Directory for Acquisition Data");
+                dirChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                
+                int result = dirChooser.showDialog(frame, "Select Folder");
+                if (result != JFileChooser.APPROVE_OPTION) {
+                    JOptionPane.showMessageDialog(frame, 
+                        "You must select a save directory to start acquisition.", 
+                        "Save Directory Required", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                
+                File saveDir = dirChooser.getSelectedFile();
+                lastSavePath = saveDir.getAbsolutePath();
+                prefs.put("lastSavePath", lastSavePath);
+                
+                // Update the display label
+                dataDirPathLabel.setText(lastSavePath);
+                dataDirPathLabel.setForeground(Color.BLACK);
+            }
+            
+            // CAPTURE ALL DATA FROM GUI - decouple from UI
+            print("DEBUG: Capturing all settings from GUI...");
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, livePics, lastSavePath);
+            print("DEBUG: Settings captured - disposing GUI...");
+            
+            // DISPOSE GUI IMMEDIATELY - no more GUI dependencies
+            frame.dispose();
+            print("DEBUG: GUI disposed - starting acquisition workflow...");
+            
+            // Run acquisition workflow in background thread with captured data
+            new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        if (config.acqSettings.isVisualizationNeeded()) {
+                        print("DEBUG: Visualization needed - setting up ROIs...");
                         if (!setupVisualizationROIs()) {
+                            print("ERROR: ROI setup failed");
                             return;
                         }
-                        
-                        if (exportTableToCSV()) {
-                            printSequenceData();
-                            SwingUtilities.invokeLater(new Runnable() {
-                                public void run() {
-                                    JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
-                                        "Ready", JOptionPane.INFORMATION_MESSAGE);
-                                }
-                            });
-                        }
                     }
-                }).start();
-            } else {
-                if (exportTableToCSV()) {
-                    printSequenceData();
-                    JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
-                        "Ready", JOptionPane.INFORMATION_MESSAGE);
+                    
+                    try {
+                        print("DEBUG: Exporting CSV files...");
+                        if (!exportTableToCSV()) {
+                            print("ERROR: CSV export failed");
+                            return;
+                        }
+                        print("DEBUG: CSV export successful!");
+                    } catch (Exception csvEx) {
+                        print("ERROR: Exception during CSV export!");
+                        print("Exception type: " + csvEx.getClass().getName());
+                        print("Exception message: " + csvEx.getMessage());
+                        csvEx.printStackTrace();
+                        return;
+                    }
+                    
+                    try {
+                        print("DEBUG: Printing sequence data...");
+                        printSequenceData();
+                        print("DEBUG: Sequence data printed");
+                    } catch (Exception seqEx) {
+                        print("ERROR: Exception printing sequence data!");
+                        print("Exception type: " + seqEx.getClass().getName());
+                        print("Exception message: " + seqEx.getMessage());
+                        seqEx.printStackTrace();
+                        return;
+                    }
+                    
+                    print("DEBUG: Creating acquisition window on EDT...");
+                    SwingUtilities.invokeLater(new Runnable() {
+                        public void run() {
+                            try {
+                                print("DEBUG: Creating acquisition control window...");
+                                JFrame acqWindow = createAcquisitionWindow();
+                                print("DEBUG: Window object returned, making visible...");
+                                acqWindow.setVisible(true);
+                                print("DEBUG: Window.setVisible(true) called");
+                                print("DEBUG: Acquisition window should now be visible!");
+                                print("DEBUG: Window location: " + acqWindow.getLocation());
+                                print("DEBUG: Window size: " + acqWindow.getSize());
+                                print("DEBUG: Window isVisible: " + acqWindow.isVisible());
+                            } catch (Exception ex) {
+                                print("ERROR: Exception creating acquisition window!");
+                                print("Exception type: " + ex.getClass().getName());
+                                print("Exception message: " + ex.getMessage());
+                                ex.printStackTrace();
+                            }
+                        }
+                    });
+                    } catch (Exception threadEx) {
+                        print("ERROR: Uncaught exception in background thread!");
+                        print("Exception type: " + threadEx.getClass().getName());
+                        print("Exception message: " + threadEx.getMessage());
+                        threadEx.printStackTrace();
+                    }
                 }
-            }
+            }).start();
         }
     }
 });
@@ -787,6 +978,7 @@ cancelButton.addActionListener(new ActionListener() {
 controlPanel.add(addButton);
 controlPanel.add(removeButton);
 controlPanel.add(validateButton);
+controlPanel.add(testButton);
 controlPanel.add(okButton);
 controlPanel.add(cancelButton);
 
@@ -884,12 +1076,16 @@ vizTable.getColumnModel().getColumn(0).setPreferredWidth(80);
 vizTable.getColumnModel().getColumn(1).setCellEditor(new VisualizationTypeEditor());
 vizTable.getColumnModel().getColumn(1).setPreferredWidth(180);
 
-// Columns 2-5: Frame checkboxes
-for (int i = 2; i < 6; i++) {
+// Columns 2-4: Frame checkboxes
+for (int i = 2; i < 5; i++) {
     vizTable.getColumnModel().getColumn(i).setCellRenderer(new VisualizationCheckBoxRenderer());
     vizTable.getColumnModel().getColumn(i).setCellEditor(new VisualizationCheckBoxEditor());
     vizTable.getColumnModel().getColumn(i).setPreferredWidth(100);
 }
+
+// Column 5: Custom (dropdown with interval/offset options)
+vizTable.getColumnModel().getColumn(5).setCellEditor(new VisualizationCustomEditor());
+vizTable.getColumnModel().getColumn(5).setPreferredWidth(150);
 
 JScrollPane vizScrollPane = new JScrollPane(vizTable);
 
@@ -906,33 +1102,204 @@ vizStartButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         // Validate sequence first
         if (validateSequence()) {
-            // Check if visualization is needed and setup ROIs
-            if (isVisualizationNeeded()) {
-                // Run ROI setup in separate thread to avoid EDT blocking
-                new Thread(new Runnable() {
-                    public void run() {
-                        if (!setupVisualizationROIs()) {
-                            return;
+            // Ensure save directory is selected BEFORE starting threads
+            String lastSavePath = prefs.get("lastSavePath", "");
+            if (lastSavePath.isEmpty() || !new File(lastSavePath).exists()) {
+                JFileChooser dirChooser = new JFileChooser();
+                dirChooser.setDialogTitle("Select Directory for Acquisition Data");
+                dirChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                
+                int result = dirChooser.showDialog(frame, "Select Folder");
+                if (result != JFileChooser.APPROVE_OPTION) {
+                    JOptionPane.showMessageDialog(frame, 
+                        "You must select a save directory to start acquisition.", 
+                        "Save Directory Required", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                
+                File saveDir = dirChooser.getSelectedFile();
+                lastSavePath = saveDir.getAbsolutePath();
+                prefs.put("lastSavePath", lastSavePath);
+                
+                // Update the display label
+                dataDirPathLabel.setText(lastSavePath);
+                dataDirPathLabel.setForeground(Color.BLACK);
+            }
+            
+            // CAPTURE ALL DATA FROM GUI - decouple from UI
+            print("DEBUG: [VIZ TAB] Capturing all settings from GUI...");
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, livePics, lastSavePath);
+            print("DEBUG: [VIZ TAB] Settings captured - disposing GUI...");
+            
+            // DISPOSE GUI IMMEDIATELY
+            frame.dispose();
+            print("DEBUG: [VIZ TAB] GUI disposed - starting acquisition workflow...");
+            
+            // Run acquisition workflow in background thread with captured data
+            new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        if (config.acqSettings.isVisualizationNeeded()) {
+                            print("DEBUG: [VIZ TAB] Visualization needed - setting up ROIs...");
+                            if (!setupVisualizationROIs()) {
+                                print("ERROR: [VIZ TAB] ROI setup failed");
+                                return;
+                            }
                         }
                         
-                        if (exportTableToCSV()) {
-                            printSequenceData();
-                            SwingUtilities.invokeLater(new Runnable() {
-                                public void run() {
-                                    JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
-                                        "Ready", JOptionPane.INFORMATION_MESSAGE);
-                                }
-                            });
-                        }
+                        try {
+                            print("DEBUG: [VIZ TAB] Exporting CSV files...");
+                            if (!exportTableToCSV()) {
+                                print("ERROR: [VIZ TAB] CSV export failed");
+                                return;
+                            }
+                            print("DEBUG: [VIZ TAB] CSV export successful!");
+                    } catch (Exception csvEx) {
+                        print("ERROR: [VIZ TAB] Exception during CSV export!");
+                        print("Exception type: " + csvEx.getClass().getName());
+                        print("Exception message: " + csvEx.getMessage());
+                        csvEx.printStackTrace();
+                        return;
                     }
-                }).start();
-            } else {
-                if (exportTableToCSV()) {
-                    printSequenceData();
-                    JOptionPane.showMessageDialog(frame, "Sequence validated and saved! Ready to start.", 
-                        "Ready", JOptionPane.INFORMATION_MESSAGE);
+                    
+                    try {
+                        print("DEBUG: [VIZ TAB] Printing sequence data...");
+                        printSequenceData();
+                        print("DEBUG: [VIZ TAB] Sequence data printed");
+                    } catch (Exception seqEx) {
+                        print("ERROR: [VIZ TAB] Exception printing sequence data!");
+                        print("Exception type: " + seqEx.getClass().getName());
+                        print("Exception message: " + seqEx.getMessage());
+                        seqEx.printStackTrace();
+                        return;
+                    }
+                    
+                    print("DEBUG: [VIZ TAB] Creating SIMPLE test window on EDT...");
+                    SwingUtilities.invokeLater(new Runnable() {
+                        public void run() {
+                            try {
+                                print("DEBUG: [VIZ TAB] EDT - Creating acquisition window...");
+                                JFrame acqFrame = new JFrame("LUMETRIC - Acquisition Control");
+                                acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+                                acqFrame.setSize(1000, 700);
+                                acqFrame.setLayout(new BorderLayout(10, 10));
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Creating split pane...");
+                                javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(
+                                    javax.swing.JSplitPane.HORIZONTAL_SPLIT);
+                                splitPane.setResizeWeight(0.75);
+                                splitPane.setDividerLocation(750);
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Creating display panel...");
+                                JPanel displayPanel = new JPanel(new BorderLayout());
+                                displayPanel.setBorder(BorderFactory.createTitledBorder("Live View / Graphs"));
+                                displayPanel.setBackground(Color.DARK_GRAY);
+                                JLabel displayLabel = new JLabel("Live view will appear here", SwingConstants.CENTER);
+                                displayLabel.setForeground(Color.LIGHT_GRAY);
+                                displayPanel.add(displayLabel, BorderLayout.CENTER);
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Creating control panel...");
+                                JPanel controlPanel = new JPanel();
+                                controlPanel.setLayout(new GridLayout(0, 1, 10, 10));
+                                controlPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Creating status label...");
+                                final JLabel statusLabel = new JLabel("Status: Ready", SwingConstants.CENTER);
+                                statusLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
+                                statusLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 20, 0));
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Creating buttons...");
+                                final JButton pauseButton = new JButton("Pause");
+                                pauseButton.setBackground(Color.ORANGE);
+                                pauseButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+                                
+                                final JButton loopSwitchButton = new JButton("Loop Switch");
+                                loopSwitchButton.setBackground(new Color(100, 150, 255));
+                                loopSwitchButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+                                
+                                final JButton abortButton = new JButton("Abort");
+                                abortButton.setBackground(Color.RED);
+                                abortButton.setForeground(Color.WHITE);
+                                abortButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+                                
+                                final JButton closeButton = new JButton("Close");
+                                closeButton.setBackground(Color.LIGHT_GRAY);
+                                closeButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+                                closeButton.setEnabled(false);
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Adding action listeners...");
+                                pauseButton.addActionListener(new ActionListener() {
+                                    public void actionPerformed(ActionEvent e) {
+                                        if (pauseButton.getText().equals("Pause")) {
+                                            pauseButton.setText("Resume");
+                                            pauseButton.setBackground(Color.GREEN);
+                                            statusLabel.setText("Status: Paused");
+                                            print("Acquisition paused");
+                                        } else {
+                                            pauseButton.setText("Pause");
+                                            pauseButton.setBackground(Color.ORANGE);
+                                            statusLabel.setText("Status: Running");
+                                            print("Acquisition resumed");
+                                        }
+                                    }
+                                });
+                                
+                                loopSwitchButton.addActionListener(new ActionListener() {
+                                    public void actionPerformed(ActionEvent e) {
+                                        print("Loop switch triggered");
+                                    }
+                                });
+                                
+                                abortButton.addActionListener(new ActionListener() {
+                                    public void actionPerformed(ActionEvent e) {
+                                        int confirm = JOptionPane.showConfirmDialog(acqFrame,
+                                            "Abort acquisition?", "Confirm", JOptionPane.YES_NO_OPTION);
+                                        if (confirm == JOptionPane.YES_OPTION) {
+                                            print("Acquisition aborted");
+                                            statusLabel.setText("Status: Aborted");
+                                        }
+                                    }
+                                });
+                                
+                                closeButton.addActionListener(new ActionListener() {
+                                    public void actionPerformed(ActionEvent e) {
+                                        print("Closing acquisition window");
+                                        acqFrame.dispose();
+                                    }
+                                });
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Adding components to control panel...");
+                                controlPanel.add(statusLabel);
+                                controlPanel.add(pauseButton);
+                                controlPanel.add(loopSwitchButton);
+                                controlPanel.add(abortButton);
+                                controlPanel.add(closeButton);
+                                controlPanel.add(new JLabel("")); // Spacer
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Assembling split pane...");
+                                splitPane.setLeftComponent(displayPanel);
+                                splitPane.setRightComponent(controlPanel);
+                                acqFrame.add(splitPane, BorderLayout.CENTER);
+                                
+                                print("DEBUG: [VIZ TAB] EDT - Making visible...");
+                                acqFrame.setVisible(true);
+                                print("DEBUG: [VIZ TAB] EDT - Window visible! Success!");
+                            } catch (Exception ex) {
+                                print("ERROR: [VIZ TAB] Exception creating window!");
+                                print("Exception type: " + ex.getClass().getName());
+                                print("Exception message: " + ex.getMessage());
+                                ex.printStackTrace();
+                            }
+                        }
+                    });
+                    } catch (Exception threadEx) {
+                        print("ERROR: [VIZ TAB] Uncaught exception in background thread!");
+                        print("Exception type: " + threadEx.getClass().getName());
+                        print("Exception message: " + threadEx.getMessage());
+                        threadEx.printStackTrace();
+                    }
                 }
-            }
+            }).start();
         } else {
             // Switch to Acquisition Sequence tab to show errors
             tabbedPane.setSelectedIndex(1);
@@ -1164,24 +1531,32 @@ frame.setVisible(true);
         }
     }
 
-    // Print sequence data for debugging
+    // Print sequence data for debugging - uses captured data
     void printSequenceData() {
+        print("DEBUG: [PRINT_SEQ] Starting...");
         print("\n=== Acquisition Sequence ===");
-        print("Live Pictures: " + livePics.isSelected());
+        print("DEBUG: [PRINT_SEQ] Printed header");
+        print("Live Pictures: " + config.acqSettings.livePics);
+        print("DEBUG: [PRINT_SEQ] Printed livePics");
         print("\nSequence Steps:");
+        print("DEBUG: [PRINT_SEQ] About to iterate " + config.acqSettings.sequenceRows.size() + " rows");
 
-        for (int i = 0; i < tableModel.getRowCount(); i++) {
+        for (int i = 0; i < config.acqSettings.sequenceRows.size(); i++) {
+            print("DEBUG: [PRINT_SEQ] Processing row " + (i + 1));
+            ArrayList row = config.acqSettings.sequenceRows.get(i);
             print("Step " + (i + 1) + ":");
-            print("  Channel: " + tableModel.getValueAt(i, 1));
-            print("  Exposure: " + tableModel.getValueAt(i, 2) + " ms");
-            print("  Frame Interval: " + tableModel.getValueAt(i, 3) + " ms");
-            print("  Frames: " + tableModel.getValueAt(i, 4));
-            print("  Loop Goto: " + tableModel.getValueAt(i, 5));
-            print("  Loop Times: " + tableModel.getValueAt(i, 6));
-            print("  Constant Illum: " + tableModel.getValueAt(i, 7));
-            print("  Loop Switch Goto: " + tableModel.getValueAt(i, 8));
+            print("  Channel: " + row.get(1));
+            print("  Exposure: " + row.get(2) + " ms");
+            print("  Frame Interval: " + row.get(3) + " ms");
+            print("  Frames: " + row.get(4));
+            print("  Loop Goto: " + row.get(5));
+            print("  Loop Times: " + row.get(6));
+            print("  Constant Illum: " + row.get(7));
+            print("  Loop Switch Goto: " + row.get(8));
+            print("DEBUG: [PRINT_SEQ] Row " + (i + 1) + " complete");
         }
         print("===========================\n");
+        print("DEBUG: [PRINT_SEQ] Complete");
     }
 
 // ==================== Generic CSV Export Helper ====================
@@ -1270,9 +1645,8 @@ boolean writeCSV(File csvFile, Object headers, Object data, Object comments) {
         return true;
         
     } catch (IOException e) {
-        JOptionPane.showMessageDialog(frame, 
-            "Error writing CSV file: " + e.getMessage(), 
-            "Export Error", JOptionPane.ERROR_MESSAGE);
+        print("ERROR: Failed to write CSV file: " + e.getMessage());
+        e.printStackTrace();
         return false;
     }
 }
@@ -1286,36 +1660,36 @@ String escapeCSV(String value) {
     return value;
 }
 
-// Find next available filename with counter
+// Find next available filename with timestamp
 File getNextAvailableFile(File directory, String baseName, String extension) {
-    File file = new File(directory, baseName + extension);
-    int counter = 1;
-    while (file.exists()) {
-        file = new File(directory, baseName + "_" + counter + extension);
-        counter++;
+    // Use timestamp to avoid having to check existing files
+    import java.text.SimpleDateFormat;
+    import java.util.Date;
+    
+    SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
+    String timestamp = sdf.format(new Date());
+    File file = new File(directory, baseName + "_" + timestamp + extension);
+    
+    // If by some chance file exists (same second), add milliseconds
+    if (file.exists()) {
+        timestamp = sdf.format(new Date()) + "_" + System.currentTimeMillis();
+        file = new File(directory, baseName + "_" + timestamp + extension);
     }
+    
     return file;
 }
 
 // ==================== ROI Setup for Visualization ====================
 
-// Check if any visualization channels are configured
+// Check if any visualization channels are configured - DEPRECATED, use config.acqSettings.isVisualizationNeeded()
 boolean isVisualizationNeeded() {
-    for (int i = 0; i < vizTableModel.getRowCount(); i++) {
-        String type = (String) vizTableModel.getValueAt(i, 1);
-        if (!type.equals("none")) {
-            return true;
-        }
-    }
-    return false;
+    return config.acqSettings.isVisualizationNeeded();
 }
 
 // Setup ROIs for visualization - returns true if successful, false if cancelled
 boolean setupVisualizationROIs() {
     print("========== ROI SETUP START ==========");
-    
-    // Close the main GUI to avoid window interference
-    frame.dispose();
+    // Note: Main GUI is already disposed at this point
     
     import ij.IJ;
     import ij.ImagePlus;
@@ -1430,57 +1804,57 @@ boolean setupVisualizationROIs() {
         }
     }
     
+    // Close ROI Manager to free memory
+    print("Closing ROI Manager...");
+    rm.close();
+    
     print("========== ROI SETUP COMPLETE ==========");
     return true;
 }
 
-    // Export table to CSV with auto-incrementing filename
+    // Export table to CSV with auto-incrementing filename - uses captured data
 boolean exportTableToCSV() {
-    // Get save directory from preferences
-    String lastSavePath = prefs.get("lastSavePath", "");
+    print("DEBUG: [CSV] Starting export...");
+    // Get save directory from captured settings
+    String saveDir = config.acqSettings.saveDirectory;
+    print("DEBUG: [CSV] Save directory: " + saveDir);
     
-    // Force path selection if no path is saved
-    if (lastSavePath.isEmpty() || !new File(lastSavePath).exists()) {
-        JFileChooser dirChooser = new JFileChooser();
-        dirChooser.setDialogTitle("Select Directory for Acquisition Data");
-        dirChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        
-        int result = dirChooser.showDialog(frame, "Select Folder");
-        if (result != JFileChooser.APPROVE_OPTION) {
-            JOptionPane.showMessageDialog(frame, 
-                "You must select a save directory to start acquisition.", 
-                "Save Directory Required", JOptionPane.WARNING_MESSAGE);
-            return false;
-        }
-        
-        File saveDir = dirChooser.getSelectedFile();
-        lastSavePath = saveDir.getAbsolutePath();
-        prefs.put("lastSavePath", lastSavePath);
-        
-        // Update the display label
-        dataDirPathLabel.setText(lastSavePath);
-        dataDirPathLabel.setForeground(Color.BLACK);
+    if (saveDir.isEmpty() || !new File(saveDir).exists()) {
+        print("ERROR: Save directory not set!");
+        return false;
     }
     
-    File saveDir = new File(lastSavePath);
+    File saveDirFile = new File(saveDir);
+    print("DEBUG: [CSV] Save directory file created");
     
     // Find next available filename
-    File csvFileReadable = getNextAvailableFile(saveDir, "AquisitionSettings", ".csv");
+    print("DEBUG: [CSV] Getting next available filename...");
+    File csvFileReadable = getNextAvailableFile(saveDirFile, "AquisitionSettings", ".csv");
+    print("DEBUG: [CSV] Readable file: " + csvFileReadable.getAbsolutePath());
     String baseName = csvFileReadable.getName().replace(".csv", "");
-    File csvFileArduino = new File(saveDir, baseName + "_Arduino.csv");
+    File csvFileArduino = new File(saveDirFile, baseName + "_Arduino.csv");
+    print("DEBUG: [CSV] Arduino file: " + csvFileArduino.getAbsolutePath());
+    
+    ArrayList tableData = config.acqSettings.sequenceRows;
+    print("DEBUG: [CSV] Table data rows: " + tableData.size());
     
     try {
+        print("DEBUG: [CSV] Starting human-readable CSV...");
         // ===== HUMAN-READABLE VERSION =====
         PrintWriter writerReadable = new PrintWriter(new FileWriter(csvFileReadable));
+        print("DEBUG: [CSV] Writer created");
         
         // Write header
         writerReadable.println("Channel,Exposure [ms],Frame Interval [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
+        print("DEBUG: [CSV] Header written");
         
         // Write data rows (display format)
-        for (int i = 0; i < tableModel.getRowCount(); i++) {
+        print("DEBUG: [CSV] Writing data rows...");
+        for (int i = 0; i < tableData.size(); i++) {
             StringBuilder row = new StringBuilder();
-            for (int j = 1; j < tableModel.getColumnCount(); j++) { // Skip column 0 (Row number)
-                String value = tableModel.getValueAt(i, j).toString();
+            ArrayList rowData = (ArrayList) tableData.get(i);
+            for (int j = 1; j < rowData.size(); j++) { // Skip column 0 (Row number)
+                String value = rowData.get(j).toString();
                 
                 // Format display values
                 if (j == 1 && value.isEmpty()) { // Channel
@@ -1494,19 +1868,22 @@ boolean exportTableToCSV() {
                 }
                 
                 row.append(escapeCSV(value));
-                if (j < tableModel.getColumnCount() - 1) {
+                if (j < rowData.size() - 1) {
                     row.append(",");
                 }
             }
             writerReadable.println(row.toString());
         }
         
+        print("DEBUG: [CSV] All data rows written");
         // Write mode settings as comments
         writerReadable.println("");
-        writerReadable.println("# Live Pictures: " + livePics.isSelected());
+        writerReadable.println("# Live Pictures: " + config.acqSettings.livePics);
         
         writerReadable.close();
+        print("DEBUG: [CSV] Readable CSV closed");
         
+        print("DEBUG: [CSV] Starting Arduino CSV...");
         // ===== ARDUINO VERSION =====
         PrintWriter writerArduino = new PrintWriter(new FileWriter(csvFileArduino));
         
@@ -1514,17 +1891,19 @@ boolean exportTableToCSV() {
         writerArduino.println("Channel,Exposure [ms],Frame Interval [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
         
         // Write data rows (Arduino format)
-        for (int i = 0; i < tableModel.getRowCount(); i++) {
+        print("DEBUG: [CSV] Writing Arduino data rows...");
+        for (int i = 0; i < tableData.size(); i++) {
             StringBuilder row = new StringBuilder();
-            for (int j = 1; j < tableModel.getColumnCount(); j++) { // Skip column 0 (Row number)
-                String value = tableModel.getValueAt(i, j).toString();
+            ArrayList rowData = (ArrayList) tableData.get(i);
+            for (int j = 1; j < rowData.size(); j++) { // Skip column 0 (Row number)
+                String value = rowData.get(j).toString();
                 String arduinoValue = value;
                 
                 // Convert to Arduino format
                 if (j == 1) { // Channel
                     if (value.isEmpty()) {
                         // none channel: 1 if Exposure > 0 (camera only), 0 if Exposure = 0
-                        String exposureStr = tableModel.getValueAt(i, 2).toString();
+                        String exposureStr = rowData.get(2).toString();
                         try {
                             int exposure = exposureStr.isEmpty() ? 0 : Integer.parseInt(exposureStr);
                             arduinoValue = exposure > 0 ? "1" : "0";
@@ -1574,30 +1953,178 @@ boolean exportTableToCSV() {
                 }
                 
                 row.append(escapeCSV(arduinoValue));
-                if (j < tableModel.getColumnCount() - 1) {
+                if (j < rowData.size() - 1) {
                     row.append(",");
                 }
             }
             writerArduino.println(row.toString());
         }
         
+        print("DEBUG: [CSV] Arduino data rows written");
         // Write mode settings as comments
         writerArduino.println("");
-        writerArduino.println("# Live Pictures: " + livePics.isSelected());
+        writerArduino.println("# Live Pictures: " + config.acqSettings.livePics);
         
         writerArduino.close();
+        print("DEBUG: [CSV] Arduino CSV closed");
         
         print("Tables exported to:");
         print("  Readable: " + csvFileReadable.getAbsolutePath());
         print("  Arduino:  " + csvFileArduino.getAbsolutePath());
+        print("DEBUG: [CSV] Export complete, returning true");
         return true;
         
     } catch (IOException e) {
-        JOptionPane.showMessageDialog(frame, 
-            "Error saving file: " + e.getMessage(), 
-            "Export Error", JOptionPane.ERROR_MESSAGE);
+        print("ERROR: Failed to export CSV files: " + e.getMessage());
+        e.printStackTrace();
         return false;
     }
+}
+
+// ==================== Acquisition Control Window ====================
+
+// Create acquisition control window with live view and control buttons
+JFrame createAcquisitionWindow() {
+    print("DEBUG: [ACQ WINDOW] Creating JFrame...");
+    JFrame acqFrame = new JFrame("LUMETRIC - Acquisition Control");
+    print("DEBUG: [ACQ WINDOW] JFrame created");
+    acqFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+    acqFrame.setSize(1000, 700);
+    acqFrame.setLayout(new BorderLayout(10, 10));
+    print("DEBUG: [ACQ WINDOW] JFrame configured");
+    
+    // Main split pane: left = display area, right = controls
+    print("DEBUG: [ACQ WINDOW] Creating split pane...");
+    javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(
+        javax.swing.JSplitPane.HORIZONTAL_SPLIT);
+    splitPane.setResizeWeight(0.75); // 75% for display, 25% for controls
+    splitPane.setDividerLocation(750);
+    print("DEBUG: [ACQ WINDOW] Split pane created");
+    
+    // ===== LEFT PANEL: Display Area =====
+    print("DEBUG: [ACQ WINDOW] Creating display panel...");
+    JPanel displayPanel = new JPanel(new BorderLayout());
+    displayPanel.setBorder(BorderFactory.createTitledBorder("Live View / Graphs"));
+    displayPanel.setBackground(Color.DARK_GRAY);
+    print("DEBUG: [ACQ WINDOW] Display panel created");
+    
+    // Placeholder label (will be replaced with actual graphs/images)
+    print("DEBUG: [ACQ WINDOW] Adding placeholder label...");
+    JLabel displayLabel = new JLabel("Live view and graphs will appear here during acquisition", 
+        SwingConstants.CENTER);
+    displayLabel.setForeground(Color.LIGHT_GRAY);
+    displayLabel.setFont(new Font("SansSerif", Font.ITALIC, 14));
+    displayPanel.add(displayLabel, BorderLayout.CENTER);
+    print("DEBUG: [ACQ WINDOW] Display panel configured");
+    
+    // ===== RIGHT PANEL: Control Buttons =====
+    print("DEBUG: [ACQ WINDOW] Creating control panel...");
+    JPanel controlPanel = new JPanel();
+    controlPanel.setLayout(new GridLayout(0, 1, 10, 10));
+    controlPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+    print("DEBUG: [ACQ WINDOW] Control panel created");
+    
+    // Status label at top
+    print("DEBUG: [ACQ WINDOW] Creating buttons...");
+    JLabel statusLabel = new JLabel("Status: Ready", SwingConstants.CENTER);
+    statusLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
+    statusLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 20, 0));
+    
+    // Pause/Resume button
+    JButton pauseButton = new JButton("Pause");
+    pauseButton.setBackground(Color.ORANGE);
+    pauseButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+    pauseButton.setPreferredSize(new java.awt.Dimension(150, 50));
+    pauseButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            if (pauseButton.getText().equals("Pause")) {
+                pauseButton.setText("Resume");
+                pauseButton.setBackground(Color.GREEN);
+                statusLabel.setText("Status: Paused");
+                print("Acquisition paused by user");
+                // TODO: Set pause flag
+            } else {
+                pauseButton.setText("Pause");
+                pauseButton.setBackground(Color.ORANGE);
+                statusLabel.setText("Status: Running");
+                print("Acquisition resumed by user");
+                // TODO: Clear pause flag
+            }
+        }
+    });
+    
+    // Loop Switch button
+    JButton loopSwitchButton = new JButton("Loop Switch");
+    loopSwitchButton.setBackground(new Color(100, 150, 255)); // Light blue
+    loopSwitchButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+    loopSwitchButton.setPreferredSize(new java.awt.Dimension(150, 50));
+    loopSwitchButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            print("Loop switch triggered by user");
+            // TODO: Trigger loop switch in acquisition logic
+        }
+    });
+    
+    // Abort button
+    JButton abortButton = new JButton("Abort");
+    abortButton.setBackground(Color.RED);
+    abortButton.setForeground(Color.WHITE);
+    abortButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+    abortButton.setPreferredSize(new java.awt.Dimension(150, 50));
+    abortButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            int confirm = JOptionPane.showConfirmDialog(acqFrame,
+                "Are you sure you want to abort the acquisition?",
+                "Confirm Abort",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+            if (confirm == JOptionPane.YES_OPTION) {
+                print("Acquisition aborted by user");
+                statusLabel.setText("Status: Aborted");
+                // TODO: Set abort flag
+            }
+        }
+    });
+    
+    // Close button (only enabled when acquisition is done)
+    JButton closeButton = new JButton("Close");
+    closeButton.setBackground(Color.LIGHT_GRAY);
+    closeButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+    closeButton.setPreferredSize(new java.awt.Dimension(150, 50));
+    closeButton.setEnabled(false); // Disabled until acquisition completes
+    closeButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            print("Closing acquisition window...");
+            acqFrame.dispose();
+            print("Acquisition window closed, memory freed");
+        }
+    });
+    
+    // Add components to control panel
+    print("DEBUG: [ACQ WINDOW] Adding buttons to control panel...");
+    controlPanel.add(statusLabel);
+    controlPanel.add(pauseButton);
+    controlPanel.add(loopSwitchButton);
+    controlPanel.add(abortButton);
+    controlPanel.add(closeButton);
+    
+    // Add vertical glue to push buttons to top
+    controlPanel.add(new JLabel("")); // Spacer
+    print("DEBUG: [ACQ WINDOW] Control panel assembled");
+    
+    // Add panels to split pane
+    print("DEBUG: [ACQ WINDOW] Adding panels to split pane...");
+    splitPane.setLeftComponent(displayPanel);
+    splitPane.setRightComponent(controlPanel);
+    print("DEBUG: [ACQ WINDOW] Split pane assembled");
+    
+    // Add split pane to frame
+    print("DEBUG: [ACQ WINDOW] Adding split pane to frame...");
+    acqFrame.add(splitPane, BorderLayout.CENTER);
+    print("DEBUG: [ACQ WINDOW] Frame layout complete");
+    
+    print("DEBUG: [ACQ WINDOW] Returning frame object - creation complete!");
+    return acqFrame;
 }
 
 print("GUI Test loaded. Close the window to exit.");
