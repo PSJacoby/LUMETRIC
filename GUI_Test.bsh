@@ -887,79 +887,38 @@ okButton.addActionListener(new ActionListener() {
                 dataDirPathLabel.setForeground(Color.BLACK);
             }
             
-            // CAPTURE ALL DATA FROM GUI - decouple from UI
-            print("DEBUG: Capturing all settings from GUI...");
+            // Capture all data from GUI before disposal
             config.acqSettings.captureFromGUI(tableModel, vizTableModel, livePics, lastSavePath);
-            print("DEBUG: Settings captured - disposing GUI...");
             
-            // DISPOSE GUI IMMEDIATELY - no more GUI dependencies
+            // Dispose GUI immediately - no more GUI dependencies
             frame.dispose();
-            print("DEBUG: GUI disposed - starting acquisition workflow...");
             
             // Run acquisition workflow in background thread with captured data
             new Thread(new Runnable() {
                 public void run() {
                     try {
                         if (config.acqSettings.isVisualizationNeeded()) {
-                        print("DEBUG: Visualization needed - setting up ROIs...");
-                        if (!setupVisualizationROIs()) {
-                            print("ERROR: ROI setup failed");
-                            return;
+                            if (!setupVisualizationROIs()) {
+                                print("ERROR: ROI setup failed");
+                                return;
+                            }
                         }
-                    }
-                    
-                    try {
-                        print("DEBUG: Exporting CSV files...");
+                        
                         if (!exportTableToCSV()) {
                             print("ERROR: CSV export failed");
                             return;
                         }
-                        print("DEBUG: CSV export successful!");
-                    } catch (Exception csvEx) {
-                        print("ERROR: Exception during CSV export!");
-                        print("Exception type: " + csvEx.getClass().getName());
-                        print("Exception message: " + csvEx.getMessage());
-                        csvEx.printStackTrace();
-                        return;
-                    }
-                    
-                    try {
-                        print("DEBUG: Printing sequence data...");
+                        
                         printSequenceData();
-                        print("DEBUG: Sequence data printed");
-                    } catch (Exception seqEx) {
-                        print("ERROR: Exception printing sequence data!");
-                        print("Exception type: " + seqEx.getClass().getName());
-                        print("Exception message: " + seqEx.getMessage());
-                        seqEx.printStackTrace();
-                        return;
-                    }
-                    
-                    print("DEBUG: Creating acquisition window on EDT...");
-                    SwingUtilities.invokeLater(new Runnable() {
-                        public void run() {
-                            try {
-                                print("DEBUG: Creating acquisition control window...");
-                                JFrame acqWindow = createAcquisitionWindow();
-                                print("DEBUG: Window object returned, making visible...");
-                                acqWindow.setVisible(true);
-                                print("DEBUG: Window.setVisible(true) called");
-                                print("DEBUG: Acquisition window should now be visible!");
-                                print("DEBUG: Window location: " + acqWindow.getLocation());
-                                print("DEBUG: Window size: " + acqWindow.getSize());
-                                print("DEBUG: Window isVisible: " + acqWindow.isVisible());
-                            } catch (Exception ex) {
-                                print("ERROR: Exception creating acquisition window!");
-                                print("Exception type: " + ex.getClass().getName());
-                                print("Exception message: " + ex.getMessage());
-                                ex.printStackTrace();
+                        
+                        // Create acquisition window on EDT
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() {
+                                createInlineAcquisitionWindow();
                             }
-                        }
-                    });
+                        });
                     } catch (Exception threadEx) {
-                        print("ERROR: Uncaught exception in background thread!");
-                        print("Exception type: " + threadEx.getClass().getName());
-                        print("Exception message: " + threadEx.getMessage());
+                        print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
                     }
                 }
@@ -1126,176 +1085,38 @@ vizStartButton.addActionListener(new ActionListener() {
                 dataDirPathLabel.setForeground(Color.BLACK);
             }
             
-            // CAPTURE ALL DATA FROM GUI - decouple from UI
-            print("DEBUG: [VIZ TAB] Capturing all settings from GUI...");
+            // Capture all data from GUI before disposal
             config.acqSettings.captureFromGUI(tableModel, vizTableModel, livePics, lastSavePath);
-            print("DEBUG: [VIZ TAB] Settings captured - disposing GUI...");
             
-            // DISPOSE GUI IMMEDIATELY
+            // Dispose GUI immediately
             frame.dispose();
-            print("DEBUG: [VIZ TAB] GUI disposed - starting acquisition workflow...");
             
             // Run acquisition workflow in background thread with captured data
             new Thread(new Runnable() {
                 public void run() {
                     try {
                         if (config.acqSettings.isVisualizationNeeded()) {
-                            print("DEBUG: [VIZ TAB] Visualization needed - setting up ROIs...");
                             if (!setupVisualizationROIs()) {
-                                print("ERROR: [VIZ TAB] ROI setup failed");
+                                print("ERROR: ROI setup failed");
                                 return;
                             }
                         }
                         
-                        try {
-                            print("DEBUG: [VIZ TAB] Exporting CSV files...");
-                            if (!exportTableToCSV()) {
-                                print("ERROR: [VIZ TAB] CSV export failed");
-                                return;
-                            }
-                            print("DEBUG: [VIZ TAB] CSV export successful!");
-                    } catch (Exception csvEx) {
-                        print("ERROR: [VIZ TAB] Exception during CSV export!");
-                        print("Exception type: " + csvEx.getClass().getName());
-                        print("Exception message: " + csvEx.getMessage());
-                        csvEx.printStackTrace();
-                        return;
-                    }
-                    
-                    try {
-                        print("DEBUG: [VIZ TAB] Printing sequence data...");
-                        printSequenceData();
-                        print("DEBUG: [VIZ TAB] Sequence data printed");
-                    } catch (Exception seqEx) {
-                        print("ERROR: [VIZ TAB] Exception printing sequence data!");
-                        print("Exception type: " + seqEx.getClass().getName());
-                        print("Exception message: " + seqEx.getMessage());
-                        seqEx.printStackTrace();
-                        return;
-                    }
-                    
-                    print("DEBUG: [VIZ TAB] Creating SIMPLE test window on EDT...");
-                    SwingUtilities.invokeLater(new Runnable() {
-                        public void run() {
-                            try {
-                                print("DEBUG: [VIZ TAB] EDT - Creating acquisition window...");
-                                JFrame acqFrame = new JFrame("LUMETRIC - Acquisition Control");
-                                acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-                                acqFrame.setSize(1000, 700);
-                                acqFrame.setLayout(new BorderLayout(10, 10));
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Creating split pane...");
-                                javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(
-                                    javax.swing.JSplitPane.HORIZONTAL_SPLIT);
-                                splitPane.setResizeWeight(0.75);
-                                splitPane.setDividerLocation(750);
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Creating display panel...");
-                                JPanel displayPanel = new JPanel(new BorderLayout());
-                                displayPanel.setBorder(BorderFactory.createTitledBorder("Live View / Graphs"));
-                                displayPanel.setBackground(Color.DARK_GRAY);
-                                JLabel displayLabel = new JLabel("Live view will appear here", SwingConstants.CENTER);
-                                displayLabel.setForeground(Color.LIGHT_GRAY);
-                                displayPanel.add(displayLabel, BorderLayout.CENTER);
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Creating control panel...");
-                                JPanel controlPanel = new JPanel();
-                                controlPanel.setLayout(new GridLayout(0, 1, 10, 10));
-                                controlPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Creating status label...");
-                                final JLabel statusLabel = new JLabel("Status: Ready", SwingConstants.CENTER);
-                                statusLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-                                statusLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 20, 0));
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Creating buttons...");
-                                final JButton pauseButton = new JButton("Pause");
-                                pauseButton.setBackground(Color.ORANGE);
-                                pauseButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-                                
-                                final JButton loopSwitchButton = new JButton("Loop Switch");
-                                loopSwitchButton.setBackground(new Color(100, 150, 255));
-                                loopSwitchButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-                                
-                                final JButton abortButton = new JButton("Abort");
-                                abortButton.setBackground(Color.RED);
-                                abortButton.setForeground(Color.WHITE);
-                                abortButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-                                
-                                final JButton closeButton = new JButton("Close");
-                                closeButton.setBackground(Color.LIGHT_GRAY);
-                                closeButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-                                closeButton.setEnabled(false);
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Adding action listeners...");
-                                pauseButton.addActionListener(new ActionListener() {
-                                    public void actionPerformed(ActionEvent e) {
-                                        if (pauseButton.getText().equals("Pause")) {
-                                            pauseButton.setText("Resume");
-                                            pauseButton.setBackground(Color.GREEN);
-                                            statusLabel.setText("Status: Paused");
-                                            print("Acquisition paused");
-                                        } else {
-                                            pauseButton.setText("Pause");
-                                            pauseButton.setBackground(Color.ORANGE);
-                                            statusLabel.setText("Status: Running");
-                                            print("Acquisition resumed");
-                                        }
-                                    }
-                                });
-                                
-                                loopSwitchButton.addActionListener(new ActionListener() {
-                                    public void actionPerformed(ActionEvent e) {
-                                        print("Loop switch triggered");
-                                    }
-                                });
-                                
-                                abortButton.addActionListener(new ActionListener() {
-                                    public void actionPerformed(ActionEvent e) {
-                                        int confirm = JOptionPane.showConfirmDialog(acqFrame,
-                                            "Abort acquisition?", "Confirm", JOptionPane.YES_NO_OPTION);
-                                        if (confirm == JOptionPane.YES_OPTION) {
-                                            print("Acquisition aborted");
-                                            statusLabel.setText("Status: Aborted");
-                                        }
-                                    }
-                                });
-                                
-                                closeButton.addActionListener(new ActionListener() {
-                                    public void actionPerformed(ActionEvent e) {
-                                        print("Closing acquisition window");
-                                        acqFrame.dispose();
-                                    }
-                                });
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Adding components to control panel...");
-                                controlPanel.add(statusLabel);
-                                controlPanel.add(pauseButton);
-                                controlPanel.add(loopSwitchButton);
-                                controlPanel.add(abortButton);
-                                controlPanel.add(closeButton);
-                                controlPanel.add(new JLabel("")); // Spacer
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Assembling split pane...");
-                                splitPane.setLeftComponent(displayPanel);
-                                splitPane.setRightComponent(controlPanel);
-                                acqFrame.add(splitPane, BorderLayout.CENTER);
-                                
-                                print("DEBUG: [VIZ TAB] EDT - Making visible...");
-                                acqFrame.setVisible(true);
-                                print("DEBUG: [VIZ TAB] EDT - Window visible! Success!");
-                            } catch (Exception ex) {
-                                print("ERROR: [VIZ TAB] Exception creating window!");
-                                print("Exception type: " + ex.getClass().getName());
-                                print("Exception message: " + ex.getMessage());
-                                ex.printStackTrace();
-                            }
+                        if (!exportTableToCSV()) {
+                            print("ERROR: CSV export failed");
+                            return;
                         }
-                    });
+                        
+                        printSequenceData();
+                        
+                        // Create acquisition window on EDT
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() {
+                                createInlineAcquisitionWindow();
+                            }
+                        });
                     } catch (Exception threadEx) {
-                        print("ERROR: [VIZ TAB] Uncaught exception in background thread!");
-                        print("Exception type: " + threadEx.getClass().getName());
-                        print("Exception message: " + threadEx.getMessage());
+                        print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
                     }
                 }
@@ -1533,16 +1354,11 @@ frame.setVisible(true);
 
     // Print sequence data for debugging - uses captured data
     void printSequenceData() {
-        print("DEBUG: [PRINT_SEQ] Starting...");
         print("\n=== Acquisition Sequence ===");
-        print("DEBUG: [PRINT_SEQ] Printed header");
         print("Live Pictures: " + config.acqSettings.livePics);
-        print("DEBUG: [PRINT_SEQ] Printed livePics");
         print("\nSequence Steps:");
-        print("DEBUG: [PRINT_SEQ] About to iterate " + config.acqSettings.sequenceRows.size() + " rows");
 
         for (int i = 0; i < config.acqSettings.sequenceRows.size(); i++) {
-            print("DEBUG: [PRINT_SEQ] Processing row " + (i + 1));
             ArrayList row = config.acqSettings.sequenceRows.get(i);
             print("Step " + (i + 1) + ":");
             print("  Channel: " + row.get(1));
@@ -1553,10 +1369,8 @@ frame.setVisible(true);
             print("  Loop Times: " + row.get(6));
             print("  Constant Illum: " + row.get(7));
             print("  Loop Switch Goto: " + row.get(8));
-            print("DEBUG: [PRINT_SEQ] Row " + (i + 1) + " complete");
         }
         print("===========================\n");
-        print("DEBUG: [PRINT_SEQ] Complete");
     }
 
 // ==================== Generic CSV Export Helper ====================
@@ -1814,10 +1628,8 @@ boolean setupVisualizationROIs() {
 
     // Export table to CSV with auto-incrementing filename - uses captured data
 boolean exportTableToCSV() {
-    print("DEBUG: [CSV] Starting export...");
     // Get save directory from captured settings
     String saveDir = config.acqSettings.saveDirectory;
-    print("DEBUG: [CSV] Save directory: " + saveDir);
     
     if (saveDir.isEmpty() || !new File(saveDir).exists()) {
         print("ERROR: Save directory not set!");
@@ -1825,31 +1637,15 @@ boolean exportTableToCSV() {
     }
     
     File saveDirFile = new File(saveDir);
-    print("DEBUG: [CSV] Save directory file created");
-    
-    // Find next available filename
-    print("DEBUG: [CSV] Getting next available filename...");
     File csvFileReadable = getNextAvailableFile(saveDirFile, "AquisitionSettings", ".csv");
-    print("DEBUG: [CSV] Readable file: " + csvFileReadable.getAbsolutePath());
     String baseName = csvFileReadable.getName().replace(".csv", "");
     File csvFileArduino = new File(saveDirFile, baseName + "_Arduino.csv");
-    print("DEBUG: [CSV] Arduino file: " + csvFileArduino.getAbsolutePath());
-    
     ArrayList tableData = config.acqSettings.sequenceRows;
-    print("DEBUG: [CSV] Table data rows: " + tableData.size());
     
     try {
-        print("DEBUG: [CSV] Starting human-readable CSV...");
         // ===== HUMAN-READABLE VERSION =====
         PrintWriter writerReadable = new PrintWriter(new FileWriter(csvFileReadable));
-        print("DEBUG: [CSV] Writer created");
-        
-        // Write header
         writerReadable.println("Channel,Exposure [ms],Frame Interval [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
-        print("DEBUG: [CSV] Header written");
-        
-        // Write data rows (display format)
-        print("DEBUG: [CSV] Writing data rows...");
         for (int i = 0; i < tableData.size(); i++) {
             StringBuilder row = new StringBuilder();
             ArrayList rowData = (ArrayList) tableData.get(i);
@@ -1875,23 +1671,14 @@ boolean exportTableToCSV() {
             writerReadable.println(row.toString());
         }
         
-        print("DEBUG: [CSV] All data rows written");
         // Write mode settings as comments
         writerReadable.println("");
         writerReadable.println("# Live Pictures: " + config.acqSettings.livePics);
-        
         writerReadable.close();
-        print("DEBUG: [CSV] Readable CSV closed");
         
-        print("DEBUG: [CSV] Starting Arduino CSV...");
         // ===== ARDUINO VERSION =====
         PrintWriter writerArduino = new PrintWriter(new FileWriter(csvFileArduino));
-        
-        // Write header
         writerArduino.println("Channel,Exposure [ms],Frame Interval [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
-        
-        // Write data rows (Arduino format)
-        print("DEBUG: [CSV] Writing Arduino data rows...");
         for (int i = 0; i < tableData.size(); i++) {
             StringBuilder row = new StringBuilder();
             ArrayList rowData = (ArrayList) tableData.get(i);
@@ -1960,18 +1747,14 @@ boolean exportTableToCSV() {
             writerArduino.println(row.toString());
         }
         
-        print("DEBUG: [CSV] Arduino data rows written");
         // Write mode settings as comments
         writerArduino.println("");
         writerArduino.println("# Live Pictures: " + config.acqSettings.livePics);
-        
         writerArduino.close();
-        print("DEBUG: [CSV] Arduino CSV closed");
         
         print("Tables exported to:");
         print("  Readable: " + csvFileReadable.getAbsolutePath());
         print("  Arduino:  " + csvFileArduino.getAbsolutePath());
-        print("DEBUG: [CSV] Export complete, returning true");
         return true;
         
     } catch (IOException e) {
@@ -1983,148 +1766,430 @@ boolean exportTableToCSV() {
 
 // ==================== Acquisition Control Window ====================
 
-// Create acquisition control window with live view and control buttons
-JFrame createAcquisitionWindow() {
-    print("DEBUG: [ACQ WINDOW] Creating JFrame...");
+// Create acquisition control window inline (called from EDT)
+void createInlineAcquisitionWindow() {
+    import org.jfree.chart.ChartFactory;
+    import org.jfree.chart.ChartPanel;
+    import org.jfree.chart.JFreeChart;
+    import org.jfree.chart.plot.PlotOrientation;
+    import org.jfree.chart.plot.XYPlot;
+    import org.jfree.chart.plot.ValueMarker;
+    import org.jfree.data.xy.XYSeries;
+    import org.jfree.data.xy.XYSeriesCollection;
+    import java.awt.BasicStroke;
+    
     JFrame acqFrame = new JFrame("LUMETRIC - Acquisition Control");
-    print("DEBUG: [ACQ WINDOW] JFrame created");
-    acqFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-    acqFrame.setSize(1000, 700);
-    acqFrame.setLayout(new BorderLayout(10, 10));
-    print("DEBUG: [ACQ WINDOW] JFrame configured");
+    acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
     
-    // Main split pane: left = display area, right = controls
-    print("DEBUG: [ACQ WINDOW] Creating split pane...");
-    javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(
-        javax.swing.JSplitPane.HORIZONTAL_SPLIT);
-    splitPane.setResizeWeight(0.75); // 75% for display, 25% for controls
-    splitPane.setDividerLocation(750);
-    print("DEBUG: [ACQ WINDOW] Split pane created");
+    // Adaptive sizing: use 80% of screen width and 70% of screen height
+    java.awt.Dimension screenSize = java.awt.Toolkit.getDefaultToolkit().getScreenSize();
+    int width = (int)(screenSize.width * 0.8);
+    int height = (int)(screenSize.height * 0.7);
+    acqFrame.setSize(width, height);
     
-    // ===== LEFT PANEL: Display Area =====
-    print("DEBUG: [ACQ WINDOW] Creating display panel...");
-    JPanel displayPanel = new JPanel(new BorderLayout());
-    displayPanel.setBorder(BorderFactory.createTitledBorder("Live View / Graphs"));
-    displayPanel.setBackground(Color.DARK_GRAY);
-    print("DEBUG: [ACQ WINDOW] Display panel created");
+    // Center window on screen
+    acqFrame.setLocationRelativeTo(null);
     
-    // Placeholder label (will be replaced with actual graphs/images)
-    print("DEBUG: [ACQ WINDOW] Adding placeholder label...");
-    JLabel displayLabel = new JLabel("Live view and graphs will appear here during acquisition", 
-        SwingConstants.CENTER);
-    displayLabel.setForeground(Color.LIGHT_GRAY);
-    displayLabel.setFont(new Font("SansSerif", Font.ITALIC, 14));
-    displayPanel.add(displayLabel, BorderLayout.CENTER);
-    print("DEBUG: [ACQ WINDOW] Display panel configured");
+    acqFrame.setLayout(new BorderLayout());
     
-    // ===== RIGHT PANEL: Control Buttons =====
-    print("DEBUG: [ACQ WINDOW] Creating control panel...");
-    JPanel controlPanel = new JPanel();
-    controlPanel.setLayout(new GridLayout(0, 1, 10, 10));
-    controlPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
-    print("DEBUG: [ACQ WINDOW] Control panel created");
+    // Global event tracking
+    final long[] acquisitionStartTime = new long[1];
+    acquisitionStartTime[0] = System.currentTimeMillis();
     
-    // Status label at top
-    print("DEBUG: [ACQ WINDOW] Creating buttons...");
-    JLabel statusLabel = new JLabel("Status: Ready", SwingConstants.CENTER);
-    statusLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-    statusLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 20, 0));
-    
-    // Pause/Resume button
-    JButton pauseButton = new JButton("Pause");
-    pauseButton.setBackground(Color.ORANGE);
-    pauseButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-    pauseButton.setPreferredSize(new java.awt.Dimension(150, 50));
-    pauseButton.addActionListener(new ActionListener() {
-        public void actionPerformed(ActionEvent e) {
-            if (pauseButton.getText().equals("Pause")) {
-                pauseButton.setText("Resume");
-                pauseButton.setBackground(Color.GREEN);
-                statusLabel.setText("Status: Paused");
-                print("Acquisition paused by user");
-                // TODO: Set pause flag
-            } else {
-                pauseButton.setText("Pause");
-                pauseButton.setBackground(Color.ORANGE);
-                statusLabel.setText("Status: Running");
-                print("Acquisition resumed by user");
-                // TODO: Clear pause flag
-            }
+    // Count active graphs and check for live pics
+    int activeGraphs = 0;
+    for (int i = 0; i < 4; i++) {
+        ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+        String graphType = (String) vizRow.get(1);
+        if (!graphType.equals("none")) {
+            activeGraphs++;
         }
-    });
+    }
+    boolean hasLiveView = config.acqSettings.livePics;
     
-    // Loop Switch button
+    print("Layout: " + activeGraphs + " graphs, livePics=" + hasLiveView);
+    
+    // ===== TOP BUTTON PANEL =====
+    JPanel topPanel = new JPanel(new BorderLayout());
+    topPanel.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+    
+    // Left side buttons (Event, Loop Switch)
+    JPanel leftButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+    
+    final JButton eventButton = new JButton("Event");
+    eventButton.setFont(new Font("SansSerif", Font.BOLD, 11));
+    eventButton.setBackground(new Color(100, 180, 100));
+    eventButton.setPreferredSize(new java.awt.Dimension(130, 28));
+    
     JButton loopSwitchButton = new JButton("Loop Switch");
-    loopSwitchButton.setBackground(new Color(100, 150, 255)); // Light blue
-    loopSwitchButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-    loopSwitchButton.setPreferredSize(new java.awt.Dimension(150, 50));
+    loopSwitchButton.setFont(new Font("SansSerif", Font.BOLD, 11));
+    loopSwitchButton.setBackground(new Color(100, 150, 255));
+    loopSwitchButton.setPreferredSize(new java.awt.Dimension(130, 28));
     loopSwitchButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
-            print("Loop switch triggered by user");
-            // TODO: Trigger loop switch in acquisition logic
+            print("Loop switch triggered");
+            // TODO: Implement loop switch
         }
     });
     
-    // Abort button
-    JButton abortButton = new JButton("Abort");
-    abortButton.setBackground(Color.RED);
-    abortButton.setForeground(Color.WHITE);
-    abortButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-    abortButton.setPreferredSize(new java.awt.Dimension(150, 50));
-    abortButton.addActionListener(new ActionListener() {
+    JButton resetAllButton = new JButton("Reset All Zooms");
+    resetAllButton.setFont(new Font("SansSerif", Font.BOLD, 11));
+    resetAllButton.setBackground(new Color(200, 200, 200));
+    resetAllButton.setPreferredSize(new java.awt.Dimension(130, 28));
+    resetAllButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            for (int i = 0; i < chartPanels.size(); i++) {
+                ChartPanel panel = (ChartPanel) chartPanels.get(i);
+                if (panel != null) {
+                    panel.restoreAutoBounds();
+                }
+            }
+            print("All zooms reset");
+        }
+    });
+    
+    JButton resetXButton = new JButton("Reset X-Axis");
+    resetXButton.setFont(new Font("SansSerif", Font.BOLD, 11));
+    resetXButton.setBackground(new Color(200, 200, 200));
+    resetXButton.setPreferredSize(new java.awt.Dimension(130, 28));
+    resetXButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            for (int i = 0; i < chartPanels.size(); i++) {
+                ChartPanel panel = (ChartPanel) chartPanels.get(i);
+                if (panel != null) {
+                    panel.restoreAutoDomainBounds();
+                }
+            }
+            print("X-axis reset");
+        }
+    });
+    
+    leftButtonPanel.add(eventButton);
+    leftButtonPanel.add(Box.createHorizontalStrut(3));
+    leftButtonPanel.add(loopSwitchButton);
+    leftButtonPanel.add(Box.createHorizontalStrut(15));
+    leftButtonPanel.add(resetAllButton);
+    leftButtonPanel.add(Box.createHorizontalStrut(3));
+    leftButtonPanel.add(resetXButton);
+    
+    // Right side button (Quit Acquisition)
+    JPanel rightButtonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+    
+    JButton quitButton = new JButton("Quit Acquisition");
+    quitButton.setFont(new Font("SansSerif", Font.BOLD, 11));
+    quitButton.setBackground(Color.RED);
+    quitButton.setForeground(Color.BLACK);
+    quitButton.setPreferredSize(new java.awt.Dimension(130, 28));
+    quitButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             int confirm = JOptionPane.showConfirmDialog(acqFrame,
-                "Are you sure you want to abort the acquisition?",
-                "Confirm Abort",
+                "Are you sure you want to quit the acquisition?",
+                "Confirm Quit",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
-                print("Acquisition aborted by user");
-                statusLabel.setText("Status: Aborted");
-                // TODO: Set abort flag
+                print("Acquisition quit by user");
+                acqFrame.dispose();
+                // TODO: Clean up acquisition resources
             }
         }
     });
     
-    // Close button (only enabled when acquisition is done)
-    JButton closeButton = new JButton("Close");
-    closeButton.setBackground(Color.LIGHT_GRAY);
-    closeButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-    closeButton.setPreferredSize(new java.awt.Dimension(150, 50));
-    closeButton.setEnabled(false); // Disabled until acquisition completes
-    closeButton.addActionListener(new ActionListener() {
+    rightButtonPanel.add(quitButton);
+    
+    topPanel.add(leftButtonPanel, BorderLayout.WEST);
+    topPanel.add(rightButtonPanel, BorderLayout.EAST);
+    
+    // ===== MAIN CONTENT: ADAPTIVE LAYOUT =====
+    JPanel mainPanel = new JPanel();
+    
+    // Create charts and collect active ones
+    final ArrayList charts = new ArrayList();
+    final ArrayList chartPlots = new ArrayList();
+    final ArrayList chartPanels = new ArrayList(); // Store chart panels for zoom reset
+    final ArrayList datasets = new ArrayList();
+    
+    for (int i = 0; i < 4; i++) {
+        ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+        String graphName = "Graph " + (i + 1);
+        String graphType = (String) vizRow.get(1);
+        
+        if (graphType.equals("none")) {
+            charts.add(null);
+            chartPlots.add(null);
+            datasets.add(null);
+            continue;
+        }
+        
+        // Build frame logic string
+        String frameLogic = "";
+        Boolean everyFrame = (Boolean) vizRow.get(2);
+        Boolean everyOdd = (Boolean) vizRow.get(3);
+        Boolean everyEven = (Boolean) vizRow.get(4);
+        String custom = (String) vizRow.get(5);
+        
+        if (everyFrame != null && everyFrame.booleanValue()) {
+            frameLogic = "every";
+        } else if (everyOdd != null && everyOdd.booleanValue()) {
+            frameLogic = "odd";
+        } else if (everyEven != null && everyEven.booleanValue()) {
+            frameLogic = "even";
+        } else if (custom != null && !custom.equals("Off")) {
+            frameLogic = custom;
+        }
+        
+        // Create dataset
+        XYSeriesCollection dataset = new XYSeriesCollection();
+        XYSeries dataSeries = new XYSeries("Data");
+        dataset.addSeries(dataSeries);
+        datasets.add(dataset);
+        
+        // Create chart with frame logic in title
+        String yAxisLabel = graphType.equals("Intensity") ? "Intensity [A.U.]" :
+                           graphType.equals("Split ratio (horizontal)") ? "Split Ratio" :
+                           graphType.equals("Frame ratio") ? "Frame Ratio" : "Value";
+        
+        String chartTitle = graphName + " - " + graphType;
+        if (!frameLogic.isEmpty()) {
+            chartTitle += " (" + frameLogic + ")";
+        }
+        
+        JFreeChart chart = ChartFactory.createXYLineChart(
+            chartTitle,
+            "Time (ms)",
+            yAxisLabel,
+            dataset,
+            PlotOrientation.VERTICAL,
+            false, false, false
+        );
+        
+        // Customize appearance
+        chart.setBackgroundPaint(Color.WHITE);
+        chart.getTitle().setFont(new Font("SansSerif", Font.BOLD, 11)); // Smaller title
+        XYPlot plot = chart.getXYPlot();
+        plot.setBackgroundPaint(Color.LIGHT_GRAY);
+        plot.setDomainGridlinePaint(Color.WHITE);
+        plot.setRangeGridlinePaint(Color.WHITE);
+        
+        charts.add(chart);
+        chartPlots.add(plot);
+    }
+    
+    // Event button - adds vertical line markers to all active graphs
+    eventButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
-            print("Closing acquisition window...");
-            acqFrame.dispose();
-            print("Acquisition window closed, memory freed");
+            long currentTime = System.currentTimeMillis() - acquisitionStartTime[0];
+            print("Event triggered at " + currentTime + " ms");
+            
+            // Add vertical line marker to all active graphs
+            for (int i = 0; i < chartPlots.size(); i++) {
+                XYPlot plot = (XYPlot) chartPlots.get(i);
+                if (plot != null) {
+                    ValueMarker marker = new ValueMarker(currentTime);
+                    marker.setPaint(Color.RED);
+                    marker.setStroke(new BasicStroke(2.0f));
+                    plot.addDomainMarker(marker);
+                }
+            }
         }
     });
     
-    // Add components to control panel
-    print("DEBUG: [ACQ WINDOW] Adding buttons to control panel...");
-    controlPanel.add(statusLabel);
-    controlPanel.add(pauseButton);
-    controlPanel.add(loopSwitchButton);
-    controlPanel.add(abortButton);
-    controlPanel.add(closeButton);
+    // ADAPTIVE LAYOUT STRATEGY
+    if (!hasLiveView && activeGraphs == 1) {
+        // CASE 1: Single graph, no live view - ONE BIG WINDOW
+        mainPanel.setLayout(new BorderLayout());
+        for (int i = 0; i < charts.size(); i++) {
+            if (charts.get(i) != null) {
+                ChartPanel chartPanel = new ChartPanel((JFreeChart) charts.get(i));
+                chartPanel.setMouseWheelEnabled(true);
+                chartPanel.setMouseZoomable(true);
+                chartPanel.setDomainZoomable(true);
+                chartPanel.setRangeZoomable(true);
+                chartPanels.add(chartPanel);
+                mainPanel.add(chartPanel, BorderLayout.CENTER);
+                break;
+            }
+        }
+        
+    } else if (hasLiveView && activeGraphs <= 2) {
+        // CASE 2: Live view + up to 2 graphs - SPLIT: Big live, small graphs
+        javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(
+            javax.swing.JSplitPane.HORIZONTAL_SPLIT);
+        splitPane.setResizeWeight(0.7);
+        
+        // Live view (left, large)
+        JPanel liveViewPanel = new JPanel(new BorderLayout());
+        liveViewPanel.setBorder(BorderFactory.createTitledBorder("Live View"));
+        liveViewPanel.setBackground(Color.DARK_GRAY);
+        JLabel liveLabel = new JLabel("Live camera view", SwingConstants.CENTER);
+        liveLabel.setForeground(Color.LIGHT_GRAY);
+        liveViewPanel.add(liveLabel, BorderLayout.CENTER);
+        
+        // Graphs (right, small, stacked with resizable dividers)
+        ArrayList activeCharts = new ArrayList();
+        for (int i = 0; i < charts.size(); i++) {
+            if (charts.get(i) != null) {
+                ChartPanel chartPanel = new ChartPanel((JFreeChart) charts.get(i));
+                chartPanel.setMouseWheelEnabled(true);
+                chartPanel.setMouseZoomable(true);
+                chartPanel.setDomainZoomable(true);
+                chartPanel.setRangeZoomable(true);
+                chartPanel.setPreferredSize(new java.awt.Dimension(300, 200));
+                chartPanels.add(chartPanel);
+                activeCharts.add(chartPanel);
+            }
+        }
+        
+        // Create nested split panes for resizable graphs
+        JComponent graphsPanel = null;
+        if (activeCharts.size() == 1) {
+            graphsPanel = (ChartPanel) activeCharts.get(0);
+        } else if (activeCharts.size() == 2) {
+            javax.swing.JSplitPane graphSplit = new javax.swing.JSplitPane(
+                javax.swing.JSplitPane.VERTICAL_SPLIT,
+                (ChartPanel) activeCharts.get(0),
+                (ChartPanel) activeCharts.get(1));
+            graphSplit.setResizeWeight(0.5);
+            graphsPanel = graphSplit;
+        }
+        
+        splitPane.setLeftComponent(liveViewPanel);
+        splitPane.setRightComponent(graphsPanel);
+        mainPanel.setLayout(new BorderLayout());
+        mainPanel.add(splitPane, BorderLayout.CENTER);
+        
+    } else if (!hasLiveView && activeGraphs == 3) {
+        // CASE 3: 3 graphs, no live - First big, two small
+        javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(
+            javax.swing.JSplitPane.HORIZONTAL_SPLIT);
+        splitPane.setResizeWeight(0.6);
+        
+        // Find first active graph (big)
+        ChartPanel firstChart = null;
+        ArrayList smallCharts = new ArrayList();
+        
+        for (int i = 0; i < charts.size(); i++) {
+            if (charts.get(i) != null) {
+                ChartPanel chartPanel = new ChartPanel((JFreeChart) charts.get(i));
+                chartPanel.setMouseWheelEnabled(true);
+                chartPanel.setMouseZoomable(true);
+                chartPanel.setDomainZoomable(true);
+                chartPanel.setRangeZoomable(true);
+                chartPanels.add(chartPanel);
+                
+                if (firstChart == null) {
+                    firstChart = chartPanel;
+                } else {
+                    chartPanel.setPreferredSize(new java.awt.Dimension(300, 200));
+                    smallCharts.add(chartPanel);
+                    if (smallCharts.size() >= 2) break;
+                }
+            }
+        }
+        
+        // Create split pane for the two small graphs
+        javax.swing.JSplitPane smallGraphsSplit = new javax.swing.JSplitPane(
+            javax.swing.JSplitPane.VERTICAL_SPLIT,
+            (ChartPanel) smallCharts.get(0),
+            (ChartPanel) smallCharts.get(1));
+        smallGraphsSplit.setResizeWeight(0.5);
+        
+        splitPane.setLeftComponent(firstChart);
+        splitPane.setRightComponent(smallGraphsSplit);
+        mainPanel.setLayout(new BorderLayout());
+        mainPanel.add(splitPane, BorderLayout.CENTER);
+        
+    } else {
+        // DEFAULT: Split pane with live view (if enabled) and all graphs
+        javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(
+            javax.swing.JSplitPane.HORIZONTAL_SPLIT);
+        
+        if (hasLiveView) {
+            splitPane.setResizeWeight(0.6);
+            
+            JPanel liveViewPanel = new JPanel(new BorderLayout());
+            liveViewPanel.setBorder(BorderFactory.createTitledBorder("Live View"));
+            liveViewPanel.setBackground(Color.DARK_GRAY);
+            JLabel liveLabel = new JLabel("Live camera view", SwingConstants.CENTER);
+            liveLabel.setForeground(Color.LIGHT_GRAY);
+            liveViewPanel.add(liveLabel, BorderLayout.CENTER);
+            splitPane.setLeftComponent(liveViewPanel);
+        } else {
+            splitPane.setResizeWeight(1.0);
+        }
+        
+        // All graphs stacked with resizable dividers
+        ArrayList activeCharts = new ArrayList();
+        for (int i = 0; i < charts.size(); i++) {
+            if (charts.get(i) != null) {
+                ChartPanel chartPanel = new ChartPanel((JFreeChart) charts.get(i));
+                chartPanel.setMouseWheelEnabled(true);
+                chartPanel.setMouseZoomable(true);
+                chartPanel.setDomainZoomable(true);
+                chartPanel.setRangeZoomable(true);
+                chartPanel.setPreferredSize(new java.awt.Dimension(400, 150));
+                chartPanels.add(chartPanel);
+                activeCharts.add(chartPanel);
+            }
+        }
+        
+        // Create nested split panes for resizable graphs
+        JComponent graphsPanel = null;
+        if (activeCharts.size() == 1) {
+            graphsPanel = (ChartPanel) activeCharts.get(0);
+        } else if (activeCharts.size() == 2) {
+            javax.swing.JSplitPane graphSplit = new javax.swing.JSplitPane(
+                javax.swing.JSplitPane.VERTICAL_SPLIT,
+                (ChartPanel) activeCharts.get(0),
+                (ChartPanel) activeCharts.get(1));
+            graphSplit.setResizeWeight(0.5);
+            graphsPanel = graphSplit;
+        } else if (activeCharts.size() == 3) {
+            javax.swing.JSplitPane topSplit = new javax.swing.JSplitPane(
+                javax.swing.JSplitPane.VERTICAL_SPLIT,
+                (ChartPanel) activeCharts.get(0),
+                (ChartPanel) activeCharts.get(1));
+            topSplit.setResizeWeight(0.33);
+            javax.swing.JSplitPane mainSplit = new javax.swing.JSplitPane(
+                javax.swing.JSplitPane.VERTICAL_SPLIT,
+                topSplit,
+                (ChartPanel) activeCharts.get(2));
+            mainSplit.setResizeWeight(0.66);
+            graphsPanel = mainSplit;
+        } else if (activeCharts.size() == 4) {
+            javax.swing.JSplitPane topSplit = new javax.swing.JSplitPane(
+                javax.swing.JSplitPane.VERTICAL_SPLIT,
+                (ChartPanel) activeCharts.get(0),
+                (ChartPanel) activeCharts.get(1));
+            topSplit.setResizeWeight(0.5);
+            javax.swing.JSplitPane bottomSplit = new javax.swing.JSplitPane(
+                javax.swing.JSplitPane.VERTICAL_SPLIT,
+                (ChartPanel) activeCharts.get(2),
+                (ChartPanel) activeCharts.get(3));
+            bottomSplit.setResizeWeight(0.5);
+            javax.swing.JSplitPane mainSplit = new javax.swing.JSplitPane(
+                javax.swing.JSplitPane.VERTICAL_SPLIT,
+                topSplit,
+                bottomSplit);
+            mainSplit.setResizeWeight(0.5);
+            graphsPanel = mainSplit;
+        }
+        
+        if (hasLiveView) {
+            splitPane.setRightComponent(graphsPanel);
+        } else {
+            splitPane.setLeftComponent(graphsPanel);
+        }
+        
+        mainPanel.setLayout(new BorderLayout());
+        mainPanel.add(splitPane, BorderLayout.CENTER);
+    }
     
-    // Add vertical glue to push buttons to top
-    controlPanel.add(new JLabel("")); // Spacer
-    print("DEBUG: [ACQ WINDOW] Control panel assembled");
+    // Assemble frame
+    acqFrame.add(topPanel, BorderLayout.NORTH);
+    acqFrame.add(mainPanel, BorderLayout.CENTER);
     
-    // Add panels to split pane
-    print("DEBUG: [ACQ WINDOW] Adding panels to split pane...");
-    splitPane.setLeftComponent(displayPanel);
-    splitPane.setRightComponent(controlPanel);
-    print("DEBUG: [ACQ WINDOW] Split pane assembled");
-    
-    // Add split pane to frame
-    print("DEBUG: [ACQ WINDOW] Adding split pane to frame...");
-    acqFrame.add(splitPane, BorderLayout.CENTER);
-    print("DEBUG: [ACQ WINDOW] Frame layout complete");
-    
-    print("DEBUG: [ACQ WINDOW] Returning frame object - creation complete!");
-    return acqFrame;
+    acqFrame.setVisible(true);
 }
 
 print("GUI Test loaded. Close the window to exit.");
