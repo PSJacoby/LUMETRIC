@@ -100,6 +100,8 @@ class MicroscopeConfig {
     String configFilePath = "";
     
     AcquisitionSettings acqSettings = new AcquisitionSettings();
+    ArrayList storedROIs = new ArrayList(); // Store ROIs for acquisition
+    String experimentFolder = ""; // Store experiment folder path
 
     // Load configuration from file
     boolean loadFromFile(String filePath) {
@@ -831,33 +833,6 @@ validateButton.addActionListener(new ActionListener() {
     }
 });
 
-JButton testButton = new JButton("TEST Window");
-testButton.setBackground(Color.MAGENTA);
-testButton.addActionListener(new ActionListener() {
-    public void actionPerformed(ActionEvent e) {
-        print("TEST: Button clicked");
-        frame.setVisible(false);
-        print("TEST: Main frame hidden");
-        
-        SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-                print("TEST: On EDT, creating test window...");
-                JFrame testFrame = new JFrame("TEST WINDOW");
-                testFrame.setSize(400, 300);
-                testFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-                JLabel label = new JLabel("TEST - If you see this, window creation works!", SwingConstants.CENTER);
-                label.setFont(new Font("SansSerif", Font.BOLD, 16));
-                testFrame.add(label);
-                print("TEST: Test window created, making visible...");
-                testFrame.setVisible(true);
-                print("TEST: Test window should be visible now");
-                frame.dispose();
-                print("TEST: Old frame disposed");
-            }
-        });
-    }
-});
-
 JButton okButton = new JButton("OK - Start Acquisition");
 okButton.setBackground(Color.GREEN);
 okButton.addActionListener(new ActionListener() {
@@ -898,6 +873,7 @@ okButton.addActionListener(new ActionListener() {
                 public void run() {
                     try {
                         if (config.acqSettings.isVisualizationNeeded()) {
+                            print("Visualization needed - setting up ROIs...");
                             if (!setupVisualizationROIs()) {
                                 print("ERROR: ROI setup failed");
                                 return;
@@ -937,7 +913,6 @@ cancelButton.addActionListener(new ActionListener() {
 controlPanel.add(addButton);
 controlPanel.add(removeButton);
 controlPanel.add(validateButton);
-controlPanel.add(testButton);
 controlPanel.add(okButton);
 controlPanel.add(cancelButton);
 
@@ -1095,7 +1070,11 @@ vizStartButton.addActionListener(new ActionListener() {
             new Thread(new Runnable() {
                 public void run() {
                     try {
+                        // Create experiment folder first so all files go there
+                        createExperimentFolder();
+                        
                         if (config.acqSettings.isVisualizationNeeded()) {
+                            print("Visualization needed - setting up ROIs...");
                             if (!setupVisualizationROIs()) {
                                 print("ERROR: ROI setup failed");
                                 return;
@@ -1500,6 +1479,22 @@ boolean isVisualizationNeeded() {
     return config.acqSettings.isVisualizationNeeded();
 }
 
+// ==================== Create Experiment Folder ====================
+void createExperimentFolder() {
+    import java.text.SimpleDateFormat;
+    import java.util.Date;
+    SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
+    String timestamp = sdf.format(new Date());
+    String saveDir = config.acqSettings.saveDirectory;
+    File experimentFolder = new File(saveDir, "Experiment_" + timestamp);
+    experimentFolder.mkdir();
+    print("Created experiment folder: " + experimentFolder.getAbsolutePath());
+    
+    // Store experiment folder path in config
+    config.experimentFolder = experimentFolder.getAbsolutePath();
+}
+
+// ==================== Setup Visualization ROIs ====================
 // Setup ROIs for visualization - returns true if successful, false if cancelled
 boolean setupVisualizationROIs() {
     print("========== ROI SETUP START ==========");
@@ -1593,23 +1588,48 @@ boolean setupVisualizationROIs() {
     
     print("Button clicked! done=" + done[0] + ", cancelled=" + cancelled[0]);
     
+    if (cancelled[0]) {
+        // Clean up ImageJ window
+        if (imp.getWindow() != null) {
+            imp.getWindow().close();
+        }
+        print("ROI setup cancelled");
+        return false;
+    }
+    
+    print("ROI count = " + rm.getCount());
+    
+    // Rename ROIs in the ROI Manager immediately
+    for (int i = 0; i < rm.getCount(); i++) {
+        rm.select(i);
+        rm.runCommand("Rename", "ROI" + (i + 1));
+    }
+    print("ROIs renamed in ROI Manager to ROI1, ROI2, etc.");
+    
     // Clean up ImageJ window
     if (imp.getWindow() != null) {
         imp.getWindow().close();
     }
     
-    if (cancelled[0]) {
-        print("ROI setup cancelled");
-        return false;
+    // Store renamed ROIs
+    config.storedROIs = new ArrayList();
+    for (int i = 0; i < rm.getCount(); i++) {
+        ij.gui.Roi roi = rm.getRoi(i);
+        config.storedROIs.add(roi);
     }
+    print("ROIs renamed to ROI1, ROI2, etc.");
+    print("Stored " + config.storedROIs.size() + " ROIs for acquisition");
     
-    // Save ROI set
-    print("ROI count = " + rm.getCount());
+    // Save ROI set with renamed ROIs
     if (rm.getCount() > 0) {
-        String lastSavePath = prefs.get("lastSavePath", "");
-        if (!lastSavePath.isEmpty()) {
-            File saveDir = new File(lastSavePath);
-            File roiFile = getNextAvailableFile(saveDir, "RoiSet", ".zip");
+        // Use experiment folder if it exists, otherwise use data directory
+        String savePath = config.experimentFolder.isEmpty() ? 
+            prefs.get("lastSavePath", "") : config.experimentFolder;
+        if (!savePath.isEmpty()) {
+            File saveDir = new File(savePath);
+            File roiFile = config.experimentFolder.isEmpty() ? 
+                getNextAvailableFile(saveDir, "RoiSet", ".zip") : 
+                new File(saveDir, "RoiSet.zip");
             print("Saving ROIs to: " + roiFile.getAbsolutePath());
             rm.runCommand("Save", roiFile.getAbsolutePath());
             if (roiFile.exists()) {
@@ -1618,7 +1638,7 @@ boolean setupVisualizationROIs() {
         }
     }
     
-    // Close ROI Manager to free memory
+    // Close ROI Manager - we have the ROIs stored
     print("Closing ROI Manager...");
     rm.close();
     
@@ -1636,8 +1656,14 @@ boolean exportTableToCSV() {
         return false;
     }
     
-    File saveDirFile = new File(saveDir);
-    File csvFileReadable = getNextAvailableFile(saveDirFile, "AquisitionSettings", ".csv");
+    // Use experiment folder if it exists
+    File saveDirFile = config.experimentFolder.isEmpty() ? 
+        new File(saveDir) : new File(config.experimentFolder);
+    
+    File csvFileReadable = config.experimentFolder.isEmpty() ? 
+        getNextAvailableFile(saveDirFile, "AquisitionSettings", ".csv") :
+        new File(saveDirFile, "AquisitionSettings.csv");
+    
     String baseName = csvFileReadable.getName().replace(".csv", "");
     File csvFileArduino = new File(saveDirFile, baseName + "_Arduino.csv");
     ArrayList tableData = config.acqSettings.sequenceRows;
@@ -1918,6 +1944,7 @@ void createInlineAcquisitionWindow() {
             charts.add(null);
             chartPlots.add(null);
             datasets.add(null);
+            chartPanels.add(null); // Keep arrays synchronized
             continue;
         }
         
@@ -1938,10 +1965,15 @@ void createInlineAcquisitionWindow() {
             frameLogic = custom;
         }
         
-        // Create dataset
+        // Create dataset with multiple series (one per ROI)
         XYSeriesCollection dataset = new XYSeriesCollection();
-        XYSeries dataSeries = new XYSeries("Data");
-        dataset.addSeries(dataSeries);
+        // Add series for each actual ROI (count from stored ROIs)
+        int numROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+        for (int roiIdx = 0; roiIdx < numROIs; roiIdx++) {
+            XYSeries roiSeries = new XYSeries("ROI" + (roiIdx + 1));
+            roiSeries.setNotify(true); // Enable auto-notification like old code
+            dataset.addSeries(roiSeries);
+        }
         datasets.add(dataset);
         
         // Create chart with frame logic in title
@@ -1960,7 +1992,7 @@ void createInlineAcquisitionWindow() {
             yAxisLabel,
             dataset,
             PlotOrientation.VERTICAL,
-            false, false, false
+            true, false, false  // Enable legend
         );
         
         // Customize appearance
@@ -1971,8 +2003,23 @@ void createInlineAcquisitionWindow() {
         plot.setDomainGridlinePaint(Color.WHITE);
         plot.setRangeGridlinePaint(Color.WHITE);
         
+        // Enable line rendering for all ROI series
+        import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
+        XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer();
+        int numROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+        for (int roiIdx = 0; roiIdx < numROIs; roiIdx++) {
+            renderer.setSeriesLinesVisible(roiIdx, true);
+            renderer.setSeriesShapesVisible(roiIdx, false);
+        }
+        plot.setRenderer(renderer);
+        
+        // Create chart panel and store it
+        ChartPanel chartPanel = new ChartPanel(chart);
+        chartPanel.setMouseWheelEnabled(true);
+        
         charts.add(chart);
         chartPlots.add(plot);
+        chartPanels.add(chartPanel); // Store for repaint access
     }
     
     // Event button - adds vertical line markers to all active graphs
@@ -1998,15 +2045,9 @@ void createInlineAcquisitionWindow() {
     if (!hasLiveView && activeGraphs == 1) {
         // CASE 1: Single graph, no live view - ONE BIG WINDOW
         mainPanel.setLayout(new BorderLayout());
-        for (int i = 0; i < charts.size(); i++) {
-            if (charts.get(i) != null) {
-                ChartPanel chartPanel = new ChartPanel((JFreeChart) charts.get(i));
-                chartPanel.setMouseWheelEnabled(true);
-                chartPanel.setMouseZoomable(true);
-                chartPanel.setDomainZoomable(true);
-                chartPanel.setRangeZoomable(true);
-                chartPanels.add(chartPanel);
-                mainPanel.add(chartPanel, BorderLayout.CENTER);
+        for (int i = 0; i < chartPanels.size(); i++) {
+            if (chartPanels.get(i) != null) {
+                mainPanel.add((ChartPanel) chartPanels.get(i), BorderLayout.CENTER);
                 break;
             }
         }
@@ -2026,29 +2067,22 @@ void createInlineAcquisitionWindow() {
         liveViewPanel.add(liveLabel, BorderLayout.CENTER);
         
         // Graphs (right, small, stacked with resizable dividers)
-        ArrayList activeCharts = new ArrayList();
-        for (int i = 0; i < charts.size(); i++) {
-            if (charts.get(i) != null) {
-                ChartPanel chartPanel = new ChartPanel((JFreeChart) charts.get(i));
-                chartPanel.setMouseWheelEnabled(true);
-                chartPanel.setMouseZoomable(true);
-                chartPanel.setDomainZoomable(true);
-                chartPanel.setRangeZoomable(true);
-                chartPanel.setPreferredSize(new java.awt.Dimension(300, 200));
-                chartPanels.add(chartPanel);
-                activeCharts.add(chartPanel);
+        ArrayList activeChartPanels = new ArrayList();
+        for (int i = 0; i < chartPanels.size(); i++) {
+            if (chartPanels.get(i) != null) {
+                activeChartPanels.add(chartPanels.get(i));
             }
         }
         
         // Create nested split panes for resizable graphs
         JComponent graphsPanel = null;
-        if (activeCharts.size() == 1) {
-            graphsPanel = (ChartPanel) activeCharts.get(0);
-        } else if (activeCharts.size() == 2) {
+        if (activeChartPanels.size() == 1) {
+            graphsPanel = (ChartPanel) activeChartPanels.get(0);
+        } else if (activeChartPanels.size() == 2) {
             javax.swing.JSplitPane graphSplit = new javax.swing.JSplitPane(
                 javax.swing.JSplitPane.VERTICAL_SPLIT,
-                (ChartPanel) activeCharts.get(0),
-                (ChartPanel) activeCharts.get(1));
+                (ChartPanel) activeChartPanels.get(0),
+                (ChartPanel) activeChartPanels.get(1));
             graphSplit.setResizeWeight(0.5);
             graphsPanel = graphSplit;
         }
@@ -2068,20 +2102,12 @@ void createInlineAcquisitionWindow() {
         ChartPanel firstChart = null;
         ArrayList smallCharts = new ArrayList();
         
-        for (int i = 0; i < charts.size(); i++) {
-            if (charts.get(i) != null) {
-                ChartPanel chartPanel = new ChartPanel((JFreeChart) charts.get(i));
-                chartPanel.setMouseWheelEnabled(true);
-                chartPanel.setMouseZoomable(true);
-                chartPanel.setDomainZoomable(true);
-                chartPanel.setRangeZoomable(true);
-                chartPanels.add(chartPanel);
-                
+        for (int i = 0; i < chartPanels.size(); i++) {
+            if (chartPanels.get(i) != null) {
                 if (firstChart == null) {
-                    firstChart = chartPanel;
+                    firstChart = (ChartPanel) chartPanels.get(i);
                 } else {
-                    chartPanel.setPreferredSize(new java.awt.Dimension(300, 200));
-                    smallCharts.add(chartPanel);
+                    smallCharts.add(chartPanels.get(i));
                     if (smallCharts.size() >= 2) break;
                 }
             }
@@ -2119,53 +2145,53 @@ void createInlineAcquisitionWindow() {
         }
         
         // All graphs stacked with resizable dividers
-        ArrayList activeCharts = new ArrayList();
-        for (int i = 0; i < charts.size(); i++) {
-            if (charts.get(i) != null) {
-                ChartPanel chartPanel = new ChartPanel((JFreeChart) charts.get(i));
-                chartPanel.setMouseWheelEnabled(true);
-                chartPanel.setMouseZoomable(true);
-                chartPanel.setDomainZoomable(true);
-                chartPanel.setRangeZoomable(true);
-                chartPanel.setPreferredSize(new java.awt.Dimension(400, 150));
-                chartPanels.add(chartPanel);
-                activeCharts.add(chartPanel);
+        ArrayList activeChartPanels = new ArrayList();
+        for (int i = 0; i < chartPanels.size(); i++) {
+            if (chartPanels.get(i) != null) {
+                activeChartPanels.add(chartPanels.get(i));
+            }
+        }
+        // All graphs stacked with resizable dividers
+        ArrayList activeChartPanels = new ArrayList();
+        for (int i = 0; i < chartPanels.size(); i++) {
+            if (chartPanels.get(i) != null) {
+                activeChartPanels.add(chartPanels.get(i));
             }
         }
         
         // Create nested split panes for resizable graphs
         JComponent graphsPanel = null;
-        if (activeCharts.size() == 1) {
-            graphsPanel = (ChartPanel) activeCharts.get(0);
-        } else if (activeCharts.size() == 2) {
+        if (activeChartPanels.size() == 1) {
+            graphsPanel = (ChartPanel) activeChartPanels.get(0);
+        } else if (activeChartPanels.size() == 2) {
             javax.swing.JSplitPane graphSplit = new javax.swing.JSplitPane(
                 javax.swing.JSplitPane.VERTICAL_SPLIT,
-                (ChartPanel) activeCharts.get(0),
-                (ChartPanel) activeCharts.get(1));
+                (ChartPanel) activeChartPanels.get(0),
+                (ChartPanel) activeChartPanels.get(1));
             graphSplit.setResizeWeight(0.5);
             graphsPanel = graphSplit;
-        } else if (activeCharts.size() == 3) {
+        } else if (activeChartPanels.size() == 3) {
             javax.swing.JSplitPane topSplit = new javax.swing.JSplitPane(
                 javax.swing.JSplitPane.VERTICAL_SPLIT,
-                (ChartPanel) activeCharts.get(0),
-                (ChartPanel) activeCharts.get(1));
+                (ChartPanel) activeChartPanels.get(0),
+                (ChartPanel) activeChartPanels.get(1));
             topSplit.setResizeWeight(0.33);
             javax.swing.JSplitPane mainSplit = new javax.swing.JSplitPane(
                 javax.swing.JSplitPane.VERTICAL_SPLIT,
                 topSplit,
-                (ChartPanel) activeCharts.get(2));
+                (ChartPanel) activeChartPanels.get(2));
             mainSplit.setResizeWeight(0.66);
             graphsPanel = mainSplit;
-        } else if (activeCharts.size() == 4) {
+        } else if (activeChartPanels.size() == 4) {
             javax.swing.JSplitPane topSplit = new javax.swing.JSplitPane(
                 javax.swing.JSplitPane.VERTICAL_SPLIT,
-                (ChartPanel) activeCharts.get(0),
-                (ChartPanel) activeCharts.get(1));
+                (ChartPanel) activeChartPanels.get(0),
+                (ChartPanel) activeChartPanels.get(1));
             topSplit.setResizeWeight(0.5);
             javax.swing.JSplitPane bottomSplit = new javax.swing.JSplitPane(
                 javax.swing.JSplitPane.VERTICAL_SPLIT,
-                (ChartPanel) activeCharts.get(2),
-                (ChartPanel) activeCharts.get(3));
+                (ChartPanel) activeChartPanels.get(2),
+                (ChartPanel) activeChartPanels.get(3));
             bottomSplit.setResizeWeight(0.5);
             javax.swing.JSplitPane mainSplit = new javax.swing.JSplitPane(
                 javax.swing.JSplitPane.VERTICAL_SPLIT,
@@ -2190,6 +2216,313 @@ void createInlineAcquisitionWindow() {
     acqFrame.add(mainPanel, BorderLayout.CENTER);
     
     acqFrame.setVisible(true);
+    
+    print("Window visible, starting acquisition thread...");
+    
+    // ===== START ACQUISITION THREAD =====
+    final boolean[] acquisitionRunning = {true};
+    final ArrayList allDataRows = new ArrayList(); // Store rows [timestamp, roi0, roi1, roi2, roi3] for CSV export
+    
+    // Count active graphs for data structure
+    int activeGraphCount = 0;
+    for (int i = 0; i < 4; i++) {
+        ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+        String graphType = (String) vizRow.get(1);
+        if (!graphType.equals("none")) {
+            activeGraphCount++;
+        }
+    }
+    final int numActiveGraphs = activeGraphCount;
+    
+    // Update Quit button to save data and stop acquisition
+    quitButton.removeActionListener(quitButton.getActionListeners()[0]);
+    quitButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            int confirm = JOptionPane.showConfirmDialog(acqFrame,
+                "Are you sure you want to quit the acquisition?",
+                "Confirm Quit",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+            if (confirm == JOptionPane.YES_OPTION) {
+                print("Acquisition quit by user");
+                acquisitionRunning[0] = false;
+                
+                // Export data to CSV - pass visualization rows for naming
+                exportGraphDataToCSV(allDataRows, numActiveGraphs, config.acqSettings.visualizationRows);
+                
+                acqFrame.dispose();
+            }
+        }
+    });
+    
+    // Start acquisition in background thread
+    print("Creating acquisition thread...");
+    new Thread(new Runnable() {
+        public void run() {
+            print("Acquisition thread started!");
+            try {
+                runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0]);
+            } catch (Exception ex) {
+                print("ERROR in acquisition thread: " + ex.getMessage());
+                ex.printStackTrace();
+            }
+        }
+    }).start();
+    print("Acquisition thread launched.");
+}
+
+// ==================== Frame Filtering Logic ====================
+boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
+    Boolean everyFrame = (Boolean) vizRow.get(2);
+    if (everyFrame != null && everyFrame.booleanValue()) {
+        return true;
+    }
+    
+    Boolean everyOdd = (Boolean) vizRow.get(3);
+    if (everyOdd != null && everyOdd.booleanValue()) {
+        return (frameNumber % 2 == 1);
+    }
+    
+    Boolean everyEven = (Boolean) vizRow.get(4);
+    if (everyEven != null && everyEven.booleanValue()) {
+        return (frameNumber % 2 == 0);
+    }
+    
+    String custom = (String) vizRow.get(5);
+    if (custom != null && !custom.equals("Off")) {
+        // Parse custom patterns like "every 3rd", "every 4th (offset 1)", etc.
+        if (custom.startsWith("every ")) {
+            String[] parts = custom.split(" ");
+            if (parts.length >= 2) {
+                String numStr = parts[1].replace("rd", "").replace("th", "").replace("nd", "").replace("st", "");
+                try {
+                    int interval = Integer.parseInt(numStr);
+                    int offset = 0;
+                    
+                    // Check for offset
+                    if (custom.contains("offset")) {
+                        String offsetStr = custom.substring(custom.indexOf("offset") + 7).trim();
+                        offsetStr = offsetStr.replace(")", "").trim();
+                        offset = Integer.parseInt(offsetStr);
+                    }
+                    
+                    return ((frameNumber - offset) % interval == 0) && (frameNumber >= offset);
+                } catch (NumberFormatException e) {
+                    print("WARNING: Could not parse custom pattern: " + custom);
+                }
+            }
+        }
+    }
+    
+    return false;
+}
+
+// ==================== Main Acquisition Loop ====================
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime) {
+    import ij.IJ;
+    import ij.ImagePlus;
+    import ij.plugin.frame.RoiManager;
+    import ij.process.ImageProcessor;
+    
+    print("========== ACQUISITION START ==========");
+    
+    // Get stored ROIs from config (no need for visible ROI Manager)
+    if (config.storedROIs == null || config.storedROIs.isEmpty()) {
+        print("ERROR: No ROIs stored!");
+        return;
+    }
+    print("Using " + config.storedROIs.size() + " stored ROIs");
+    
+    int frameNumber = 0;
+    
+    while (running[0]) {
+        try {
+            frameNumber++;
+            
+            // Snap image (demo camera)
+            List images = mm.live().snap(false);
+            if (images == null || images.isEmpty()) {
+                print("WARNING: Failed to snap image");
+                Thread.sleep(1000);
+                continue;
+            }
+            
+            org.micromanager.data.Image image = images.get(0);
+            ImageProcessor ip = mm.data().ij().createProcessor(image);
+            
+            long currentTime = System.currentTimeMillis() - startTime;
+            
+            // STEP 1: Measure ALL ROIs (regardless of graph filtering)
+            ArrayList roiValues = new ArrayList();
+            for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
+                ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
+                ip.setRoi(roi);
+                double meanIntensity = ip.getStatistics().mean;
+                roiValues.add(meanIntensity);
+                print("ROI" + (roiIdx + 1) + " [Frame " + frameNumber + "]: " + meanIntensity);
+            }
+            
+            // STEP 2: Build data row with all ROI values
+            ArrayList dataRow = new ArrayList();
+            dataRow.add(frameNumber);
+            dataRow.add(currentTime);
+            for (int i = 0; i < roiValues.size(); i++) {
+                dataRow.add(roiValues.get(i));
+            }
+            // Pad with nulls if less than 4 ROIs
+            while (dataRow.size() < 6) { // frame + timestamp + 4 ROIs
+                dataRow.add(null);
+            }
+            
+            // STEP 3: Update graphs based on their individual frame filters
+            for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
+                ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
+                String graphType = (String) vizRow.get(1);
+                
+                if (graphType.equals("none") || datasets.get(graphIdx) == null) {
+                    continue;
+                }
+                
+                // Check this graph's frame filter
+                if (!shouldProcessFrame(frameNumber, vizRow)) {
+                    continue;
+                }
+                
+                // Only handle Intensity for now
+                if (!graphType.equals("Intensity")) {
+                    continue;
+                }
+                
+                // Update this graph with ALL ROI values
+                final int gIdx = graphIdx;
+                final long time = currentTime;
+                final ArrayList roiValsCopy = new ArrayList(roiValues);
+                
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                        // Add all ROI values to this graph's series - auto-notification enabled
+                        for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
+                            double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
+                            XYSeries series = dataset.getSeries(roiIdx);
+                            series.add(time, value, true); // true = notify listeners
+                        }
+                    }
+                });
+            }
+            
+            // Store row for CSV export
+            dataRows.add(dataRow);
+            
+            // Wait 1 second before next snap
+            Thread.sleep(1000);
+            
+        } catch (InterruptedException ie) {
+            print("Acquisition interrupted");
+            break;
+        } catch (Exception e) {
+            print("ERROR in acquisition loop: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    print("========== ACQUISITION COMPLETE ==========");
+    print("Total frames captured: " + frameNumber);
+    print("Total data rows: " + dataRows.size());
+}
+
+// ==================== CSV Export for Graph Data ====================
+void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList visualizationRows) {
+    if (dataRows.isEmpty()) {
+        print("No data to export");
+        return;
+    }
+    
+    // Use experiment folder instead of root data directory
+    File experimentFolder = new File(config.experimentFolder);
+    if (!experimentFolder.exists()) {
+        print("ERROR: Experiment folder not found");
+        return;
+    }
+    
+    // Determine how many ROIs we have from the first data row
+    int numROIs = ((ArrayList) dataRows.get(0)).size() - 2; // Subtract frame and timestamp columns
+    
+    // Create one CSV file per active graph
+    for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
+        ArrayList vizRow = (ArrayList) visualizationRows.get(graphIdx);
+        String graphType = (String) vizRow.get(1);
+        
+        if (graphType.equals("none")) {
+            continue;
+        }
+        
+        // Build descriptive filename
+        String frameLogic = "";
+        Boolean everyFrame = (Boolean) vizRow.get(2);
+        Boolean everyOdd = (Boolean) vizRow.get(3);
+        Boolean everyEven = (Boolean) vizRow.get(4);
+        String custom = (String) vizRow.get(5);
+        
+        if (everyFrame != null && everyFrame.booleanValue()) {
+            frameLogic = "every";
+        } else if (everyOdd != null && everyOdd.booleanValue()) {
+            frameLogic = "odd";
+        } else if (everyEven != null && everyEven.booleanValue()) {
+            frameLogic = "even";
+        } else if (custom != null && !custom.equals("Off")) {
+            frameLogic = custom.replace(" ", "_");
+        }
+        
+        String fileName = "Graph" + (graphIdx + 1) + "_" + graphType.replace(" ", "_") + "_" + frameLogic + ".csv";
+        File csvFile = new File(experimentFolder, fileName);
+        
+        try {
+            PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
+            
+            // Determine actual number of ROIs from stored ROIs
+            int actualNumROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+            
+            // Header with ROI columns (only actual ROIs)
+            writer.print("Frame,Timestamp [ms]");
+            for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                writer.print(",ROI" + (roiIdx + 1));
+            }
+            writer.println();
+            
+            // Write data rows - only include rows that pass this graph's frame filter
+            for (int i = 0; i < dataRows.size(); i++) {
+                ArrayList row = (ArrayList) dataRows.get(i);
+                
+                // row structure: [frame, timestamp, roi0, roi1, roi2, roi3]
+                int frameNum = ((Integer) row.get(0)).intValue();
+                
+                // Check if this frame passes the graph's filter
+                if (shouldProcessFrame(frameNum, vizRow)) {
+                    writer.print(row.get(0)); // Frame
+                    writer.print(",");
+                    writer.print(row.get(1)); // Timestamp
+                    
+                    // Write only actual ROI values
+                    for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                        writer.print(",");
+                        Object roiValue = row.get(2 + roiIdx);
+                        if (roiValue != null) {
+                            writer.print(roiValue);
+                        }
+                    }
+                    writer.println();
+                }
+            }
+            
+            writer.close();
+            print("Graph " + (graphIdx + 1) + " data exported to: " + csvFile.getName());
+            
+        } catch (IOException e) {
+            print("ERROR: Failed to export graph " + (graphIdx + 1) + " data: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
 }
 
 print("GUI Test loaded. Close the window to exit.");
