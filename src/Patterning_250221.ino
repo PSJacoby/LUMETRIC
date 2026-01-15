@@ -698,6 +698,7 @@
          PORTB = 0;       
          PatpreviousMillis = millis();
          PatExposingMillis = micros(); 
+         PatgoOn = true;
          while (PatgoOn) {
            while (FFC<FirstframeNumber){
              if (millis() - PatpreviousMillis > (FirstframeRate)) {
@@ -715,6 +716,8 @@
                   }
                   if (status == 66) {
                     PatgoOn = false;
+                    PORTB = 0; 
+                    break;
                   }
                 }
                if (micros() - PatExposingMillis > (FirstExposure * 1000)) {
@@ -742,6 +745,8 @@
                   }
                   if (status == 66) {
                     PatgoOn = false;
+                    PORTB = 0; 
+                    break;
                   }
                 }
                if (micros() - PatExposingMillis > (SecExposure * 1000)) {
@@ -768,6 +773,8 @@
                   }
                   if (status == 66) {
                     PatgoOn = false;
+                    PORTB = 0; 
+                    break;
                   }
                 }
                if (micros() - PatExposingMillis > (ThirdExposure * 1000)) {
@@ -804,6 +811,8 @@
                   }
                   if (status == 66) {
                     PatgoOn = false;
+                    PORTB = 0; 
+                    break;
                   }
                 }
                if (micros() - PatExposingMillis > Exposure) {
@@ -841,9 +850,9 @@
            }              
            SFC = 0;   
            PORTB = 0;         
+          }
          }
          break;
-         }
 
        case 45:{ // the trick is to build the serial comm. in a way that it does not disrupt the keep alive
           unsigned int frameRate = 0;
