@@ -150,9 +150,6 @@
    unsigned int ThirdExposure = 0;
    unsigned int ThirdframeNumber = 0;
    byte Thirdpinassignment;
-   byte FirstConstantpinassignment;
-   byte SecondConstantpinassignment;
-   byte ThirdConstantpinassignment;
    bool PatvarSet = true;
    bool PatgoOn = true;
    unsigned int FFC = 0; 
@@ -162,6 +159,10 @@
    unsigned long PatExposingMillis = 0; 
    unsigned long Exposure = 10000; 
    bool PatExposing = true;
+   
+   // Function prototypes
+   bool waitForSerial(unsigned long timeOut);
+   void analogueOut(int channel, byte msb, byte lsb);
    
  void setup() {
    // Higher speeds do not appear to be reliable
@@ -648,63 +649,23 @@
            } 
            PatvarSet = true; 
          }
-         if (waitForSerial(timeOut_)){
-           while (PatvarSet) {
-             int status = Serial.read();
-             if (status == 40){
-               Serial.write( byte(40)); //send keep alive
-               Serial.write( PINC);
-             }
-             else {
-               FirstConstantpinassignment = lowByte(status);
-               PatvarSet = false;              
-             }
-           } 
-           PatvarSet = true;
-         }
-         if (waitForSerial(timeOut_)){
-           while (PatvarSet) {
-             int status = Serial.read();
-             if (status == 40){
-               Serial.write( byte(40)); //send keep alive
-               Serial.write( PINC);
-             }
-             else {
-               SecondConstantpinassignment = lowByte(status);
-               PatvarSet = false;              
-             }
-           } 
-           PatvarSet = true;
-         }
-         if (waitForSerial(timeOut_)){
-           while (PatvarSet) {
-             int status = Serial.read();
-             if (status == 40){
-               Serial.write( byte(40)); //send keep alive
-               Serial.write( PINC);
-             }
-             else {
-               ThirdConstantpinassignment = lowByte(status);
-               PatvarSet = false;              
-             }
-           } 
-           PatvarSet = true;
-         }
-        break;
        }
+        //PORTB = 3;
+        //delay(3000);
+        //PORTB = 0;
+        //Serial.begin(57600);
+        break;
 
-
-       case 48:{ // Aquisition Patterning 
+       case 48:{ // Aquisition Patterning NOT YET DONE!
          PORTB = 0;       
          PatpreviousMillis = millis();
          PatExposingMillis = micros(); 
-         PatgoOn = true;
          while (PatgoOn) {
            while (FFC<FirstframeNumber){
              if (millis() - PatpreviousMillis > (FirstframeRate)) {
              FFC = FFC+1;
              PatpreviousMillis = millis();
-             PORTB = Firstpinassignment + FirstConstantpinassignment;
+             PORTB = Firstpinassignment;
              PatExposingMillis = micros();                    
              PatExposing = true;
              while (PatExposing) {
@@ -716,16 +677,13 @@
                   }
                   if (status == 66) {
                     PatgoOn = false;
-                    PORTB = 0; 
-                    break;
                   }
                 }
                if (micros() - PatExposingMillis > (FirstExposure * 1000)) {
-                 PORTB = FirstConstantpinassignment;
+                 PORTB = 0;
                  PatExposing = false;
                  }
                }   
-               
              }              
            }              
            FFC = 0;              
@@ -733,7 +691,7 @@
              if (millis() - PatpreviousMillis > (SecframeRate)) {
              SFC = SFC+1;
              PatpreviousMillis = millis();
-             PORTB = Secpinassignment + SecondConstantpinassignment;
+             PORTB = Secpinassignment;
              PatExposingMillis = micros();                    
              PatExposing = true;
              while (PatExposing) {
@@ -745,12 +703,10 @@
                   }
                   if (status == 66) {
                     PatgoOn = false;
-                    PORTB = 0; 
-                    break;
                   }
                 }
                if (micros() - PatExposingMillis > (SecExposure * 1000)) {
-                 PORTB = SecondConstantpinassignment;
+                 PORTB = 0;
                  PatExposing = false;
                  }
                }   
@@ -761,7 +717,7 @@
              if (millis() - PatpreviousMillis > (ThirdframeRate)) {
              TFC = TFC+1;
              PatpreviousMillis = millis();
-             PORTB = Thirdpinassignment + ThirdConstantpinassignment;
+             PORTB = Thirdpinassignment;
              PatExposingMillis = micros();                    
              PatExposing = true;
              while (PatExposing) {
@@ -773,20 +729,18 @@
                   }
                   if (status == 66) {
                     PatgoOn = false;
-                    PORTB = 0; 
-                    break;
                   }
                 }
                if (micros() - PatExposingMillis > (ThirdExposure * 1000)) {
-                 PORTB = ThirdConstantpinassignment;
+                 PORTB = 0;
                  PatExposing = false;
                  }
                }   
              }              
            }              
-           TFC = 0;                
+           TFC = 0;          
+           PORTB = 0;         
          }
-         PORTB = 0;   
          break;
          }
 
@@ -811,8 +765,6 @@
                   }
                   if (status == 66) {
                     PatgoOn = false;
-                    PORTB = 0; 
-                    break;
                   }
                 }
                if (micros() - PatExposingMillis > Exposure) {
@@ -850,9 +802,9 @@
            }              
            SFC = 0;   
            PORTB = 0;         
-          }
          }
          break;
+         }
 
        case 45:{ // the trick is to build the serial comm. in a way that it does not disrupt the keep alive
           unsigned int frameRate = 0;
