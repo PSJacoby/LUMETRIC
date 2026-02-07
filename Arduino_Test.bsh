@@ -1,0 +1,78 @@
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.File;
+import mmcorej.CharVector;
+
+// CSV file path
+String csvFile = "C:\\Users\\pauli\\OneDrive\\Dokumente\\Olympus_Skripte\\LUMETRIC_Beanshell\\Data\\Experiment_20260207_232614\\AquisitionSettings_Arduino.csv";
+
+print("Reading Arduino acquisition settings from CSV...");
+
+// Read CSV file
+BufferedReader br = new BufferedReader(new FileReader(csvFile));
+String line;
+int lineCount = 0;
+
+// Skip header
+br.readLine();
+
+// Read data line
+line = br.readLine();
+if (line != null && !line.startsWith("#")) {
+    print("CSV line: " + line);
+    
+    // Parse CSV values
+    String[] values = line.split(",");
+    
+    int channel = Integer.parseInt(values[0].trim());
+    int exposure = Integer.parseInt(values[1].trim());
+    int frameInterval = Integer.parseInt(values[2].trim());
+    int frames = Integer.parseInt(values[3].trim());
+    int loopGoto = Integer.parseInt(values[4].trim());
+    int loopTimes = Integer.parseInt(values[5].trim());
+    int constantIllum = Integer.parseInt(values[6].trim());
+    int loopSwitchGoto = Integer.parseInt(values[7].trim());
+    
+    print("Parsed values:");
+    print("  Channel: " + channel);
+    print("  Exposure [ms]: " + exposure);
+    print("  Frame Interval [ms]: " + frameInterval);
+    print("  Frames: " + frames);
+    print("  Loop Goto: " + loopGoto);
+    print("  Loop Times: " + loopTimes);
+    print("  Constant Illum: " + constantIllum);
+    print("  Loop Switch Goto: " + loopSwitchGoto);
+    
+    // Convert frameInterval to high and low bytes (like in original script)
+    int FLow = 0xff & frameInterval;
+    int F2 = frameInterval >> 8;
+    int FHigh = 0xff & F2;
+    
+    print("\nPreparing serial message:");
+    print("  Frame Interval High Byte: " + FHigh);
+    print("  Frame Interval Low Byte: " + FLow);
+    print("  Exposure: " + exposure);
+    
+    // Create message for Arduino (following pattern from original script)
+    CharVector messageArdu = new CharVector();
+    messageArdu.add((char) 45);      // Command byte (45 = simple mode)
+    messageArdu.add((char) channel); // Pin pattern / Channel
+    messageArdu.add((char) FHigh);   // Frame interval high byte
+    messageArdu.add((char) FLow);    // Frame interval low byte
+    messageArdu.add((char) exposure);// Exposure time
+    
+    print("\nSending message to Arduino on COM4...");
+    print("  Message bytes: [45, " + channel + ", " + FHigh + ", " + FLow + ", " + exposure + "]");
+    
+    // Send to serial port
+    mmc.writeToSerialPort("COM4", messageArdu);
+    
+    print("\n✓ Message sent successfully!");
+    print("\nTo stop the Arduino, you can send a stop command (66):");
+    print("  CharVector stopCmd = new CharVector();");
+    print("  stopCmd.add((char) 66);");
+    print("  mmc.writeToSerialPort(\"COM4\", stopCmd);");
+}
+
+br.close();
+print("\nTest complete!");

@@ -901,6 +901,11 @@ JCheckBox stackPerRow = new JCheckBox("Stack per Row");
 stackPerRow.setToolTipText("Create one stack for each row in the acquisition settings (not yet implemented)");
 stackPerRow.setEnabled(false); // Disabled for now
 
+// Processing mode combo boxes (declared at script scope for save/load access)
+processingModeCombo = null;
+splitAxisCombo = null;
+roiSourceCombo = null;
+
 // Make stack checkboxes mutually exclusive
 convertToStack.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
@@ -1233,7 +1238,7 @@ modePanel.setBorder(BorderFactory.createCompoundBorder(
 JPanel modeSelectionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 JLabel modeLabel = new JLabel("Mode:");
 modeLabel.setFont(modeLabel.getFont().deriveFont(Font.BOLD));
-JComboBox processingModeCombo = new JComboBox(new String[]{"Temporal", "Spatial"});
+processingModeCombo = new JComboBox(new String[]{"Temporal", "Spatial"});
 processingModeCombo.setPreferredSize(new java.awt.Dimension(120, 25));
 modeSelectionPanel.add(modeLabel);
 modeSelectionPanel.add(processingModeCombo);
@@ -1245,11 +1250,11 @@ spatialConfigPanel.setBorder(BorderFactory.createTitledBorder("Spatial Configura
 spatialConfigPanel.setVisible(false);
 
 JLabel splitAxisLabel = new JLabel("Split Axis:");
-JComboBox splitAxisCombo = new JComboBox(new String[]{"Horizontal", "Vertical"});
+splitAxisCombo = new JComboBox(new String[]{"Horizontal", "Vertical"});
 splitAxisCombo.setPreferredSize(new java.awt.Dimension(120, 25));
 
 JLabel roiSourceLabel = new JLabel("ROI Region:");
-JComboBox roiSourceCombo = new JComboBox(new String[]{"Upper", "Lower"});  // Default for Horizontal split
+roiSourceCombo = new JComboBox(new String[]{"Upper", "Lower"});  // Default for Horizontal split
 roiSourceCombo.setPreferredSize(new java.awt.Dimension(120, 25));
 
 spatialConfigPanel.add(splitAxisLabel);
@@ -1925,9 +1930,63 @@ boolean setupVisualizationROIs() {
         return false;
     }
     
-    // Create ImageJ display
-    ImageProcessor ip = mm.data().ij().createProcessor(image);
-    ImagePlus imp = new ImagePlus("ROI Selection - Draw your ROIs", ip);
+    // Get full sensor dimensions
+    int fullWidth = (int) mmc.getImageWidth();
+    int fullHeight = (int) mmc.getImageHeight();
+    print("Full sensor size: " + fullWidth + " x " + fullHeight);
+    
+    // Create ImageJ processor from snapped image
+    ImageProcessor fullIP = mm.data().ij().createProcessor(image);
+    
+    // For spatial mode: crop to show only relevant half
+    ImageProcessor displayIP = fullIP;
+    String displayTitle = "ROI Selection - Draw your ROIs";
+    final int[] cropOffset = {0, 0};  // [offsetX, offsetY]
+    
+    boolean isSpatialMode = config.acqSettings.processingMode.equals("Spatial");
+    final String splitAxis = isSpatialMode ? config.acqSettings.spatialConfig.splitAxis : "";
+    final String roiRegion = isSpatialMode ? config.acqSettings.spatialConfig.roiSourceRegion : "";
+    
+    if (isSpatialMode) {
+        print("Spatial mode: " + splitAxis + " split, showing " + roiRegion + " half");
+        
+        if (splitAxis.equals("Horizontal")) {
+            // Split horizontally (top/bottom)
+            int halfHeight = fullHeight / 2;
+            if (roiRegion.equals("Upper")) {
+                // Show top half
+                fullIP.setRoi(0, 0, fullWidth, halfHeight);
+                displayIP = fullIP.crop();
+                cropOffset[1] = 0;
+                displayTitle = "ROI Selection - UPPER half (will be duplicated to lower half)";
+            } else {
+                // Show bottom half
+                fullIP.setRoi(0, halfHeight, fullWidth, halfHeight);
+                displayIP = fullIP.crop();
+                cropOffset[1] = halfHeight;
+                displayTitle = "ROI Selection - LOWER half (will be duplicated to upper half)";
+            }
+        } else {
+            // Split vertically (left/right)
+            int halfWidth = fullWidth / 2;
+            if (roiRegion.equals("Left")) {
+                // Show left half
+                fullIP.setRoi(0, 0, halfWidth, fullHeight);
+                displayIP = fullIP.crop();
+                cropOffset[0] = 0;
+                displayTitle = "ROI Selection - LEFT half (will be duplicated to right half)";
+            } else {
+                // Show right half
+                fullIP.setRoi(halfWidth, 0, halfWidth, fullHeight);
+                displayIP = fullIP.crop();
+                cropOffset[0] = halfWidth;
+                displayTitle = "ROI Selection - RIGHT half (will be duplicated to left half)";
+            }
+        }
+    }
+    
+    // Create and show ImageJ display
+    ImagePlus imp = new ImagePlus(displayTitle, displayIP);
     imp.show();
     print("Image displayed");
     
@@ -2028,20 +2087,98 @@ boolean setupVisualizationROIs() {
     
     // Determine source region based on processing mode
     String sourceRegion = "original";
-    if (config.acqSettings.processingMode.equals("Spatial")) {
-        sourceRegion = config.acqSettings.spatialConfig.roiSourceRegion;
+    if (isSpatialMode) {
+        sourceRegion = roiRegion;
     }
     
     print("Storing ROIs with source region: " + sourceRegion);
     print("Image dimensions: " + imageWidth + " x " + imageHeight);
     
-    for (int i = 0; i < rm.getCount(); i++) {
+    int originalRoiCount = rm.getCount();
+    
+    // First, adjust original ROIs in ROI Manager to full image coordinates (for spatial mode)
+    if (isSpatialMode) {
+        print("Adjusting original ROI coordinates from cropped to full image");
+        for (int i = 0; i < originalRoiCount; i++) {
+            ij.gui.Roi roi = rm.getRoi(i);
+            java.awt.Rectangle bounds = roi.getBounds();
+            roi.setLocation(bounds.x + cropOffset[0], bounds.y + cropOffset[1]);
+        }
+    }
+    
+    // Store original ROIs with metadata
+    for (int i = 0; i < originalRoiCount; i++) {
         ij.gui.Roi roi = rm.getRoi(i);
-        ROIMetadata roiMeta = new ROIMetadata(roi, sourceRegion, imageWidth, imageHeight);
+        ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
+        
+        ROIMetadata roiMeta = new ROIMetadata(roiCopy, sourceRegion, imageWidth, imageHeight);
         config.storedROIs.add(roiMeta);
     }
+    
+    // For spatial mode: duplicate ROIs to the other half
+    if (isSpatialMode) {
+        print("Duplicating " + originalRoiCount + " ROIs to other half for spatial mode");
+        
+        for (int i = 0; i < originalRoiCount; i++) {
+            ij.gui.Roi roi = rm.getRoi(i);
+            ij.gui.Roi mirroredRoi = (ij.gui.Roi) roi.clone();
+            
+            java.awt.Rectangle bounds = mirroredRoi.getBounds();
+            
+            if (splitAxis.equals("Horizontal")) {
+                // Mirror vertically
+                int halfHeight = imageHeight / 2;
+                if (roiRegion.equals("Upper")) {
+                    // Original is in upper half, mirror to lower
+                    int newY = bounds.y + halfHeight;
+                    mirroredRoi.setLocation(bounds.x, newY);
+                } else {
+                    // Original is in lower half, mirror to upper
+                    int newY = bounds.y - halfHeight;
+                    mirroredRoi.setLocation(bounds.x, newY);
+                }
+            } else {
+                // Mirror horizontally
+                int halfWidth = imageWidth / 2;
+                if (roiRegion.equals("Left")) {
+                    // Original is in left half, mirror to right
+                    int newX = bounds.x + halfWidth;
+                    mirroredRoi.setLocation(newX, bounds.y);
+                } else {
+                    // Original is in right half, mirror to left
+                    int newX = bounds.x - halfWidth;
+                    mirroredRoi.setLocation(newX, bounds.y);
+                }
+            }
+            
+            // Determine mirrored region
+            String mirroredRegion = "";
+            if (splitAxis.equals("Horizontal")) {
+                mirroredRegion = roiRegion.equals("Upper") ? "Lower" : "Upper";
+            } else {
+                mirroredRegion = roiRegion.equals("Left") ? "Right" : "Left";
+            }
+            
+            // Add mirrored ROI to ROI Manager
+            rm.addRoi(mirroredRoi);
+            
+            // Store mirrored ROI with metadata
+            ROIMetadata mirroredMeta = new ROIMetadata(mirroredRoi, mirroredRegion, imageWidth, imageHeight);
+            config.storedROIs.add(mirroredMeta);
+        }
+        
+        // Rename all ROIs in ROI Manager (originals + mirrored)
+        for (int i = 0; i < rm.getCount(); i++) {
+            rm.select(i);
+            rm.runCommand("Rename", "ROI" + (i + 1));
+        }
+        
+        print("Stored " + originalRoiCount + " original + " + originalRoiCount + " mirrored = " + config.storedROIs.size() + " total ROIs");
+    } else {
+        print("Stored " + config.storedROIs.size() + " ROIs for acquisition");
+    }
+    
     print("ROIs renamed to ROI1, ROI2, etc.");
-    print("Stored " + config.storedROIs.size() + " ROIs for acquisition");
     
     // Save ROI set with renamed ROIs
     if (rm.getCount() > 0) {
@@ -2127,22 +2264,38 @@ boolean exportTableToCSV() {
         // Write visualization settings
         writerReadable.println("");
         writerReadable.println("# Visualization Settings");
-        writerReadable.println("Graph,Type,Every Frame,Every Odd,Every Even,Custom");
-        for (int i = 0; i < config.acqSettings.visualizationRows.size(); i++) {
-            ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
-            StringBuilder vizRowStr = new StringBuilder();
-            vizRowStr.append(escapeCSV(vizRow.get(0).toString())); // Graph name
-            vizRowStr.append(",");
-            vizRowStr.append(escapeCSV(vizRow.get(1).toString())); // Type
-            vizRowStr.append(",");
-            vizRowStr.append(vizRow.get(2) != null && ((Boolean)vizRow.get(2)).booleanValue() ? "true" : "false"); // Every frame
-            vizRowStr.append(",");
-            vizRowStr.append(vizRow.get(3) != null && ((Boolean)vizRow.get(3)).booleanValue() ? "true" : "false"); // Every odd
-            vizRowStr.append(",");
-            vizRowStr.append(vizRow.get(4) != null && ((Boolean)vizRow.get(4)).booleanValue() ? "true" : "false"); // Every even
-            vizRowStr.append(",");
-            vizRowStr.append(escapeCSV(vizRow.get(5).toString())); // Custom
-            writerReadable.println(vizRowStr.toString());
+        
+        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+        
+        if (isTemporal) {
+            writerReadable.println("Graph,Type,Every Frame,Every Odd,Every Even,Custom");
+            for (int i = 0; i < config.acqSettings.visualizationRows.size(); i++) {
+                ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+                StringBuilder vizRowStr = new StringBuilder();
+                vizRowStr.append(escapeCSV(vizRow.get(0).toString())); // Graph name
+                vizRowStr.append(",");
+                vizRowStr.append(escapeCSV(vizRow.get(1).toString())); // Type
+                vizRowStr.append(",");
+                vizRowStr.append(vizRow.get(2) != null && ((Boolean)vizRow.get(2)).booleanValue() ? "true" : "false"); // Every frame
+                vizRowStr.append(",");
+                vizRowStr.append(vizRow.get(3) != null && ((Boolean)vizRow.get(3)).booleanValue() ? "true" : "false"); // Every odd
+                vizRowStr.append(",");
+                vizRowStr.append(vizRow.get(4) != null && ((Boolean)vizRow.get(4)).booleanValue() ? "true" : "false"); // Every even
+                vizRowStr.append(",");
+                vizRowStr.append(escapeCSV(vizRow.get(5).toString())); // Custom
+                writerReadable.println(vizRowStr.toString());
+            }
+        } else {
+            // Spatial mode: only 2 columns
+            writerReadable.println("Graph,Type");
+            for (int i = 0; i < config.acqSettings.visualizationRows.size(); i++) {
+                ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+                StringBuilder vizRowStr = new StringBuilder();
+                vizRowStr.append(escapeCSV(vizRow.get(0).toString())); // Graph name
+                vizRowStr.append(",");
+                vizRowStr.append(escapeCSV(vizRow.get(1).toString())); // Type
+                writerReadable.println(vizRowStr.toString());
+            }
         }
         
         writerReadable.close();
@@ -2286,6 +2439,14 @@ void loadSettingsFromCSV() {
             // Check for visualization section header
             if (line.equals("# Visualization Settings")) {
                 inVisualizationSection = true;
+                
+                // Apply mode settings NOW before loading visualization data
+                processingModeCombo.setSelectedItem(loadedMode);
+                if (loadedMode.equals("Spatial")) {
+                    splitAxisCombo.setSelectedItem(loadedSplitAxis);
+                    roiSourceCombo.setSelectedItem(loadedROIRegion);
+                }
+                
                 continue;
             }
             
@@ -2403,13 +2564,6 @@ void loadSettingsFromCSV() {
         }
         
         reader.close();
-        
-        // Apply loaded processing mode settings (must be done after loading to update UI)
-        processingModeCombo.setSelectedItem(loadedMode);
-        if (loadedMode.equals("Spatial")) {
-            splitAxisCombo.setSelectedItem(loadedSplitAxis);
-            roiSourceCombo.setSelectedItem(loadedROIRegion);
-        }
         
         print("Successfully loaded " + tableModel.getRowCount() + " sequence steps");
         if (vizRowIndex > 0) {
@@ -2597,9 +2751,11 @@ void saveSettingsToCSV() {
 
 // Create acquisition control window inline (called from EDT)
 void createInlineAcquisitionWindow() {
+    print("DEBUG: createInlineAcquisitionWindow() called");
     // All imports moved to top of file to avoid BeanShell loading issues
     
     JFrame acqFrame = new JFrame("LUMETRIC - Acquisition Control");
+    print("DEBUG: Frame created");
     acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
     
     // Adaptive sizing: use 80% of screen width and 70% of screen height
@@ -2745,35 +2901,62 @@ void createInlineAcquisitionWindow() {
         
         // Build frame logic string
         String frameLogic = "";
-        Boolean everyFrame = (Boolean) vizRow.get(2);
-        Boolean everyOdd = (Boolean) vizRow.get(3);
-        Boolean everyEven = (Boolean) vizRow.get(4);
-        String custom = (String) vizRow.get(5);
+        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
         
-        if (everyFrame != null && everyFrame.booleanValue()) {
+        if (isTemporal) {
+            // Temporal mode: read frame selection columns
+            Boolean everyFrame = (Boolean) vizRow.get(2);
+            Boolean everyOdd = (Boolean) vizRow.get(3);
+            Boolean everyEven = (Boolean) vizRow.get(4);
+            String custom = (String) vizRow.get(5);
+            
+            if (everyFrame != null && everyFrame.booleanValue()) {
+                frameLogic = "every";
+            } else if (everyOdd != null && everyOdd.booleanValue()) {
+                frameLogic = "odd";
+            } else if (everyEven != null && everyEven.booleanValue()) {
+                frameLogic = "even";
+            } else if (custom != null && !custom.equals("Off")) {
+                frameLogic = custom;
+            }
+        } else {
+            // Spatial mode: always process every frame
             frameLogic = "every";
-        } else if (everyOdd != null && everyOdd.booleanValue()) {
-            frameLogic = "odd";
-        } else if (everyEven != null && everyEven.booleanValue()) {
-            frameLogic = "even";
-        } else if (custom != null && !custom.equals("Off")) {
-            frameLogic = custom;
         }
         
         // Create dataset with multiple series (one per ROI)
         XYSeriesCollection dataset = new XYSeriesCollection();
-        // Add series for each actual ROI (count from stored ROIs)
-        int numROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
-        for (int roiIdx = 0; roiIdx < numROIs; roiIdx++) {
-            XYSeries roiSeries = new XYSeries("ROI" + (roiIdx + 1));
-            roiSeries.setNotify(true); // Enable auto-notification
-            dataset.addSeries(roiSeries);
+        
+        // Determine number of series and naming based on graph type
+        int numSeries;
+        String seriesPrefix;
+        
+        if (graphType.startsWith("Split ratio")) {
+            // Spatial mode: N ratios (one per ROI pair, which is storedROIs / 2)
+            int totalROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+            numSeries = totalROIs / 2;  // Half are source, half are mirrored
+            seriesPrefix = "Ratio";
+        } else if (graphType.startsWith("Intensity ") && !isTemporal) {
+            // Spatial mode Intensity: only source ROIs (first half)
+            int totalROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+            numSeries = totalROIs / 2;  // Only source ROIs
+            seriesPrefix = "ROI";
+        } else {
+            // Temporal mode or standard intensity: series for each ROI
+            numSeries = config.storedROIs != null ? config.storedROIs.size() : 0;
+            seriesPrefix = "ROI";
+        }
+        
+        // Add series
+        for (int seriesIdx = 0; seriesIdx < numSeries; seriesIdx++) {
+            XYSeries series = new XYSeries(seriesPrefix + (seriesIdx + 1));
+            dataset.addSeries(series);
         }
         datasets.add(dataset);
         
         // Create chart with frame logic in title
-        String yAxisLabel = graphType.equals("Intensity") ? "Intensity [A.U.]" :
-                           graphType.equals("Split ratio (horizontal)") ? "Split Ratio" :
+        String yAxisLabel = graphType.equals("Intensity") || graphType.startsWith("Intensity ") ? "Intensity [A.U.]" :
+                           graphType.startsWith("Split ratio") ? "Split Ratio" :
                            graphType.startsWith("Frame ratio") ? "Frame Ratio" : "Value";
         
         String chartTitle = graphName + " - " + graphType;
@@ -2783,7 +2966,7 @@ void createInlineAcquisitionWindow() {
         
         JFreeChart chart = ChartFactory.createXYLineChart(
             chartTitle,
-            "Time (ms)",
+            "Time (s)",
             yAxisLabel,
             dataset,
             PlotOrientation.VERTICAL,
@@ -2798,20 +2981,60 @@ void createInlineAcquisitionWindow() {
         plot.setDomainGridlinePaint(Color.WHITE);
         plot.setRangeGridlinePaint(Color.WHITE);
         
-        // Make lines thicker while preserving default colors
+        // Configure axes with initial range and auto-range expansion
+        org.jfree.chart.axis.NumberAxis domainAxis = (org.jfree.chart.axis.NumberAxis) plot.getDomainAxis();
+        org.jfree.chart.axis.NumberAxis rangeAxis = (org.jfree.chart.axis.NumberAxis) plot.getRangeAxis();
+        
+        // Set initial visible range (will expand as data comes in)
+        domainAxis.setAutoRangeIncludesZero(false);
+        domainAxis.setAutoRange(true);
+        domainAxis.setAutoRangeMinimumSize(1.0);  // At least 1 second visible
+        
+        rangeAxis.setAutoRangeIncludesZero(false);
+        rangeAxis.setAutoRange(true);
+        rangeAxis.setAutoRangeMinimumSize(0.1);  // Minimum range for Y axis
+        
+        print("Configuring renderer for " + graphName + "...");
+        
+        // Configure renderer - enable lines and make them thicker
         org.jfree.chart.renderer.xy.XYItemRenderer renderer = plot.getRenderer();
-        for (int roiIdx = 0; roiIdx < numROIs; roiIdx++) {
-            renderer.setSeriesStroke(roiIdx, new BasicStroke(2.0f));
+        
+        // Check if it's the expected type before casting
+        if (renderer instanceof org.jfree.chart.renderer.xy.XYLineAndShapeRenderer) {
+            org.jfree.chart.renderer.xy.XYLineAndShapeRenderer lineRenderer = (org.jfree.chart.renderer.xy.XYLineAndShapeRenderer) renderer;
+            lineRenderer.setDefaultLinesVisible(true);  // Enable lines by default
+            lineRenderer.setDefaultShapesVisible(false);  // Disable shapes by default (cleaner look)
+            
+            for (int seriesIdx = 0; seriesIdx < numSeries; seriesIdx++) {
+                lineRenderer.setSeriesLinesVisible(seriesIdx, Boolean.TRUE);  // Explicitly enable lines for each series
+                lineRenderer.setSeriesShapesVisible(seriesIdx, Boolean.FALSE);  // Disable shapes for each series
+                lineRenderer.setSeriesStroke(seriesIdx, new BasicStroke(2.0f));  // Thicker lines
+            }
+        } else {
+            // Fallback: just set stroke width on base renderer
+            print("WARNING: Renderer is " + renderer.getClass().getName() + ", not XYLineAndShapeRenderer");
+            for (int seriesIdx = 0; seriesIdx < numSeries; seriesIdx++) {
+                renderer.setSeriesStroke(seriesIdx, new BasicStroke(2.0f));
+            }
         }
+        
+        print("Renderer configured for " + graphName);
         
         // Create chart panel and store it
         ChartPanel chartPanel = new ChartPanel(chart);
         chartPanel.setMouseWheelEnabled(true);
+        chartPanel.setDoubleBuffered(true);
+        chartPanel.setOpaque(true);
+        chartPanel.setRefreshBuffer(true);
+        
+        print("Chart panel created for " + graphName);
         
         charts.add(chart);
         chartPlots.add(plot);
         chartPanels.add(chartPanel); // Store for repaint access
     }
+    
+    print("All charts created, proceeding with layout...");
     
     // Event button - adds vertical line markers to all active graphs
     eventButton.addActionListener(new ActionListener() {
@@ -3038,6 +3261,15 @@ void createInlineAcquisitionWindow() {
     
     acqFrame.setVisible(true);
     
+    print("DEBUG: Frame visible=" + acqFrame.isVisible() + ", frame size=" + acqFrame.getSize());
+    print("DEBUG: Chart panels count=" + chartPanels.size());
+    for (int i = 0; i < chartPanels.size(); i++) {
+        if (chartPanels.get(i) != null) {
+            ChartPanel cp = (ChartPanel) chartPanels.get(i);
+            print("  ChartPanel " + i + ": visible=" + cp.isVisible() + ", size=" + cp.getSize());
+        }
+    }
+    
     // ChartFactory.createXYLineChart() provides a renderer with lines enabled by default
     // No additional renderer configuration needed!
     
@@ -3051,6 +3283,9 @@ void createInlineAcquisitionWindow() {
                     cp.repaint();
                 }
             }
+            acqFrame.revalidate();
+            acqFrame.repaint();
+            print("DEBUG: Initial repaint completed");
         }
     });
     
@@ -3119,6 +3354,12 @@ void createInlineAcquisitionWindow() {
 
 // ==================== Frame Filtering Logic ====================
 boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
+    // Spatial mode: always process every frame
+    if (config.acqSettings.processingMode.equals("Spatial")) {
+        return true;
+    }
+    
+    // Temporal mode: check frame selection columns
     Boolean everyFrame = (Boolean) vizRow.get(2);
     if (everyFrame != null && everyFrame.booleanValue()) {
         return true;
@@ -3230,16 +3471,72 @@ ArrayList calculateFrameRatio(ArrayList numeratorROIs, ArrayList denominatorROIs
     return ratios;
 }
 
+// Calculate spatial ratios from source and mirrored ROIs
+// roiValues contains N values: first half are source region, second half are mirrored region
+// graphType determines the ratio direction
+ArrayList calculateSpatialRatio(ArrayList roiValues, String graphType) {
+    ArrayList ratios = new ArrayList();
+    
+    if (roiValues == null || roiValues.size() < 2 || roiValues.size() % 2 != 0) {
+        return ratios; // Need even number of ROI values (N source + N mirrored)
+    }
+    
+    int numROIPairs = roiValues.size() / 2;
+    
+    // Split ROIs into source (first half) and mirrored (second half)
+    ArrayList sourceROIs = new ArrayList();
+    ArrayList mirroredROIs = new ArrayList();
+    
+    for (int i = 0; i < numROIPairs; i++) {
+        sourceROIs.add(roiValues.get(i));
+        mirroredROIs.add(roiValues.get(i + numROIPairs));
+    }
+    
+    // Determine numerator and denominator based on graph type
+    ArrayList numeratorROIs = null;
+    ArrayList denominatorROIs = null;
+    
+    if (graphType.equals("Split ratio Up/Down") || graphType.equals("Split ratio Left/Right")) {
+        // Source divided by mirrored (Up/Down or Left/Right)
+        numeratorROIs = sourceROIs;
+        denominatorROIs = mirroredROIs;
+    } else if (graphType.equals("Split ratio Down/Up") || graphType.equals("Split ratio Right/Left")) {
+        // Mirrored divided by source (Down/Up or Right/Left)
+        numeratorROIs = mirroredROIs;
+        denominatorROIs = sourceROIs;
+    } else {
+        return ratios; // Unknown graph type
+    }
+    
+    // Calculate ratios for each ROI pair
+    for (int i = 0; i < numROIPairs; i++) {
+        double numerator = ((Double) numeratorROIs.get(i)).doubleValue();
+        double denominator = ((Double) denominatorROIs.get(i)).doubleValue();
+        
+        // Avoid division by zero
+        if (denominator == 0.0) {
+            ratios.add(Double.NaN); // Use NaN for undefined ratios
+        } else {
+            ratios.add(numerator / denominator);
+        }
+    }
+    
+    return ratios;
+}
+
 // Update live view with image and ROI overlays
 void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsList) {
     if (liveViewPanel == null || ip == null) {
         return;
     }
     
+    print("DEBUG: updateLiveView called, panel=" + (liveViewPanel != null) + ", ip=" + (ip != null));
+    
     final ImageProcessor ipCopy = ip.duplicate();
     SwingUtilities.invokeLater(new Runnable() {
         public void run() {
             try {
+                print("DEBUG: updateLiveView SwingUtilities executing");
                 ImagePlus imp = new ImagePlus("Live", ipCopy);
                 
                 // Scale and display - calculate scale first
@@ -3271,7 +3568,8 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
                     }
                     
                     for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
-                        ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
+                        ROIMetadata roiMeta = (ROIMetadata) config.storedROIs.get(roiIdx);
+                        ij.gui.Roi roi = roiMeta.roi;
                         ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
                         
                         // Scale ROI coordinates to match scaled display
@@ -3309,9 +3607,11 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
                     liveViewPanel.add(centerPanel, BorderLayout.CENTER);
                     liveViewPanel.revalidate();
                     liveViewPanel.repaint();
+                    print("DEBUG: Live view updated successfully");
                 }
             } catch (Exception e) {
                 print("ERROR updating live view: " + e.getMessage());
+                e.printStackTrace();
             }
         }
     });
@@ -3321,7 +3621,8 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
 ArrayList measureROIs(ImageProcessor ip) {
     ArrayList roiValues = new ArrayList();
     for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
-        ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
+        ROIMetadata roiMeta = (ROIMetadata) config.storedROIs.get(roiIdx);
+        ij.gui.Roi roi = roiMeta.roi;
         ip.setRoi(roi);
         double meanIntensity = ip.getStatistics().mean;
         roiValues.add(meanIntensity);
@@ -3344,38 +3645,140 @@ ArrayList buildDataRow(int frameNumber, long timestamp, ArrayList roiValues) {
 }
 
 // Update all graphs with new data
-void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues, ArrayList chartPanels) {
+void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues, ArrayList chartPanels, ArrayList charts) {
+    if (frameNumber <= 3) {
+        print("DEBUG updateGraphs: frame=" + frameNumber + ", time=" + currentTime + ", roiValues.size=" + roiValues.size());
+    }
+    
     for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
         ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
         String graphType = (String) vizRow.get(1);
         
         if (graphType.equals("none") || datasets.get(graphIdx) == null) {
+            if (frameNumber <= 3) {
+                print("  Graph " + (graphIdx + 1) + ": skipped (none or null dataset)");
+            }
             continue;
         }
         
         if (!shouldProcessFrame(frameNumber, vizRow)) {
+            if (frameNumber <= 3) {
+                print("  Graph " + (graphIdx + 1) + ": filtered out by shouldProcessFrame");
+            }
             continue;
         }
         
+        if (frameNumber <= 3) {
+            print("  Graph " + (graphIdx + 1) + " (" + graphType + "): processing...");
+        }
+        
         // Handle Intensity graphs
-        if (graphType.equals("Intensity")) {
+        if (graphType.equals("Intensity") || graphType.startsWith("Intensity ")) {
+            if (frameNumber <= 3) {
+                print("    Entered Intensity handler block");
+                print("    graphIdx=" + graphIdx + ", currentTime=" + currentTime);
+                print("    chartPanels=" + (chartPanels != null ? "not null" : "NULL"));
+                print("    charts=" + (charts != null ? "not null" : "NULL"));
+                print("    datasets=" + (datasets != null ? "not null" : "NULL"));
+            }
+            
             final int gIdx = graphIdx;
             final long time = currentTime;
-            final ArrayList roiValsCopy = new ArrayList(roiValues);
             final ArrayList chartPanelsCopy = chartPanels;
+            final ArrayList chartsCopy = charts;
+            
+            if (frameNumber <= 3) {
+                print("    Final variables assigned");
+            }
+            
+            // Determine how many series to update based on mode
+            int numSeriesToUpdate = 0;  // Initialize
+            ArrayList valuesToPlot = new ArrayList();
+            
+            if (frameNumber <= 3) {
+                print("    About to check processing mode: " + config.acqSettings.processingMode);
+            }
+            
+            boolean isSpatialMode = config.acqSettings.processingMode.equals("Spatial");
+            if (frameNumber <= 3) {
+                print("    isSpatialMode=" + isSpatialMode + ", roiValues.size=" + roiValues.size());
+            }
+            
+            if (isSpatialMode) {
+                // Spatial mode: only plot source ROIs (first half)
+                numSeriesToUpdate = roiValues.size() / 2;
+                if (frameNumber <= 3) {
+                    print("    Spatial mode: numSeriesToUpdate=" + numSeriesToUpdate);
+                }
+                for (int i = 0; i < numSeriesToUpdate; i++) {
+                    valuesToPlot.add(roiValues.get(i));
+                }
+            } else {
+                // Temporal mode: plot all ROIs
+                numSeriesToUpdate = roiValues.size();
+                if (frameNumber <= 3) {
+                    print("    Temporal mode: numSeriesToUpdate=" + numSeriesToUpdate);
+                }
+                valuesToPlot.addAll(roiValues);
+            }
+            
+            final int numSeriesToUpdateFinal = numSeriesToUpdate;
+            final ArrayList valuesToPlotFinal = valuesToPlot;
+            
+            if (frameNumber <= 3) {
+                print("    Intensity: numSeriesToUpdate=" + numSeriesToUpdateFinal + ", valuesToPlot.size=" + valuesToPlotFinal.size());
+            }
             
             SwingUtilities.invokeLater(new Runnable() {
                 public void run() {
-                    XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                    for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
-                        XYSeries series = dataset.getSeries(roiIdx);
-                        double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
-                        series.add(time / 1000.0, value, true);
-                    }
-                    if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
-                        ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
-                        cp.revalidate();
-                        cp.repaint();
+                    try {
+                        if (frameNumber <= 3) {
+                            print("    SwingUtilities running for Intensity");
+                        }
+                        XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                        if (frameNumber <= 3) {
+                            print("    Dataset has " + dataset.getSeriesCount() + " series");
+                        }
+                        for (int roiIdx = 0; roiIdx < numSeriesToUpdateFinal; roiIdx++) {
+                            XYSeries series = dataset.getSeries(roiIdx);
+                            double value = ((Double) valuesToPlotFinal.get(roiIdx)).doubleValue();
+                            series.add(time / 1000.0, value, true);  // Notify on each add
+                            if (frameNumber <= 3 && roiIdx == 0) {
+                                print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
+                                print("      Series now has " + series.getItemCount() + " points");
+                            }
+                        }
+                        if (frameNumber <= 3) {
+                            print("      All points added to Intensity graph");
+                        }
+                        if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
+                            ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
+                            JFreeChart chart = cp.getChart();
+                            
+                            // Verify chart's dataset
+                            if (frameNumber <= 3) {
+                                XYPlot plot = (XYPlot) chart.getPlot();
+                                XYSeriesCollection ds = (XYSeriesCollection) plot.getDataset();
+                                print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
+                            }
+                            
+                            // Force complete chart refresh
+                            chart.fireChartChanged();
+                            
+                            // Force complete panel refresh
+                            cp.restoreAutoBounds();
+                            cp.invalidate();
+                            cp.validate();
+                            cp.repaint();
+                            if (frameNumber <= 3) {
+                                print("      ChartPanel full refresh called for Intensity graph");
+                            }
+                        } else if (frameNumber <= 3) {
+                            print("      WARNING: ChartPanel is null for Intensity graph " + (gIdx + 1));
+                        }
+                    } catch (Exception e) {
+                        print("ERROR updating Intensity graph " + (gIdx + 1) + ": " + e.getClass().getName() + ": " + e.getMessage());
+                        e.printStackTrace();
                     }
                 }
             });
@@ -3427,24 +3830,158 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             final long time = ratioTimestamp;
             final ArrayList ratioValsCopy = new ArrayList(ratioValues);
             final ArrayList chartPanelsCopy = chartPanels;
+            final ArrayList chartsCopy = charts;
             
             SwingUtilities.invokeLater(new Runnable() {
                 public void run() {
-                    XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                    for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
-                        XYSeries series = dataset.getSeries(roiIdx);
-                        Object ratioObj = ratioValsCopy.get(roiIdx);
-                        if (ratioObj != null && ratioObj instanceof Double) {
-                            double value = ((Double) ratioObj).doubleValue();
-                            if (!Double.isNaN(value) && !Double.isInfinite(value)) {
-                                series.add(time / 1000.0, value, true);
+                    try {
+                        XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                        for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
+                            XYSeries series = dataset.getSeries(roiIdx);
+                            Object ratioObj = ratioValsCopy.get(roiIdx);
+                            if (ratioObj != null && ratioObj instanceof Double) {
+                                double value = ((Double) ratioObj).doubleValue();
+                                if (!Double.isNaN(value) && !Double.isInfinite(value)) {
+                                    series.add(time / 1000.0, value, true);  // Notify on each add
+                                }
                             }
                         }
+                        if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
+                            ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
+                            cp.revalidate();
+                            cp.repaint();
+                        }
+                    } catch (Exception e) {
+                        print("ERROR updating Frame ratio graph " + (gIdx + 1) + ": " + e.getMessage());
+                        e.printStackTrace();
                     }
-                    if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
-                        ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
-                        cp.revalidate();
-                        cp.repaint();
+                }
+            });
+        }
+        // Handle Split Ratio graphs (Spatial mode)
+        else if (graphType.startsWith("Split ratio")) {
+            if (frameNumber <= 3) {
+                print("    Entered Split ratio handler, graphType=" + graphType);
+                print("    roiValues.size=" + roiValues.size());
+            }
+            
+            // Calculate spatial ratios directly from current frame's ROI values
+            ArrayList ratioValues = calculateSpatialRatio(roiValues, graphType);
+            
+            if (frameNumber <= 3) {
+                print("    calculateSpatialRatio returned, ratioValues=" + (ratioValues != null ? ratioValues.size() + " values" : "NULL"));
+            }
+            
+            if (ratioValues == null || ratioValues.isEmpty()) {
+                if (frameNumber <= 3) {
+                    print("    Skipping Split ratio - no values");
+                }
+                continue;
+            }
+            
+            // Debug output periodically
+            if (frameNumber % 10 == 1) {
+                print("Frame " + frameNumber + " - " + graphType + " calculated for Graph " + (graphIdx + 1) + ": " + ratioValues);
+            }
+            
+            if (frameNumber <= 3) {
+                print("    About to create final variables for Split ratio");
+            }
+            
+            final int gIdx = graphIdx;
+            final long time = currentTime;
+            final ArrayList ratioValsCopy = new ArrayList(ratioValues);
+            final ArrayList chartPanelsCopy = chartPanels;
+            final ArrayList chartsCopy = charts;
+            
+            if (frameNumber <= 3) {
+                print("    Final variables created, about to call SwingUtilities.invokeLater");
+            }
+            
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    try {
+                        XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                        if (frameNumber <= 3) {
+                            print("    SwingUtilities running for Split ratio, dataset has " + dataset.getSeriesCount() + " series");
+                            print("    ratioValsCopy.size=" + ratioValsCopy.size() + ", time=" + (time/1000.0));
+                        }
+                        for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
+                            XYSeries series = dataset.getSeries(roiIdx);
+                            Object ratioObj = ratioValsCopy.get(roiIdx);
+                            if (ratioObj != null && ratioObj instanceof Double) {
+                                double value = ((Double) ratioObj).doubleValue();
+                                if (!Double.isNaN(value) && !Double.isInfinite(value)) {
+                                    series.add(time / 1000.0, value, true);  // Notify on each add
+                                    if (frameNumber <= 3 && roiIdx == 0) {
+                                        print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
+                                        print("      Series now has " + series.getItemCount() + " points");
+                                    }
+                                } else if (frameNumber <= 3) {
+                                    print("      Skipped NaN/Infinite value for ROI " + roiIdx);
+                                }
+                            } else if (frameNumber <= 3) {
+                                print("      Skipped null or non-Double value for ROI " + roiIdx);
+                            }
+                        }
+                        if (frameNumber <= 3) {
+                            print("      All points added to Split ratio graph");
+                        }
+                        if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
+                            ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
+                            // Verify chart's dataset
+                            if (frameNumber <= 3) {
+                                JFreeChart chart = cp.getChart();
+                                if (chart == null) {
+                                    print("      ERROR: ChartPanel.getChart() returned null!");
+                                } else {
+                                    XYPlot plot = (XYPlot) chart.getPlot();
+                                    XYSeriesCollection ds = (XYSeriesCollection) plot.getDataset();
+                                    print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
+                                    print("      Chart visible=" + chart.isNotify() + ", Panel visible=" + cp.isVisible() + ", Panel size=" + cp.getSize());
+                                    
+                                    // Verify data is actually in the series
+                                    XYSeries series0 = ds.getSeries(0);
+                                    if (series0.getItemCount() > 0) {
+                                        org.jfree.data.xy.XYDataItem item = series0.getDataItem(0);
+                                        print("      First data point: X=" + item.getX() + ", Y=" + item.getY());
+                                    }
+                                    
+                                    // Check renderer configuration
+                                    org.jfree.chart.renderer.xy.XYItemRenderer renderer = plot.getRenderer();
+                                    print("      Renderer type: " + renderer.getClass().getName());
+                                    print("      Series 0 visible: " + renderer.getItemVisible(0, 0));
+                                    print("      Series 0 lines visible: " + renderer.getSeriesLinesVisible(0));
+                                    
+                                    // Force axis range recalculation
+                                    org.jfree.chart.axis.ValueAxis domainAxis = plot.getDomainAxis();
+                                    org.jfree.chart.axis.ValueAxis rangeAxis = plot.getRangeAxis();
+                                    domainAxis.configure();
+                                    rangeAxis.configure();
+                                    
+                                    // Print axis ranges for debugging
+                                    print("      Domain axis range: " + domainAxis.getLowerBound() + " to " + domainAxis.getUpperBound());
+                                    print("      Range axis range: " + rangeAxis.getLowerBound() + " to " + rangeAxis.getUpperBound());
+                                    
+                                    // Force complete chart refresh
+                                    chart.fireChartChanged();
+                                }
+                            }
+                            // Force complete panel refresh
+                            cp.restoreAutoBounds();
+                            cp.invalidate();
+                            cp.validate();
+                            cp.repaint();
+                            if (frameNumber <= 3) {
+                                print("      ChartPanel full refresh called for Split ratio graph");
+                                print("      SwingUtilities.invokeLater completed successfully");
+                            }
+                        } else if (frameNumber <= 3) {
+                            print("      WARNING: ChartPanel is null for Split ratio graph " + (gIdx + 1));
+                        }
+                    } catch (Exception e) {
+                        print("ERROR updating Split ratio graph " + (gIdx + 1) + ": " + e.getMessage());
+                        e.printStackTrace();
                     }
                 }
             });
@@ -3966,7 +4503,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         
                         // Update graphs (throttled)
                         if (shouldUpdateGui) {
-                            updateGraphs(datasets, framesProcessed, currentTime, roiValues, chartPanels);
+                            updateGraphs(datasets, framesProcessed, currentTime, roiValues, chartPanels, chartsList);
                             lastGuiUpdateTime = currentTime;
                         }
                         
@@ -4139,8 +4676,20 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 globalFrameNumber++;
                 long frameStartTime = System.currentTimeMillis();
                 
+                // Debug: Log first few frames
+                if (globalFrameNumber <= 3) {
+                    print("DEBUG: Starting frame " + globalFrameNumber + " capture");
+                }
+                
                 // Snap image with current GUI settings
+                if (globalFrameNumber <= 3) {
+                    print("  About to call mm.live().snap()");
+                }
                 List images = mm.live().snap(false);
+                
+                if (globalFrameNumber <= 3) {
+                    print("  Snap completed, got " + (images != null ? images.size() : "null") + " images");
+                }
                 
                 if (images == null || images.isEmpty()) {
                     print("WARNING: Failed to snap image at frame " + globalFrameNumber);
@@ -4149,10 +4698,21 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 }
                 
                 org.micromanager.data.Image image = images.get(0);
+                if (globalFrameNumber <= 3) {
+                    print("  Got image, creating processor");
+                }
                 ImageProcessor ip = mm.data().ij().createProcessor(image);
+                
+                if (globalFrameNumber <= 3) {
+                    print("  Processor created, saving to disk");
+                }
                 
                 // Save image to disk (always)
                 saveImageAsTiff(image, globalFrameNumber, config.experimentFolder);
+                
+                if (globalFrameNumber <= 3) {
+                    print("  Image saved");
+                }
                 
                 // Progress indicator every 10 frames
                 if (globalFrameNumber % 10 == 0) {
@@ -4162,20 +4722,44 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 long currentTime = System.currentTimeMillis() - startTime;
                 boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                 
-                // Update live view if enabled and throttled
-                if (shouldUpdateGui && config.acqSettings.livePics) {
+                if (globalFrameNumber <= 3) {
+                    print("  currentTime=" + currentTime + ", lastGuiUpdateTime=" + lastGuiUpdateTime + ", shouldUpdateGui=" + shouldUpdateGui);
+                    print("  config.acqSettings.livePics=" + config.acqSettings.livePics);
+                    print("  Will update live view: " + ((shouldUpdateGui || globalFrameNumber <= 3) && config.acqSettings.livePics));
+                }
+                
+                // Update live view if enabled (always update first few frames for debugging)
+                if ((shouldUpdateGui || globalFrameNumber <= 3) && config.acqSettings.livePics) {
                     updateLiveView(liveViewPanel, ip, chartsList);
+                }
+                
+                if (globalFrameNumber <= 3) {
+                    print("  About to measure ROIs");
                 }
                 
                 // Measure ALL ROIs and build data row
                 ArrayList roiValues = measureROIs(ip);
+                
+                if (globalFrameNumber <= 3) {
+                    print("  ROIs measured, roiValues.size=" + roiValues.size());
+                }
+                
                 ArrayList dataRow = buildDataRow(globalFrameNumber, currentTime, roiValues);
                 dataRows.add(dataRow);
                 
-                // Update graphs (throttled)
-                if (shouldUpdateGui) {
-                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues, chartPanels);
+                if (globalFrameNumber <= 3) {
+                    print("  Data row built, about to update graphs");
+                }
+                
+                // Update graphs (throttled, but always update first few frames)
+                if (shouldUpdateGui || globalFrameNumber <= 3) {
+                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues, chartPanels, chartsList);
                     lastGuiUpdateTime = currentTime;
+                }
+                
+                // Debug: Log first few frames
+                if (globalFrameNumber <= 3) {
+                    print("DEBUG: Completed frame " + globalFrameNumber + " processing, about to wait for interval");
                 }
                 
                 // Wait for frame interval
@@ -4328,7 +4912,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 
                 // Update graphs (throttled)
                 if (shouldUpdateGui) {
-                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues, chartPanels);
+                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues, chartPanels, chartsList);
                     lastGuiUpdateTime = currentTime;
                 }
                 
@@ -4415,19 +4999,27 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
         
         // Build descriptive filename
         String frameLogic = "";
-        Boolean everyFrame = (Boolean) vizRow.get(2);
-        Boolean everyOdd = (Boolean) vizRow.get(3);
-        Boolean everyEven = (Boolean) vizRow.get(4);
-        String custom = (String) vizRow.get(5);
+        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
         
-        if (everyFrame != null && everyFrame.booleanValue()) {
+        if (isTemporal) {
+            // Temporal mode: read frame selection columns
+            Boolean everyFrame = (Boolean) vizRow.get(2);
+            Boolean everyOdd = (Boolean) vizRow.get(3);
+            Boolean everyEven = (Boolean) vizRow.get(4);
+            String custom = (String) vizRow.get(5);
+            
+            if (everyFrame != null && everyFrame.booleanValue()) {
+                frameLogic = "every";
+            } else if (everyOdd != null && everyOdd.booleanValue()) {
+                frameLogic = "odd";
+            } else if (everyEven != null && everyEven.booleanValue()) {
+                frameLogic = "even";
+            } else if (custom != null && !custom.equals("Off")) {
+                frameLogic = custom.replace(" ", "_");
+            }
+        } else {
+            // Spatial mode: always every frame
             frameLogic = "every";
-        } else if (everyOdd != null && everyOdd.booleanValue()) {
-            frameLogic = "odd";
-        } else if (everyEven != null && everyEven.booleanValue()) {
-            frameLogic = "even";
-        } else if (custom != null && !custom.equals("Off")) {
-            frameLogic = custom.replace(" ", "_");
         }
         
         String fileName = "Graph" + (graphIdx + 1) + "_" + graphType.replace(" ", "_").replace("/", "-") + "_" + frameLogic + ".csv";
@@ -4522,20 +5114,22 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
                     }
                 }
                 
-            } else {
-                // Standard intensity data export
-                // Header with ROI columns (only actual ROIs)
+            } 
+            // Handle Split Ratio graphs (Spatial mode)
+            else if (graphType.startsWith("Split ratio")) {
+                // Header for ratio data - spatial mode has N ratios (N = actualNumROIs / 2)
+                int numRatios = actualNumROIs / 2;
                 writer.print("Frame,Timestamp [ms]");
-                for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                    writer.print(",ROI" + (roiIdx + 1));
+                for (int roiIdx = 0; roiIdx < numRatios; roiIdx++) {
+                    writer.print(",Ratio" + (roiIdx + 1));
                 }
                 writer.println();
                 
-                // Write data rows - only include rows that pass this graph's frame filter
+                // Write data rows with calculated ratios
                 for (int i = 0; i < dataRows.size(); i++) {
                     ArrayList row = (ArrayList) dataRows.get(i);
                     
-                    // row structure: [frame, timestamp, roi0, roi1, roi2, roi3]
+                    // row structure: [frame, timestamp, roi0, roi1, ..., roi7]
                     int frameNum = ((Integer) row.get(0)).intValue();
                     
                     // Check if this frame passes the graph's filter
@@ -4544,8 +5138,65 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
                         writer.print(",");
                         writer.print(row.get(1)); // Timestamp
                         
-                        // Write only actual ROI values
+                        // Extract all ROI values from row (actualNumROIs)
+                        ArrayList roiValues = new ArrayList();
                         for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                            roiValues.add(row.get(2 + roiIdx));
+                        }
+                        
+                        // Calculate spatial ratios
+                        ArrayList ratios = calculateSpatialRatio(roiValues, graphType);
+                        
+                        // Write ratio values (should be 4 ratios)
+                        for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
+                            writer.print(",");
+                            Object ratioVal = ratios.get(roiIdx);
+                            if (ratioVal != null) {
+                                double ratio = ((Double) ratioVal).doubleValue();
+                                if (!Double.isNaN(ratio) && !Double.isInfinite(ratio)) {
+                                    writer.print(ratio);
+                                } else {
+                                    writer.print("NaN");
+                                }
+                            }
+                        }
+                        writer.println();
+                    }
+                }
+                
+            } 
+            else {
+                // Standard intensity data export
+                // Determine how many ROIs to export based on mode and graph type
+                int numROIsToExport = actualNumROIs;
+                boolean isSpatialIntensity = !isTemporal && graphType.startsWith("Intensity ");
+                if (isSpatialIntensity) {
+                    // Spatial mode Intensity: only export source ROIs (first half)
+                    numROIsToExport = actualNumROIs / 2;
+                }
+                
+                // Header with ROI columns
+                writer.print("Frame,Timestamp [ms]");
+                for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
+                    writer.print(",ROI" + (roiIdx + 1));
+                }
+                writer.println();
+                
+                // Write data rows - only include rows that pass this graph's frame filter
+                for (int i = 0; i < dataRows.size(); i++) {
+                    ArrayList row = (ArrayList) dataRows.get(i);
+                    
+                    // row structure: [frame, timestamp, roi0, roi1, roi2, roi3, ...]
+                    int frameNum = ((Integer) row.get(0)).intValue();
+                    
+                    // Check if this frame passes the graph's filter
+                    if (shouldProcessFrame(frameNum, vizRow)) {
+                        writer.print(row.get(0)); // Frame
+                        writer.print(",");
+                        writer.print(row.get(1)); // Timestamp
+                        
+                        // Write ROI values (only source ROIs in spatial mode)
+                        for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
                             writer.print(",");
                             Object roiValue = row.get(2 + roiIdx);
                             if (roiValue != null) {
