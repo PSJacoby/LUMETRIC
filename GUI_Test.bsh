@@ -2824,7 +2824,19 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip) {
             try {
                 ImagePlus imp = new ImagePlus("Live", ipCopy);
                 
-                // Add ROI overlays with consistent colors
+                // Scale and display - calculate scale first
+                int panelWidth = liveViewPanel.getWidth();
+                int panelHeight = liveViewPanel.getHeight();
+                
+                double scale = 1.0;
+                if (panelWidth > 0 && panelHeight > 0) {
+                    double scaleX = (double) panelWidth / imp.getWidth();
+                    double scaleY = (double) panelHeight / imp.getHeight();
+                    scale = Math.min(scaleX, scaleY);
+                    scale = Math.max(0.1, Math.min(scale, 4.0));
+                }
+                
+                // Add ROI overlays with consistent colors and scaled coordinates
                 if (config.storedROIs != null && config.storedROIs.size() > 0) {
                     java.awt.Color[] roiColors = new java.awt.Color[] {
                         new java.awt.Color(255, 85, 85),   // ROI1 - Red
@@ -2837,22 +2849,24 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip) {
                     for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
                         ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
                         ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
-                        roiCopy.setStrokeColor(roiColors[roiIdx % roiColors.length]);
-                        roiCopy.setStrokeWidth(2.0);
-                        overlay.add(roiCopy);
+                        
+                        // Scale ROI coordinates to match scaled display
+                        java.awt.Rectangle bounds = roiCopy.getBounds();
+                        int scaledX = (int)(bounds.x * scale);
+                        int scaledY = (int)(bounds.y * scale);
+                        int scaledW = (int)(bounds.width * scale);
+                        int scaledH = (int)(bounds.height * scale);
+                        
+                        // Create new ROI with scaled coordinates
+                        ij.gui.Roi scaledRoi = new ij.gui.Roi(scaledX, scaledY, scaledW, scaledH);
+                        scaledRoi.setStrokeColor(roiColors[roiIdx % roiColors.length]);
+                        scaledRoi.setStrokeWidth(1.0);  // Constant 1pt stroke
+                        overlay.add(scaledRoi);
                     }
                     imp.setOverlay(overlay);
                 }
                 
-                // Scale and display
-                int panelWidth = liveViewPanel.getWidth();
-                int panelHeight = liveViewPanel.getHeight();
-                
                 if (panelWidth > 0 && panelHeight > 0) {
-                    double scaleX = (double) panelWidth / imp.getWidth();
-                    double scaleY = (double) panelHeight / imp.getHeight();
-                    double scale = Math.min(scaleX, scaleY);
-                    scale = Math.max(0.1, Math.min(scale, 4.0));
                     
                     ij.gui.ImageCanvas canvas = new ij.gui.ImageCanvas(imp);
                     canvas.setMagnification(scale);
