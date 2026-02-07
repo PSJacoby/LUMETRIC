@@ -3292,6 +3292,27 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                                     try {
                                         ImagePlus imp = new ImagePlus("Live", ipCopy);
                                         
+                                        // Add ROI overlays with consistent colors (matching graph series)
+                                        if (config.storedROIs != null && config.storedROIs.size() > 0) {
+                                            // Define colors matching JFreeChart default series colors
+                                            java.awt.Color[] roiColors = new java.awt.Color[] {
+                                                new java.awt.Color(255, 85, 85),   // ROI1 - Red
+                                                new java.awt.Color(85, 85, 255),   // ROI2 - Blue
+                                                new java.awt.Color(85, 255, 85),   // ROI3 - Green
+                                                new java.awt.Color(255, 255, 85)   // ROI4 - Yellow
+                                            };
+                                            
+                                            ij.gui.Overlay overlay = new ij.gui.Overlay();
+                                            for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
+                                                ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
+                                                ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
+                                                roiCopy.setStrokeColor(roiColors[roiIdx % roiColors.length]);
+                                                roiCopy.setStrokeWidth(2.0);
+                                                overlay.add(roiCopy);
+                                            }
+                                            imp.setOverlay(overlay);
+                                        }
+                                        
                                         int panelWidth = liveViewPanel.getWidth();
                                         int panelHeight = liveViewPanel.getHeight();
                                         
@@ -3599,6 +3620,28 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                         public void run() {
                             try {
                                 ImagePlus imp = new ImagePlus("Live", ipCopy);
+                                
+                                // Add ROI overlays with consistent colors (matching graph series)
+                                if (config.storedROIs != null && config.storedROIs.size() > 0) {
+                                    // Define colors matching JFreeChart default series colors
+                                    java.awt.Color[] roiColors = new java.awt.Color[] {
+                                        new java.awt.Color(255, 85, 85),   // ROI1 - Red
+                                        new java.awt.Color(85, 85, 255),   // ROI2 - Blue
+                                        new java.awt.Color(85, 255, 85),   // ROI3 - Green
+                                        new java.awt.Color(255, 255, 85)   // ROI4 - Yellow
+                                    };
+                                    
+                                    ij.gui.Overlay overlay = new ij.gui.Overlay();
+                                    for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
+                                        ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
+                                        ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
+                                        roiCopy.setStrokeColor(roiColors[roiIdx % roiColors.length]);
+                                        roiCopy.setStrokeWidth(2.0);
+                                        overlay.add(roiCopy);
+                                    }
+                                    imp.setOverlay(overlay);
+                                }
+                                
                                 int panelWidth = liveViewPanel.getWidth();
                                 int panelHeight = liveViewPanel.getHeight();
                                 
@@ -3824,8 +3867,6 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 ImageProcessor ip = mm.data().ij().createProcessor(image);
                 
                 // Save image to disk (always)
-                saveImageAsTiff(image, globalFrameNumber, config.experimentFolder);
-                
                 long currentTime = System.currentTimeMillis() - startTime;
                 boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                 
@@ -3836,6 +3877,28 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                         public void run() {
                             try {
                                 ImagePlus imp = new ImagePlus("Live", ipCopy);
+                                
+                                // Add ROI overlays with consistent colors (matching graph series)
+                                if (config.storedROIs != null && config.storedROIs.size() > 0) {
+                                    // Define colors matching JFreeChart default series colors
+                                    java.awt.Color[] roiColors = new java.awt.Color[] {
+                                        new java.awt.Color(255, 85, 85),   // ROI1 - Red
+                                        new java.awt.Color(85, 85, 255),   // ROI2 - Blue
+                                        new java.awt.Color(85, 255, 85),   // ROI3 - Green
+                                        new java.awt.Color(255, 255, 85)   // ROI4 - Yellow
+                                    };
+                                    
+                                    ij.gui.Overlay overlay = new ij.gui.Overlay();
+                                    for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
+                                        ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
+                                        ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
+                                        roiCopy.setStrokeColor(roiColors[roiIdx % roiColors.length]);
+                                        roiCopy.setStrokeWidth(2.0);
+                                        overlay.add(roiCopy);
+                                    }
+                                    imp.setOverlay(overlay);
+                                }
+                                
                                 int panelWidth = liveViewPanel.getWidth();
                                 int panelHeight = liveViewPanel.getHeight();
                                 
