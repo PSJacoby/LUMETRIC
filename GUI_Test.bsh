@@ -2448,8 +2448,11 @@ void createInlineAcquisitionWindow() {
         plot.setDomainGridlinePaint(Color.WHITE);
         plot.setRangeGridlinePaint(Color.WHITE);
         
-        // NOTE: Renderer configuration causes freeze - skip for now
-        // Will investigate after confirming window opens
+        // Make lines thicker while preserving default colors
+        org.jfree.chart.renderer.xy.XYItemRenderer renderer = plot.getRenderer();
+        for (int roiIdx = 0; roiIdx < numROIs; roiIdx++) {
+            renderer.setSeriesStroke(roiIdx, new BasicStroke(2.0f));
+        }
         
         // Create chart panel and store it
         ChartPanel chartPanel = new ChartPanel(chart);
@@ -2750,10 +2753,10 @@ void createInlineAcquisitionWindow() {
                 // Choose acquisition mode based on configuration
                 if (config.useCircularBuffer) {
                     print("Using circular buffer acquisition mode");
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0]);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts);
                 } else {
                     print("Using simple snap acquisition mode");
-                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0]);
+                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts);
                 }
             } catch (Exception ex) {
                 print("ERROR in acquisition thread: " + ex.getMessage());
@@ -2813,7 +2816,7 @@ boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
 // ==================== COMMON ACQUISITION HELPER FUNCTIONS ====================
 
 // Update live view with image and ROI overlays
-void updateLiveView(JPanel liveViewPanel, ImageProcessor ip) {
+void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsList) {
     if (liveViewPanel == null || ip == null) {
         return;
     }
@@ -2836,16 +2839,22 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip) {
                     scale = Math.max(0.1, Math.min(scale, 4.0));
                 }
                 
-                // Add ROI overlays with consistent colors and scaled coordinates
+                // Add ROI overlays using colors from the first active chart
                 if (config.storedROIs != null && config.storedROIs.size() > 0) {
-                    java.awt.Color[] roiColors = new java.awt.Color[] {
-                        new java.awt.Color(255, 85, 85),   // ROI1 - Red
-                        new java.awt.Color(85, 85, 255),   // ROI2 - Blue
-                        new java.awt.Color(85, 255, 85),   // ROI3 - Green
-                        new java.awt.Color(255, 255, 85)   // ROI4 - Yellow
-                    };
-                    
                     ij.gui.Overlay overlay = new ij.gui.Overlay();
+                    
+                    // Get renderer from first active chart to match colors
+                    org.jfree.chart.renderer.xy.XYItemRenderer renderer = null;
+                    if (chartsList != null) {
+                        for (int i = 0; i < chartsList.size(); i++) {
+                            if (chartsList.get(i) != null) {
+                                XYPlot plot = ((JFreeChart) chartsList.get(i)).getXYPlot();
+                                renderer = plot.getRenderer();
+                                break;
+                            }
+                        }
+                    }
+                    
                     for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
                         ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
                         ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
@@ -2859,8 +2868,14 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip) {
                         
                         // Create new ROI with scaled coordinates
                         ij.gui.Roi scaledRoi = new ij.gui.Roi(scaledX, scaledY, scaledW, scaledH);
-                        scaledRoi.setStrokeColor(roiColors[roiIdx % roiColors.length]);
-                        scaledRoi.setStrokeWidth(1.0);  // Constant 1pt stroke
+                        // Use color from chart renderer if available, otherwise use default
+                        if (renderer != null) {
+                            java.awt.Paint paint = renderer.getSeriesPaint(roiIdx);
+                            if (paint instanceof java.awt.Color) {
+                                scaledRoi.setStrokeColor((java.awt.Color) paint);
+                            }
+                        }
+                        scaledRoi.setStrokeWidth(1.0);
                         overlay.add(scaledRoi);
                     }
                     imp.setOverlay(overlay);
@@ -3283,7 +3298,7 @@ void convertTiffsToStack(String experimentFolder) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList) {
     print("========== CIRCULAR BUFFER ACQUISITION START ==========");
     
     // Verify experiment folder exists
@@ -3448,7 +3463,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         
                         // Update live view (throttled, controlled by Live Pictures checkbox)
                         if (shouldUpdateGui && config.acqSettings.livePics) {
-                            updateLiveView(liveViewPanel, ip);
+                            updateLiveView(liveViewPanel, ip, chartsList);
                         }
                         
                         // Measure ALL ROIs
@@ -3541,7 +3556,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel) {
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList) {
     print("========== ACQUISITION START ==========");
     
     // Verify experiment folder exists
@@ -3665,7 +3680,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 
                 // Update live view if enabled and throttled
                 if (shouldUpdateGui && config.acqSettings.livePics) {
-                    updateLiveView(liveViewPanel, ip);
+                    updateLiveView(liveViewPanel, ip, chartsList);
                 }
                 
                 // Measure ALL ROIs and build data row
@@ -3814,7 +3829,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 
                 // Update live view if enabled and throttled
                 if (shouldUpdateGui && config.acqSettings.livePics) {
-                    updateLiveView(liveViewPanel, ip);
+                    updateLiveView(liveViewPanel, ip, chartsList);
                 }
                                 
                 // Measure ALL ROIs and log them
