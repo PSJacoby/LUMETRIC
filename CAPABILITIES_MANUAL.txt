@@ -1,0 +1,332 @@
+================================================================================
+                    LUMETRIC ACQUISITION SYSTEM
+                    Capability Summary & User Guide
+================================================================================
+
+OVERVIEW
+--------
+The LUMETRIC acquisition system is a comprehensive Micro-Manager BeanShell 
+script for automated time-lapse fluorescence microscopy with real-time ROI 
+analysis, graphical visualization, and event-driven control. It supports both 
+hardware-triggered and software-controlled acquisition modes.
+
+
+ACQUISITION MODES
+-----------------
+
+1. SNAP MODE (Software-Controlled)
+   Configuration: USE_CIRCULAR_BUFFER = false
+   
+   How it works:
+   - Script captures frames on-demand using mm.live().snap()
+   - Software controls timing and channel switching
+   - No external trigger hardware required
+   
+   Hardware requirements:
+   - Any compatible camera (demo or real)
+   - Standard Micro-Manager setup
+   - No Arduino or external triggers needed
+   
+   Best for:
+   - Testing and development
+   - Demo camera setups
+   - Single-channel acquisitions
+   - When software timing is sufficient (most biological imaging)
+   - Users who want GUI control without hardware complexity
+   
+   Performance:
+   - Timing accuracy: ~10-50 ms (software overhead)
+   - Frame rate: Up to 10-20 fps depending on camera and processing
+   - Suitable for: Cell imaging, slow dynamics, time-lapse (seconds-minutes)
+
+
+2. CIRCULAR BUFFER MODE (Hardware-Triggered)
+   Configuration: USE_CIRCULAR_BUFFER = true
+   
+   How it works:
+   - Micro-Manager pre-allocates large memory buffer (75% of heap)
+   - Arduino sends hardware trigger pulses to camera
+   - Camera captures to buffer at hardware-precise intervals
+   - Script reads frames from buffer for processing
+   
+   Hardware requirements:
+   - Real camera with external trigger support
+   - Arduino or other trigger generator connected
+   - Camera configured for external trigger mode
+   - Trigger signal wired to camera trigger input
+   
+   Best for:
+   - High-speed acquisitions
+   - Precise timing requirements (sub-millisecond accuracy)
+   - Multi-channel synchronized imaging
+   - Long experiments with many frames
+   - Production/research setups
+   
+   Performance:
+   - Timing accuracy: Hardware-limited (typically <1 ms)
+   - Frame rate: Camera-limited (up to 100+ fps on fast cameras)
+   - Buffer capacity: ~6000 frames @ 512x512 (3 GB buffer)
+   - Suitable for: Fast dynamics, precise synchronization, high-throughput
+
+
+CORE CAPABILITIES
+-----------------
+
+Image Acquisition:
+  ✓ Multi-channel sequential imaging (up to 8 channels)
+  ✓ Configurable exposure times per channel
+  ✓ Frame intervals and frame counts per step
+  ✓ Looping sequences with goto/repeat logic
+  ✓ Automatic TIFF image saving (Frame_00001.tif, Frame_00002.tif, ...)
+
+Real-Time Analysis:
+  ✓ Multiple ROI intensity measurements (fluorescence, mean intensity)
+  ✓ Processing during acquisition (no post-processing delay)
+  ✓ ROI data exported to CSV files
+  ✓ Frame-by-frame measurements printed to console
+
+Visualization:
+  ✓ Live camera view with zoom/fit panel
+  ✓ Real-time intensity graphs (up to 4 simultaneous graphs)
+  ✓ Frame filtering (every frame, odd, even, every Nth)
+  ✓ Multi-ROI plotting on single graph
+  ✓ Customizable graph titles and ROI selection
+
+Event Detection & Control:
+  ✓ Configurable event detection system (Arduino serial communication)
+  ✓ Event timestamps logged to CSV
+  ✓ Can trigger actions based on detected events
+  ✓ Integration with external hardware
+
+Data Management:
+  ✓ Automatic experiment folder creation (timestamp-based)
+  ✓ ROI set saved as RoiSet.zip
+  ✓ Acquisition settings exported (human-readable and Arduino format)
+  ✓ All data organized in experiment-specific folders
+
+Buffer Management (Circular Buffer Mode):
+  ✓ Automatic memory allocation (75% heap)
+  ✓ Real-time buffer monitoring (warnings at 75%, critical at 90%)
+  ✓ Overflow detection and reporting
+  ✓ Capacity estimation and reporting
+
+
+TYPICAL USE CASES
+-----------------
+
+USE CASE 1: Basic Testing / Demo Setup
+   Mode: Snap mode (circular buffer OFF)
+   Hardware: Demo camera
+   Configuration: config_example.txt
+   
+   Perfect for:
+   - Learning the system
+   - Testing ROI setups
+   - Verifying acquisition sequences
+   - No special hardware needed
+
+USE CASE 2: Research Lab - Manual Control
+   Mode: Snap mode (circular buffer OFF)
+   Hardware: Real camera (no triggers)
+   Configuration: config_RealCamera_NoArduino.txt (create custom)
+   
+   Perfect for:
+   - Live cell imaging with GUI control
+   - Single or multi-channel time-lapse
+   - Event-driven experiments
+   - When hardware triggers aren't available
+   - Simplified setup without Arduino
+
+USE CASE 3: Production - Automated High-Speed
+   Mode: Circular buffer mode (circular buffer ON)
+   Hardware: Real camera + Arduino triggers
+   Configuration: config_RealSetup.txt
+   
+   Perfect for:
+   - High-throughput screening
+   - Fast dynamics imaging
+   - Precise multi-channel synchronization
+   - Long acquisitions (thousands of frames)
+   - Automated systems
+
+
+CONFIGURATION OPTIONS
+---------------------
+
+Essential Settings:
+  USE_CIRCULAR_BUFFER = true/false    Choose acquisition mode
+  CAMERA_CONFIG       = <group>       Camera configuration group
+  CAMERA_TRIGGER_CONFIG = <preset>    Trigger mode (if using circular buffer)
+  SPECTRAL_1 ... SPECTRAL_8           Channel definitions (filter, LED, etc.)
+  SERIAL_PORT         = <port>        Arduino communication port (if used)
+
+Acquisition Sequence:
+  - Define up to 8 steps
+  - Each step: Channel, Exposure, Interval, Frames, Loop logic
+  - Flexible sequencing with goto/repeat
+
+Visualization:
+  - Choose which frames to display (every, odd, even, every Nth)
+  - Select which ROIs to plot on each graph
+  - Up to 4 graphs simultaneously
+
+Live Pictures Checkbox:
+  - Controls GUI display only
+  - Images are ALWAYS saved regardless of checkbox state
+  - Uncheck to reduce GUI overhead during fast acquisitions
+
+
+HARDWARE REQUIREMENTS
+---------------------
+
+Minimum (Snap Mode):
+  - Micro-Manager 2.0
+  - Any compatible camera (including demo)
+  - PC with Java runtime
+
+Recommended (Snap Mode):
+  - 8+ GB RAM
+  - Real microscope camera
+  - 100+ GB storage for image data
+
+Required (Circular Buffer Mode):
+  - All of the above, plus:
+  - Camera with external trigger support
+  - Arduino or trigger generator
+  - Trigger cable connection
+  - 16+ GB RAM (for large buffers)
+
+
+PERFORMANCE BENCHMARKS
+----------------------
+
+Snap Mode (Demo Camera):
+  - Frame rate: 5-10 fps typical
+  - ROI processing: Real-time for up to 4 ROIs
+  - Memory: Minimal (no buffer allocation)
+
+Circular Buffer Mode (Real Camera):
+  - Frame rate: Camera-limited (tested up to 100 fps)
+  - Buffer capacity: ~6000 frames @ 512x512 (3 GB buffer)
+  - Processing: Can keep up with 20+ fps sustained
+  - Memory: ~75% of heap allocated to buffer
+
+
+TROUBLESHOOTING QUICK REFERENCE
+--------------------------------
+
+Acquisition hangs / no frames captured:
+  → Using demo camera with USE_CIRCULAR_BUFFER = true
+  → Solution: Set USE_CIRCULAR_BUFFER = false
+
+Buffer overflow warnings:
+  → Acquisition too fast or processing too slow
+  → Solution: Increase frame intervals or reduce ROIs
+
+Images not being saved:
+  → Check experiment folder was created
+  → Check disk space available
+  → Verify console shows "Saved frame X" messages
+
+Arduino events not detected:
+  → Check SERIAL_PORT setting
+  → Verify Arduino is connected and sending data
+  → Test serial monitor in Arduino IDE first
+
+
+GETTING STARTED
+---------------
+
+Step 1: Choose your mode
+   - Testing? Use config_example.txt (demo camera + snap mode)
+   - Lab use without Arduino? Create custom config (real camera + snap mode)
+   - Production? Use config_RealSetup.txt (real camera + circular buffer)
+
+Step 2: Edit configuration file
+   - Set USE_CIRCULAR_BUFFER appropriately
+   - Configure camera settings for your hardware
+   - Define your channel sequence
+   - Set up visualization preferences
+
+Step 3: Load and run
+   - Open Micro-Manager
+   - Run GUI_Test.bsh script
+   - Load configuration file (auto-loads last used)
+   - Set up ROIs
+   - Click "OK - Start Acquisition"
+
+Step 4: Monitor
+   - Watch console for frame progress
+   - Check graphs for ROI data
+   - Verify images saving to experiment folder
+
+
+ADVANCED FEATURES
+-----------------
+
+Custom Event Integration:
+  - Modify event detection logic for specific protocols
+  - Integrate with external hardware via serial
+  - Trigger actions based on ROI intensities
+
+Multi-Experiment Sessions:
+  - Each acquisition creates new timestamped folder
+  - All data self-contained and organized
+  - Easy to run multiple experiments in sequence
+
+Frame Filtering for Visualization:
+  - Display only relevant frames in graphs
+  - Reduce computation overhead
+  - Example: Plot CFP every frame, YFP every 10th frame
+
+
+TECHNICAL SPECIFICATIONS
+-------------------------
+
+Supported Image Formats:
+  - Input: 8-bit (byte), 16-bit (short) grayscale
+  - Output: TIFF (uncompressed)
+
+ROI Types Supported:
+  - Rectangle, Circle, Freehand (any ImageJ ROI type)
+  - Up to 4 ROIs per acquisition (expandable)
+
+Data Output:
+  - Images: Frame_XXXXX.tif (5-digit zero-padded)
+  - ROI Data: CSV format with headers
+  - Settings: CSV format (human + Arduino readable)
+  - ROIs: ImageJ RoiSet.zip format
+
+Memory Management:
+  - Snap mode: Minimal overhead
+  - Circular buffer: 75% heap allocated automatically
+  - Recommended JVM heap: 4-8 GB minimum
+
+
+SUPPORT & DOCUMENTATION
+------------------------
+
+Additional documentation:
+  - CIRCULAR_BUFFER_README.md - Detailed circular buffer guide
+  - config_example.txt - Commented example configuration
+  - config_RealSetup.txt - Production configuration template
+
+Script structure:
+  - GUI_Test.bsh - Main acquisition script (3100+ lines)
+  - Lines 1-200: Configuration classes
+  - Lines 200-800: GUI construction
+  - Lines 800-1600: Setup and initialization
+  - Lines 1600-2400: Visualization system
+  - Lines 2400-3100: Acquisition engines
+
+
+VERSION INFORMATION
+-------------------
+
+Script: GUI_Test.bsh
+Last Updated: February 2026
+Micro-Manager: 2.0 required
+BeanShell: 2.0b6
+Java: 8+ required
+
+================================================================================

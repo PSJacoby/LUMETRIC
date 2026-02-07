@@ -15,6 +15,14 @@ CAMERA_CONFIG_GROUP = Camera
 CAMERA_SNAP_CONFIG = HighRes
 CAMERA_TRIGGER_CONFIG = MedRes
 
+# Acquisition Mode
+# true = Use circular buffer (REQUIRES HARDWARE TRIGGERS from Arduino/external source)
+#       Best for: Real cameras with hardware-triggered high-speed acquisition
+# false = Use simple snap mode (works with demo camera, no triggers needed)
+#       Best for: Demo camera, testing, or manual frame-by-frame capture
+# IMPORTANT: Demo camera will NOT work with circular buffer mode!
+USE_CIRCULAR_BUFFER = false
+
 # Spectral Configuration Settings
 SPECTRAL_CONFIG_GROUP = LightPath
 SPECTRAL_DEFAULT_CONFIG = Camera-left

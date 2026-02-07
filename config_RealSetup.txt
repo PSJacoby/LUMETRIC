@@ -16,11 +16,8 @@ CAMERA_SNAP_CONFIG = Snapping_and_Live
 CAMERA_TRIGGER_CONFIG = GlobalResetLevelTriggerArduinoMode
 
 # Acquisition Mode
-# true = Use circular buffer (REQUIRES HARDWARE TRIGGERS from Arduino/external source)
-#       Best for: Real cameras with hardware-triggered high-speed acquisition
-# false = Use simple snap mode (works with demo camera, no triggers needed)
-#       Best for: Demo camera, testing, or manual frame-by-frame capture
-# Real setup with Arduino triggers should use: true
+# true = Use circular buffer (for real cameras with high-speed acquisition)
+# false = Use simple snap mode (for demo cameras or single frame capture)
 USE_CIRCULAR_BUFFER = true
 
 # Spectral Configuration Settings
