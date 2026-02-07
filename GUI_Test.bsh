@@ -870,6 +870,24 @@ validateButton.addActionListener(new ActionListener() {
     }
 });
 
+JButton loadSettingsButton = new JButton("Load Settings");
+loadSettingsButton.setBackground(new Color(255, 200, 150)); // Light orange
+loadSettingsButton.setToolTipText("Load acquisition sequence and visualization settings from CSV file");
+loadSettingsButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        loadSettingsFromCSV();
+    }
+});
+
+JButton saveSettingsButton = new JButton("Save Settings");
+saveSettingsButton.setBackground(new Color(150, 255, 150)); // Light green
+saveSettingsButton.setToolTipText("Save current acquisition sequence and visualization settings to CSV file");
+saveSettingsButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        saveSettingsToCSV();
+    }
+});
+
 JButton okButton = new JButton("OK - Start Acquisition");
 okButton.setBackground(Color.GREEN);
 okButton.addActionListener(new ActionListener() {
@@ -953,6 +971,8 @@ cancelButton.addActionListener(new ActionListener() {
 controlPanel.add(addButton);
 controlPanel.add(removeButton);
 controlPanel.add(validateButton);
+controlPanel.add(saveSettingsButton);
+controlPanel.add(loadSettingsButton);
 controlPanel.add(okButton);
 controlPanel.add(cancelButton);
 
@@ -1753,6 +1773,28 @@ boolean exportTableToCSV() {
         // Write mode settings as comments
         writerReadable.println("");
         writerReadable.println("# Live Pictures: " + config.acqSettings.livePics);
+        
+        // Write visualization settings
+        writerReadable.println("");
+        writerReadable.println("# Visualization Settings");
+        writerReadable.println("Graph,Type,Every Frame,Every Odd,Every Even,Custom");
+        for (int i = 0; i < config.acqSettings.visualizationRows.size(); i++) {
+            ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+            StringBuilder vizRowStr = new StringBuilder();
+            vizRowStr.append(escapeCSV(vizRow.get(0).toString())); // Graph name
+            vizRowStr.append(",");
+            vizRowStr.append(escapeCSV(vizRow.get(1).toString())); // Type
+            vizRowStr.append(",");
+            vizRowStr.append(vizRow.get(2) != null && ((Boolean)vizRow.get(2)).booleanValue() ? "true" : "false"); // Every frame
+            vizRowStr.append(",");
+            vizRowStr.append(vizRow.get(3) != null && ((Boolean)vizRow.get(3)).booleanValue() ? "true" : "false"); // Every odd
+            vizRowStr.append(",");
+            vizRowStr.append(vizRow.get(4) != null && ((Boolean)vizRow.get(4)).booleanValue() ? "true" : "false"); // Every even
+            vizRowStr.append(",");
+            vizRowStr.append(escapeCSV(vizRow.get(5).toString())); // Custom
+            writerReadable.println(vizRowStr.toString());
+        }
+        
         writerReadable.close();
         
         // ===== ARDUINO VERSION =====
@@ -1840,6 +1882,298 @@ boolean exportTableToCSV() {
         print("ERROR: Failed to export CSV files: " + e.getMessage());
         e.printStackTrace();
         return false;
+    }
+}
+
+// Load settings from CSV file
+void loadSettingsFromCSV() {
+    JFileChooser fileChooser = new JFileChooser();
+    fileChooser.setDialogTitle("Load Acquisition Settings from CSV");
+    fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+    
+    // Set initial directory to last save path or Data folder
+    String lastPath = prefs.get("lastSavePath", "");
+    if (!lastPath.isEmpty() && new File(lastPath).exists()) {
+        fileChooser.setCurrentDirectory(new File(lastPath));
+    } else {
+        // Try Data folder in workspace
+        File dataFolder = new File(new File("").getAbsolutePath(), "Data");
+        if (dataFolder.exists()) {
+            fileChooser.setCurrentDirectory(dataFolder);
+        }
+    }
+    
+    int result = fileChooser.showOpenDialog(frame);
+    if (result != JFileChooser.APPROVE_OPTION) {
+        return;
+    }
+    
+    File csvFile = fileChooser.getSelectedFile();
+    
+    try {
+        BufferedReader reader = new BufferedReader(new FileReader(csvFile));
+        String line;
+        int lineNum = 0;
+        boolean headerSkipped = false;
+        boolean inVisualizationSection = false;
+        boolean vizHeaderSkipped = false;
+        int vizRowIndex = 0;
+        
+        // Clear existing table data
+        while (tableModel.getRowCount() > 0) {
+            tableModel.removeRow(0);
+        }
+        
+        print("Loading settings from: " + csvFile.getAbsolutePath());
+        
+        while ((line = reader.readLine()) != null) {
+            lineNum++;
+            line = line.trim();
+            
+            // Check for visualization section header
+            if (line.equals("# Visualization Settings")) {
+                inVisualizationSection = true;
+                continue;
+            }
+            
+            // If in visualization section
+            if (inVisualizationSection) {
+                // Skip visualization header line
+                if (!vizHeaderSkipped) {
+                    if (line.startsWith("Graph,Type")) {
+                        vizHeaderSkipped = true;
+                        continue;
+                    }
+                }
+                
+                // Skip empty lines and other comments
+                if (line.isEmpty() || (line.startsWith("#") && !line.equals("# Visualization Settings"))) {
+                    continue;
+                }
+                
+                // Parse visualization row
+                String[] vizParts = parseCSVLine(line);
+                if (vizParts.length >= 6 && vizRowIndex < vizTableModel.getRowCount()) {
+                    vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type
+                    vizTableModel.setValueAt(Boolean.valueOf(vizParts[2]), vizRowIndex, 2); // Every frame
+                    vizTableModel.setValueAt(Boolean.valueOf(vizParts[3]), vizRowIndex, 3); // Every odd
+                    vizTableModel.setValueAt(Boolean.valueOf(vizParts[4]), vizRowIndex, 4); // Every even
+                    vizTableModel.setValueAt(vizParts[5], vizRowIndex, 5); // Custom
+                    vizRowIndex++;
+                }
+                continue;
+            }
+            
+            // Skip sequence header line
+            if (!headerSkipped) {
+                headerSkipped = true;
+                continue;
+            }
+            
+            // Check for mode settings (comments)
+            if (line.startsWith("#")) {
+                if (line.contains("Live Pictures:")) {
+                    String value = line.substring(line.indexOf(":") + 1).trim();
+                    boolean livePicsValue = value.equalsIgnoreCase("true");
+                    livePics.setSelected(livePicsValue);
+                    print("  Live Pictures: " + livePicsValue);
+                }
+                continue;
+            }
+            
+            // Skip empty lines
+            if (line.isEmpty()) {
+                continue;
+            }
+            
+            // Parse CSV line
+            String[] parts = parseCSVLine(line);
+            if (parts.length < 8) {
+                print("WARNING: Line " + lineNum + " has only " + parts.length + " columns, skipping");
+                continue;
+            }
+            
+            // Convert display values back to internal format
+            String channel = parts[0].equals("none") ? "" : parts[0];
+            String exposure = parts[1];
+            String interval = parts[2];
+            String frames = parts[3];
+            String loopGoto = parts[4];
+            String loopTimes = parts[5].equals("always") ? "" : parts[5];
+            String constantIllum = parts[6].equals("none") ? "" : parts[6];
+            String loopSwitchGoto = parts[7].equals("none") ? "" : parts[7];
+            
+            // Add row to table
+            tableModel.addRow(new Object[]{
+                String.valueOf(tableModel.getRowCount() + 1), // Row number
+                channel,
+                exposure,
+                interval,
+                frames,
+                loopGoto,
+                loopTimes,
+                constantIllum,
+                loopSwitchGoto
+            });
+        }
+        
+        reader.close();
+        
+        print("Successfully loaded " + tableModel.getRowCount() + " sequence steps");
+        if (vizRowIndex > 0) {
+            print("Successfully loaded " + vizRowIndex + " visualization settings");
+        }
+        JOptionPane.showMessageDialog(frame, 
+            "Loaded " + tableModel.getRowCount() + " sequence steps" + 
+            (vizRowIndex > 0 ? " and " + vizRowIndex + " graph configurations" : "") +
+            " from:\\n" + csvFile.getName(),
+            "Settings Loaded", JOptionPane.INFORMATION_MESSAGE);
+        
+    } catch (Exception e) {
+        print("ERROR: Failed to load settings from CSV: " + e.getMessage());
+        e.printStackTrace();
+        JOptionPane.showMessageDialog(frame, 
+            "Failed to load settings:\\n" + e.getMessage(),
+            "Load Error", JOptionPane.ERROR_MESSAGE);
+    }
+}
+
+// Parse a CSV line, handling quoted fields
+String[] parseCSVLine(String line) {
+    ArrayList fields = new ArrayList();
+    StringBuilder currentField = new StringBuilder();
+    boolean inQuotes = false;
+    
+    for (int i = 0; i < line.length(); i++) {
+        char c = line.charAt(i);
+        
+        if (c == '"') {
+            inQuotes = !inQuotes;
+        } else if (c == ',' && !inQuotes) {
+            fields.add(currentField.toString());
+            currentField = new StringBuilder();
+        } else {
+            currentField.append(c);
+        }
+    }
+    fields.add(currentField.toString()); // Add last field
+    
+    // Convert ArrayList to String array
+    String[] result = new String[fields.size()];
+    for (int i = 0; i < fields.size(); i++) {
+        result[i] = (String) fields.get(i);
+    }
+    return result;
+}
+
+// Save current settings to CSV file
+void saveSettingsToCSV() {
+    JFileChooser fileChooser = new JFileChooser();
+    fileChooser.setDialogTitle("Save Acquisition Settings to CSV");
+    fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+    
+    // Set initial directory to last save path or Data folder
+    String lastPath = prefs.get("lastSavePath", "");
+    if (!lastPath.isEmpty() && new File(lastPath).exists()) {
+        fileChooser.setCurrentDirectory(new File(lastPath));
+    } else {
+        File dataFolder = new File(new File("").getAbsolutePath(), "Data");
+        if (dataFolder.exists()) {
+            fileChooser.setCurrentDirectory(dataFolder);
+        }
+    }
+    
+    // Set default filename
+    fileChooser.setSelectedFile(new File("AquisitionSettings.csv"));
+    
+    int result = fileChooser.showSaveDialog(frame);
+    if (result != JFileChooser.APPROVE_OPTION) {
+        return;
+    }
+    
+    File csvFile = fileChooser.getSelectedFile();
+    
+    // Ensure .csv extension
+    if (!csvFile.getName().toLowerCase().endsWith(".csv")) {
+        csvFile = new File(csvFile.getAbsolutePath() + ".csv");
+    }
+    
+    try {
+        PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
+        
+        // Write sequence settings header
+        writer.println("Channel,Exposure [ms],Frame Interval [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
+        
+        // Write sequence data
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            StringBuilder row = new StringBuilder();
+            for (int j = 1; j < tableModel.getColumnCount(); j++) { // Skip column 0 (Row number)
+                Object value = tableModel.getValueAt(i, j);
+                String valueStr = value != null ? value.toString() : "";
+                
+                // Format display values
+                if (j == 1 && valueStr.isEmpty()) { // Channel
+                    valueStr = "none";
+                } else if (j == 6 && valueStr.isEmpty()) { // Loop Times
+                    valueStr = "always";
+                } else if (j == 7 && valueStr.isEmpty()) { // Constant Illum
+                    valueStr = "none";
+                } else if (j == 8 && valueStr.isEmpty()) { // Loop Switch Goto
+                    valueStr = "none";
+                }
+                
+                row.append(escapeCSV(valueStr));
+                if (j < tableModel.getColumnCount() - 1) {
+                    row.append(",");
+                }
+            }
+            writer.println(row.toString());
+        }
+        
+        // Write mode settings
+        writer.println("");
+        writer.println("# Live Pictures: " + livePics.isSelected());
+        
+        // Write visualization settings
+        writer.println("");
+        writer.println("# Visualization Settings");
+        writer.println("Graph,Type,Every Frame,Every Odd,Every Even,Custom");
+        for (int i = 0; i < vizTableModel.getRowCount(); i++) {
+            StringBuilder vizRow = new StringBuilder();
+            vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString())); // Graph name
+            vizRow.append(",");
+            vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString())); // Type
+            vizRow.append(",");
+            
+            Object everyFrame = vizTableModel.getValueAt(i, 2);
+            vizRow.append(everyFrame != null && ((Boolean)everyFrame).booleanValue() ? "true" : "false");
+            vizRow.append(",");
+            
+            Object everyOdd = vizTableModel.getValueAt(i, 3);
+            vizRow.append(everyOdd != null && ((Boolean)everyOdd).booleanValue() ? "true" : "false");
+            vizRow.append(",");
+            
+            Object everyEven = vizTableModel.getValueAt(i, 4);
+            vizRow.append(everyEven != null && ((Boolean)everyEven).booleanValue() ? "true" : "false");
+            vizRow.append(",");
+            
+            vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 5).toString())); // Custom
+            writer.println(vizRow.toString());
+        }
+        
+        writer.close();
+        
+        print("Settings saved to: " + csvFile.getAbsolutePath());
+        JOptionPane.showMessageDialog(frame,
+            "Settings saved successfully to:\\n" + csvFile.getName(),
+            "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
+        
+    } catch (Exception e) {
+        print("ERROR: Failed to save settings to CSV: " + e.getMessage());
+        e.printStackTrace();
+        JOptionPane.showMessageDialog(frame,
+            "Failed to save settings:\\n" + e.getMessage(),
+            "Save Error", JOptionPane.ERROR_MESSAGE);
     }
 }
 
@@ -2449,18 +2783,13 @@ void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
     import ij.process.ShortProcessor;
     import ij.process.ByteProcessor;
     
-    print("  saveImageAsTiff: Starting for frame " + frameNumber);
-    
     try {
         // Handle both TaggedImage and MM Image types
         ImageProcessor ip = null;
         
-        print("  saveImageAsTiff: Checking image type...");
         if (img instanceof org.micromanager.data.Image) {
             // MM2.0 Image
-            print("  saveImageAsTiff: MM2.0 Image detected, creating processor...");
             ip = mm.data().ij().createProcessor((org.micromanager.data.Image) img);
-            print("  saveImageAsTiff: Processor created successfully");
         } else if (img != null) {
             // Try to extract pixel data directly from TaggedImage
             try {
