@@ -64,6 +64,45 @@ import ij.gui.ImageCanvas;
 import ij.gui.Overlay;
 import ij.gui.Roi;
 
+// ==================== Data Classes ====================
+
+// ROI with spatial metadata
+class ROIMetadata {
+    ij.gui.Roi roi;
+    String sourceRegion;       // "original", "left", "right", "upper", "lower"
+    int captureWidth;
+    int captureHeight;
+    
+    public ROIMetadata(ij.gui.Roi roi, String sourceRegion, int width, int height) {
+        this.roi = roi;
+        this.sourceRegion = sourceRegion;
+        this.captureWidth = width;
+        this.captureHeight = height;
+    }
+}
+
+// Spatial processing configuration
+class SpatialConfig {
+    String splitAxis = "Horizontal";  // "Horizontal" or "Vertical"
+    String roiSourceRegion = "Upper";  // "Left", "Right", "Upper", "Lower"
+    
+    String getRatioDirection1() {
+        if (splitAxis.equals("Horizontal")) {
+            return roiSourceRegion.equals("Upper") ? "Up/Down" : "Down/Up";
+        } else {
+            return roiSourceRegion.equals("Left") ? "Left/Right" : "Right/Left";
+        }
+    }
+    
+    String getRatioDirection2() {
+        if (splitAxis.equals("Horizontal")) {
+            return roiSourceRegion.equals("Upper") ? "Down/Up" : "Up/Down";
+        } else {
+            return roiSourceRegion.equals("Left") ? "Right/Left" : "Left/Right";
+        }
+    }
+}
+
 // Acquisition settings - decoupled from GUI
 class AcquisitionSettings {
     boolean livePics = false; // Controls live view GUI display (images are always saved)
@@ -73,15 +112,27 @@ class AcquisitionSettings {
     ArrayList sequenceRows = new ArrayList(); // Each row is ArrayList of column values
     ArrayList visualizationRows = new ArrayList();
     
+    // Processing mode
+    String processingMode = "Temporal"; // "Temporal" or "Spatial"
+    SpatialConfig spatialConfig = new SpatialConfig();
+    
     void captureFromGUI(DefaultTableModel tableModel, DefaultTableModel vizTableModel, 
                        JCheckBox simpleSnapModeCheckbox, JCheckBox livePicsCheckbox, 
-                       JCheckBox convertToStackCheckbox, JCheckBox stackPerRowCheckbox, String savePath) {
+                       JCheckBox convertToStackCheckbox, JCheckBox stackPerRowCheckbox, String savePath,
+                       JComboBox processingModeCombo, JComboBox splitAxisCombo, JComboBox roiSourceCombo) {
         // Capture mode
         config.useSimpleSnapMode = simpleSnapModeCheckbox.isSelected();
         livePics = livePicsCheckbox.isSelected();
         convertToStack = convertToStackCheckbox.isSelected();
         stackPerRow = stackPerRowCheckbox.isSelected();
         saveDirectory = savePath;
+        
+        // Capture processing mode and spatial config
+        processingMode = (String) processingModeCombo.getSelectedItem();
+        if (processingMode.equals("Spatial")) {
+            spatialConfig.splitAxis = (String) splitAxisCombo.getSelectedItem();
+            spatialConfig.roiSourceRegion = (String) roiSourceCombo.getSelectedItem();
+        }
         
         // Capture sequence table
         sequenceRows.clear();
@@ -581,6 +632,9 @@ class LoopSwitchGotoRenderer extends DefaultTableCellRenderer {
 
 // Table Model for visualization configuration
 class VisualizationTableModel extends DefaultTableModel {
+    String currentMode = "Temporal";  // Track current processing mode
+    String[] temporalColumns = {"Graph", "Type", "every", "every 2nd (odd)", "every 2nd (even)", "Custom"};
+    String[] spatialColumns = {"Graph", "Type"};  // Spatial mode: no frame selection columns
     
     public VisualizationTableModel() {
         super(new Object[][]{
@@ -591,8 +645,26 @@ class VisualizationTableModel extends DefaultTableModel {
         }, new String[]{"Graph", "Type", "every", "every 2nd (odd)", "every 2nd (even)", "Custom"});
     }
     
+    void setProcessingMode(String mode) {
+        this.currentMode = mode;
+        if (mode.equals("Temporal")) {
+            setColumnIdentifiers(temporalColumns);
+        } else {
+            setColumnIdentifiers(spatialColumns);
+        }
+        // Reset all rows
+        setRowCount(0);
+        for (int i = 1; i <= 4; i++) {
+            if (mode.equals("Temporal")) {
+                addRow(new Object[]{String.valueOf(i), "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"});
+            } else {
+                addRow(new Object[]{String.valueOf(i), "none"});
+            }
+        }
+    }
+    
     public Class getColumnClass(int col) {
-        if (col >= 2 && col <= 4) {
+        if (currentMode.equals("Temporal") && col >= 2 && col <= 4) {
             return Boolean.class;
         }
         return String.class;
@@ -601,12 +673,21 @@ class VisualizationTableModel extends DefaultTableModel {
     public boolean isCellEditable(int row, int col) {
         if (col == 0) return false;
         if (col == 1) return true;
+        
+        // Spatial mode: only Graph and Type columns exist
+        if (currentMode.equals("Spatial")) {
+            return false;  // No other columns to edit
+        }
+        
+        // Temporal mode editing logic
         String type = (String) getValueAt(row, 1);
         if (type.equals("none")) return false;
-        // Frame Ratio types: only Type column is editable (checkboxes auto-managed)
-        if (type.startsWith("Frame ratio")) {
-            return false; // Checkboxes not manually editable for Frame Ratio
+        
+        // Frame Ratio and Split ratio types: checkboxes not editable (auto-managed or not applicable)
+        if (type.startsWith("Frame ratio") || type.startsWith("Split ratio")) {
+            return false;
         }
+        
         if (col == 5) return true; // Custom column always editable when type != none
         return true;
     }
@@ -619,23 +700,33 @@ class VisualizationTableModel extends DefaultTableModel {
             String oldType = (String) super.getValueAt(row, col);
             super.setValueAt(newType, row, col);
             
-            if (newType.equals("none")) {
-                for (int i = 2; i <= 4; i++) {
-                    super.setValueAt(Boolean.FALSE, row, i);
+            // Only handle checkbox columns in Temporal mode
+            if (currentMode.equals("Temporal")) {
+                if (newType.equals("none")) {
+                    for (int i = 2; i <= 4; i++) {
+                        super.setValueAt(Boolean.FALSE, row, i);
+                    }
+                    super.setValueAt("Off", row, 5);
+                } else if (newType.startsWith("Frame ratio")) {
+                    // Frame Ratio: automatically check both odd and even, uncheck "every" and clear custom
+                    super.setValueAt(Boolean.FALSE, row, 2); // every
+                    super.setValueAt(Boolean.TRUE, row, 3);  // odd
+                    super.setValueAt(Boolean.TRUE, row, 4);  // even
+                    super.setValueAt("Off", row, 5);         // custom
+                } else if (newType.startsWith("Split ratio")) {
+                    // Split Ratio: always processes every frame (spatial processing)
+                    super.setValueAt(Boolean.TRUE, row, 2);  // every
+                    super.setValueAt(Boolean.FALSE, row, 3); // odd
+                    super.setValueAt(Boolean.FALSE, row, 4); // even
+                    super.setValueAt("Off", row, 5);         // custom
+                } else if (oldType.equals("none")) {
+                    for (int i = 2; i <= 4; i++) {
+                        super.setValueAt(Boolean.FALSE, row, i);
+                    }
+                    super.setValueAt("Off", row, 5);
                 }
-                super.setValueAt("Off", row, 5);
-            } else if (newType.startsWith("Frame ratio")) {
-                // Frame Ratio: automatically check both odd and even, uncheck "every" and clear custom
-                super.setValueAt(Boolean.FALSE, row, 2); // every
-                super.setValueAt(Boolean.TRUE, row, 3);  // odd
-                super.setValueAt(Boolean.TRUE, row, 4);  // even
-                super.setValueAt("Off", row, 5);         // custom
-            } else if (oldType.equals("none")) {
-                for (int i = 2; i <= 4; i++) {
-                    super.setValueAt(Boolean.FALSE, row, i);
-                }
-                super.setValueAt("Off", row, 5);
             }
+            // Spatial mode: no extra columns to set
             
             fireTableRowsUpdated(row, row);
             return;
@@ -688,10 +779,48 @@ class VisualizationTableModel extends DefaultTableModel {
     }
 }
 
-// Custom cell editor for Type column (dropdown)
+// Custom cell editor for Type column (dropdown) - mode-aware
 class VisualizationTypeEditor extends DefaultCellEditor {
+    JComboBox combo;
+    String currentMode = "Temporal";
+    SpatialConfig spatialConfig = new SpatialConfig();
+    
     public VisualizationTypeEditor() {
-        super(new JComboBox(new String[]{"none", "Intensity", "Split ratio (horizontal)", "Frame ratio Even/Odd", "Frame ratio Odd/Even"}));
+        super(new JComboBox());
+        combo = (JComboBox) getComponent();
+        updateOptions();
+    }
+    
+    void setProcessingMode(String mode, SpatialConfig config) {
+        this.currentMode = mode;
+        this.spatialConfig = config;
+        updateOptions();
+    }
+    
+    void updateOptions() {
+        combo.removeAllItems();
+        combo.addItem("none");
+        
+        if (currentMode.equals("Temporal")) {
+            combo.addItem("Intensity");
+            combo.addItem("Frame ratio Even/Odd");
+            combo.addItem("Frame ratio Odd/Even");
+        } else if (currentMode.equals("Spatial")) {
+            // Add split ratio options based on spatial config
+            String dir1 = spatialConfig.getRatioDirection1();
+            String dir2 = spatialConfig.getRatioDirection2();
+            combo.addItem("Split ratio " + dir1);
+            combo.addItem("Split ratio " + dir2);
+            
+            // Add region-specific intensity options
+            if (spatialConfig.splitAxis.equals("Horizontal")) {
+                combo.addItem("Intensity Up");
+                combo.addItem("Intensity Down");
+            } else {
+                combo.addItem("Intensity Left");
+                combo.addItem("Intensity Right");
+            }
+        }
     }
 }
 
@@ -969,7 +1098,7 @@ okButton.addActionListener(new ActionListener() {
             }
             
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo);
             
             // Dispose GUI immediately - no more GUI dependencies
             frame.dispose();
@@ -1093,10 +1222,148 @@ JPanel vizTitlePanel = new JPanel(new BorderLayout());
 vizTitlePanel.add(vizTitleLabel, BorderLayout.CENTER);
 vizTitlePanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
 
+// ===== PROCESSING MODE SELECTION =====
+JPanel modePanel = new JPanel();
+modePanel.setLayout(new BoxLayout(modePanel, BoxLayout.Y_AXIS));
+modePanel.setBorder(BorderFactory.createCompoundBorder(
+    BorderFactory.createTitledBorder("Processing Mode"),
+    BorderFactory.createEmptyBorder(5, 5, 5, 5)
+));
+
+JPanel modeSelectionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+JLabel modeLabel = new JLabel("Mode:");
+modeLabel.setFont(modeLabel.getFont().deriveFont(Font.BOLD));
+JComboBox processingModeCombo = new JComboBox(new String[]{"Temporal", "Spatial"});
+processingModeCombo.setPreferredSize(new java.awt.Dimension(120, 25));
+modeSelectionPanel.add(modeLabel);
+modeSelectionPanel.add(processingModeCombo);
+
+// Spatial configuration panel (initially hidden)
+JPanel spatialConfigPanel = new JPanel();
+spatialConfigPanel.setLayout(new FlowLayout(FlowLayout.LEFT));
+spatialConfigPanel.setBorder(BorderFactory.createTitledBorder("Spatial Configuration"));
+spatialConfigPanel.setVisible(false);
+
+JLabel splitAxisLabel = new JLabel("Split Axis:");
+JComboBox splitAxisCombo = new JComboBox(new String[]{"Horizontal", "Vertical"});
+splitAxisCombo.setPreferredSize(new java.awt.Dimension(120, 25));
+
+JLabel roiSourceLabel = new JLabel("ROI Region:");
+JComboBox roiSourceCombo = new JComboBox(new String[]{"Upper", "Lower"});  // Default for Horizontal split
+roiSourceCombo.setPreferredSize(new java.awt.Dimension(120, 25));
+
+spatialConfigPanel.add(splitAxisLabel);
+spatialConfigPanel.add(splitAxisCombo);
+spatialConfigPanel.add(Box.createHorizontalStrut(15));
+spatialConfigPanel.add(roiSourceLabel);
+spatialConfigPanel.add(roiSourceCombo);
+
+modePanel.add(modeSelectionPanel);
+modePanel.add(spatialConfigPanel);
+
+// Mode change listener - clear table and update options
+final VisualizationTypeEditor typeEditor = new VisualizationTypeEditor();
+processingModeCombo.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        String mode = (String) processingModeCombo.getSelectedItem();
+        
+        // Show/hide spatial config
+        spatialConfigPanel.setVisible(mode.equals("Spatial"));
+        
+        // Update table model mode (which rebuilds columns)
+        vizTableModel.setProcessingMode(mode);
+        
+        // Update type editor options
+        SpatialConfig config = new SpatialConfig();
+        config.splitAxis = (String) splitAxisCombo.getSelectedItem();
+        config.roiSourceRegion = (String) roiSourceCombo.getSelectedItem();
+        typeEditor.setProcessingMode(mode, config);
+        vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
+        
+        // Reconfigure table columns for mode
+        if (mode.equals("Temporal")) {
+            // Re-add checkbox columns
+            for (int i = 2; i < 5; i++) {
+                vizTable.getColumnModel().getColumn(i).setCellRenderer(new VisualizationCheckBoxRenderer());
+                vizTable.getColumnModel().getColumn(i).setCellEditor(new VisualizationCheckBoxEditor());
+                vizTable.getColumnModel().getColumn(i).setPreferredWidth(100);
+            }
+            vizTable.getColumnModel().getColumn(5).setCellEditor(new VisualizationCustomEditor());
+            vizTable.getColumnModel().getColumn(5).setPreferredWidth(150);
+        }
+        // Spatial mode: only 2 columns, no special renderers needed
+        
+        vizTableModel.fireTableStructureChanged();
+        vizTable.getColumnModel().getColumn(0).setPreferredWidth(80);
+        vizTable.getColumnModel().getColumn(1).setPreferredWidth(180);
+        
+        // Re-apply cell editor after structure change
+        vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
+    }
+});
+
+// Split axis change listener - update ROI source options
+splitAxisCombo.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        String axis = (String) splitAxisCombo.getSelectedItem();
+        
+        // Temporarily remove the action listener to prevent cascading events
+        ActionListener[] listeners = roiSourceCombo.getActionListeners();
+        for (ActionListener listener : listeners) {
+            roiSourceCombo.removeActionListener(listener);
+        }
+        
+        roiSourceCombo.removeAllItems();
+        if (axis.equals("Horizontal")) {
+            roiSourceCombo.addItem("Upper");
+            roiSourceCombo.addItem("Lower");
+        } else {
+            roiSourceCombo.addItem("Left");
+            roiSourceCombo.addItem("Right");
+        }
+        
+        // Restore action listeners
+        for (ActionListener listener : listeners) {
+            roiSourceCombo.addActionListener(listener);
+        }
+        
+        // Clear all visualization settings when split axis changes
+        if (processingModeCombo.getSelectedItem().equals("Spatial")) {
+            for (int row = 0; row < vizTableModel.getRowCount(); row++) {
+                vizTableModel.setValueAt("none", row, 1);
+            }
+        }
+        
+        // Update type editor when spatial config changes
+        if (processingModeCombo.getSelectedItem().equals("Spatial")) {
+            SpatialConfig config = new SpatialConfig();
+            config.splitAxis = axis;
+            config.roiSourceRegion = (String) roiSourceCombo.getSelectedItem();
+            typeEditor.setProcessingMode("Spatial", config);
+            vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
+        }
+    }
+});
+
+// ROI source change listener - update type editor
+roiSourceCombo.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        // Update type editor when spatial config changes
+        if (processingModeCombo.getSelectedItem().equals("Spatial")) {
+            SpatialConfig config = new SpatialConfig();
+            config.splitAxis = (String) splitAxisCombo.getSelectedItem();
+            config.roiSourceRegion = (String) roiSourceCombo.getSelectedItem();
+            typeEditor.setProcessingMode("Spatial", config);
+            vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
+        }
+    }
+});
+
 // Instructions
 JLabel vizInfoLabel = new JLabel("<html><div style='text-align: center;'>"
-        + "Configure up to 4 live graphs to display during the experiment.<br>"
-        + "<b>Frame ratio</b> automatically uses consecutive even/odd frame pairs. <b>Intensity</b> and <b>Split ratio</b> require 1 frame selection."
+        + "<b>Temporal:</b> Compare frames over time (Frame ratio). "
+        + "<b>Spatial:</b> Compare regions within same frame (Split ratio).<br>"
+        + "<b>Intensity</b> measures raw values in specified region."
         + "</div></html>", SwingConstants.CENTER);
 vizInfoLabel.setBorder(BorderFactory.createEmptyBorder(5, 10, 10, 10));
 
@@ -1121,8 +1388,8 @@ vizTable.getColumnModel().getColumn(0).setCellRenderer(new DefaultTableCellRende
 });
 vizTable.getColumnModel().getColumn(0).setPreferredWidth(80);
 
-// Column 1: Type (dropdown)
-vizTable.getColumnModel().getColumn(1).setCellEditor(new VisualizationTypeEditor());
+// Column 1: Type (dropdown) - use the typeEditor created above
+vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
 vizTable.getColumnModel().getColumn(1).setPreferredWidth(180);
 
 // Columns 2-4: Frame checkboxes
@@ -1177,7 +1444,7 @@ vizStartButton.addActionListener(new ActionListener() {
             }
             
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo);
             
             // Dispose GUI immediately
             frame.dispose();
@@ -1230,7 +1497,11 @@ vizBottomPanel.add(vizButtonPanel, BorderLayout.CENTER);
 // Layout visualization panel
 JPanel vizTopPanel = new JPanel(new BorderLayout());
 vizTopPanel.add(vizTitlePanel, BorderLayout.NORTH);
-vizTopPanel.add(vizInfoLabel, BorderLayout.CENTER);
+JPanel centerPanel = new JPanel();
+centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
+centerPanel.add(modePanel);
+centerPanel.add(vizInfoLabel);
+vizTopPanel.add(centerPanel, BorderLayout.CENTER);
 
 visualizationPanel.add(vizTopPanel, BorderLayout.NORTH);
 visualizationPanel.add(vizScrollPane, BorderLayout.CENTER);
@@ -1748,11 +2019,26 @@ boolean setupVisualizationROIs() {
         imp.getWindow().close();
     }
     
-    // Store renamed ROIs
+    // Store renamed ROIs with metadata
     config.storedROIs = new ArrayList();
+    
+    // Get current image dimensions
+    int imageWidth = (int) mmc.getImageWidth();
+    int imageHeight = (int) mmc.getImageHeight();
+    
+    // Determine source region based on processing mode
+    String sourceRegion = "original";
+    if (config.acqSettings.processingMode.equals("Spatial")) {
+        sourceRegion = config.acqSettings.spatialConfig.roiSourceRegion;
+    }
+    
+    print("Storing ROIs with source region: " + sourceRegion);
+    print("Image dimensions: " + imageWidth + " x " + imageHeight);
+    
     for (int i = 0; i < rm.getCount(); i++) {
         ij.gui.Roi roi = rm.getRoi(i);
-        config.storedROIs.add(roi);
+        ROIMetadata roiMeta = new ROIMetadata(roi, sourceRegion, imageWidth, imageHeight);
+        config.storedROIs.add(roiMeta);
     }
     print("ROIs renamed to ROI1, ROI2, etc.");
     print("Stored " + config.storedROIs.size() + " ROIs for acquisition");
@@ -1982,6 +2268,9 @@ void loadSettingsFromCSV() {
         boolean inVisualizationSection = false;
         boolean vizHeaderSkipped = false;
         int vizRowIndex = 0;
+        String loadedMode = "Temporal"; // Default
+        String loadedSplitAxis = "Horizontal";
+        String loadedROIRegion = "Upper";
         
         // Clear existing table data
         while (tableModel.getRowCount() > 0) {
@@ -2017,13 +2306,23 @@ void loadSettingsFromCSV() {
                 
                 // Parse visualization row
                 String[] vizParts = parseCSVLine(line);
-                if (vizParts.length >= 6 && vizRowIndex < vizTableModel.getRowCount()) {
-                    vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type
-                    vizTableModel.setValueAt(Boolean.valueOf(vizParts[2]), vizRowIndex, 2); // Every frame
-                    vizTableModel.setValueAt(Boolean.valueOf(vizParts[3]), vizRowIndex, 3); // Every odd
-                    vizTableModel.setValueAt(Boolean.valueOf(vizParts[4]), vizRowIndex, 4); // Every even
-                    vizTableModel.setValueAt(vizParts[5], vizRowIndex, 5); // Custom
-                    vizRowIndex++;
+                
+                // Mode-aware parsing
+                if (loadedMode.equals("Temporal")) {
+                    if (vizParts.length >= 6 && vizRowIndex < vizTableModel.getRowCount()) {
+                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type
+                        vizTableModel.setValueAt(Boolean.valueOf(vizParts[2]), vizRowIndex, 2); // Every frame
+                        vizTableModel.setValueAt(Boolean.valueOf(vizParts[3]), vizRowIndex, 3); // Every odd
+                        vizTableModel.setValueAt(Boolean.valueOf(vizParts[4]), vizRowIndex, 4); // Every even
+                        vizTableModel.setValueAt(vizParts[5], vizRowIndex, 5); // Custom
+                        vizRowIndex++;
+                    }
+                } else {
+                    // Spatial mode: only 2 columns
+                    if (vizParts.length >= 2 && vizRowIndex < vizTableModel.getRowCount()) {
+                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type
+                        vizRowIndex++;
+                    }
                 }
                 continue;
             }
@@ -2051,6 +2350,18 @@ void loadSettingsFromCSV() {
                     boolean stackPerRowValue = value.equalsIgnoreCase("true");
                     stackPerRow.setSelected(stackPerRowValue);
                     print("  Stack per Row: " + stackPerRowValue);
+                } else if (line.contains("Processing Mode:")) {
+                    String value = line.substring(line.indexOf(":") + 1).trim();
+                    loadedMode = value;
+                    print("  Processing Mode: " + loadedMode);
+                } else if (line.contains("Split Axis:")) {
+                    String value = line.substring(line.indexOf(":") + 1).trim();
+                    loadedSplitAxis = value;
+                    print("  Split Axis: " + loadedSplitAxis);
+                } else if (line.contains("ROI Region:")) {
+                    String value = line.substring(line.indexOf(":") + 1).trim();
+                    loadedROIRegion = value;
+                    print("  ROI Region: " + loadedROIRegion);
                 }
                 continue;
             }
@@ -2092,6 +2403,13 @@ void loadSettingsFromCSV() {
         }
         
         reader.close();
+        
+        // Apply loaded processing mode settings (must be done after loading to update UI)
+        processingModeCombo.setSelectedItem(loadedMode);
+        if (loadedMode.equals("Spatial")) {
+            splitAxisCombo.setSelectedItem(loadedSplitAxis);
+            roiSourceCombo.setSelectedItem(loadedROIRegion);
+        }
         
         print("Successfully loaded " + tableModel.getRowCount() + " sequence steps");
         if (vizRowIndex > 0) {
@@ -2210,31 +2528,53 @@ void saveSettingsToCSV() {
         writer.println("# Convert to Stack: " + convertToStack.isSelected());
         writer.println("# Stack per Row: " + stackPerRow.isSelected());
         
+        // Write processing mode settings
+        String currentMode = (String) processingModeCombo.getSelectedItem();
+        writer.println("# Processing Mode: " + currentMode);
+        if (currentMode.equals("Spatial")) {
+            writer.println("# Split Axis: " + splitAxisCombo.getSelectedItem());
+            writer.println("# ROI Region: " + roiSourceCombo.getSelectedItem());
+        }
+        
         // Write visualization settings
         writer.println("");
         writer.println("# Visualization Settings");
-        writer.println("Graph,Type,Every Frame,Every Odd,Every Even,Custom");
-        for (int i = 0; i < vizTableModel.getRowCount(); i++) {
-            StringBuilder vizRow = new StringBuilder();
-            vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString())); // Graph name
-            vizRow.append(",");
-            vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString())); // Type
-            vizRow.append(",");
-            
-            Object everyFrame = vizTableModel.getValueAt(i, 2);
-            vizRow.append(everyFrame != null && ((Boolean)everyFrame).booleanValue() ? "true" : "false");
-            vizRow.append(",");
-            
-            Object everyOdd = vizTableModel.getValueAt(i, 3);
-            vizRow.append(everyOdd != null && ((Boolean)everyOdd).booleanValue() ? "true" : "false");
-            vizRow.append(",");
-            
-            Object everyEven = vizTableModel.getValueAt(i, 4);
-            vizRow.append(everyEven != null && ((Boolean)everyEven).booleanValue() ? "true" : "false");
-            vizRow.append(",");
-            
-            vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 5).toString())); // Custom
-            writer.println(vizRow.toString());
+        
+        // Mode-aware column headers and data
+        if (currentMode.equals("Temporal")) {
+            writer.println("Graph,Type,Every Frame,Every Odd,Every Even,Custom");
+            for (int i = 0; i < vizTableModel.getRowCount(); i++) {
+                StringBuilder vizRow = new StringBuilder();
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString())); // Graph name
+                vizRow.append(",");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString())); // Type
+                vizRow.append(",");
+                
+                Object everyFrame = vizTableModel.getValueAt(i, 2);
+                vizRow.append(everyFrame != null && ((Boolean)everyFrame).booleanValue() ? "true" : "false");
+                vizRow.append(",");
+                
+                Object everyOdd = vizTableModel.getValueAt(i, 3);
+                vizRow.append(everyOdd != null && ((Boolean)everyOdd).booleanValue() ? "true" : "false");
+                vizRow.append(",");
+                
+                Object everyEven = vizTableModel.getValueAt(i, 4);
+                vizRow.append(everyEven != null && ((Boolean)everyEven).booleanValue() ? "true" : "false");
+                vizRow.append(",");
+                
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 5).toString())); // Custom
+                writer.println(vizRow.toString());
+            }
+        } else {
+            // Spatial mode: only 2 columns
+            writer.println("Graph,Type");
+            for (int i = 0; i < vizTableModel.getRowCount(); i++) {
+                StringBuilder vizRow = new StringBuilder();
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString())); // Graph name
+                vizRow.append(",");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString())); // Type
+                writer.println(vizRow.toString());
+            }
         }
         
         writer.close();
