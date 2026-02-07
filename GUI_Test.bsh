@@ -603,6 +603,10 @@ class VisualizationTableModel extends DefaultTableModel {
         if (col == 1) return true;
         String type = (String) getValueAt(row, 1);
         if (type.equals("none")) return false;
+        // Frame Ratio types: only Type column is editable (checkboxes auto-managed)
+        if (type.startsWith("Frame ratio")) {
+            return false; // Checkboxes not manually editable for Frame Ratio
+        }
         if (col == 5) return true; // Custom column always editable when type != none
         return true;
     }
@@ -620,6 +624,12 @@ class VisualizationTableModel extends DefaultTableModel {
                     super.setValueAt(Boolean.FALSE, row, i);
                 }
                 super.setValueAt("Off", row, 5);
+            } else if (newType.startsWith("Frame ratio")) {
+                // Frame Ratio: automatically check both odd and even, uncheck "every" and clear custom
+                super.setValueAt(Boolean.FALSE, row, 2); // every
+                super.setValueAt(Boolean.TRUE, row, 3);  // odd
+                super.setValueAt(Boolean.TRUE, row, 4);  // even
+                super.setValueAt("Off", row, 5);         // custom
             } else if (oldType.equals("none")) {
                 for (int i = 2; i <= 4; i++) {
                     super.setValueAt(Boolean.FALSE, row, i);
@@ -681,7 +691,7 @@ class VisualizationTableModel extends DefaultTableModel {
 // Custom cell editor for Type column (dropdown)
 class VisualizationTypeEditor extends DefaultCellEditor {
     public VisualizationTypeEditor() {
-        super(new JComboBox(new String[]{"none", "Intensity", "Split ratio (horizontal)", "Frame ratio"}));
+        super(new JComboBox(new String[]{"none", "Intensity", "Split ratio (horizontal)", "Frame ratio Even/Odd", "Frame ratio Odd/Even"}));
     }
 }
 
@@ -1086,7 +1096,7 @@ vizTitlePanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
 // Instructions
 JLabel vizInfoLabel = new JLabel("<html><div style='text-align: center;'>"
         + "Configure up to 4 live graphs to display during the experiment.<br>"
-        + "<b>Frame ratio</b> requires 2 frames to be selected. <b>Intensity</b> and <b>Split ratio</b> require 1 frame."
+        + "<b>Frame ratio</b> automatically uses consecutive even/odd frame pairs. <b>Intensity</b> and <b>Split ratio</b> require 1 frame selection."
         + "</div></html>", SwingConstants.CENTER);
 vizInfoLabel.setBorder(BorderFactory.createEmptyBorder(5, 10, 10, 10));
 
@@ -2424,7 +2434,7 @@ void createInlineAcquisitionWindow() {
         // Create chart with frame logic in title
         String yAxisLabel = graphType.equals("Intensity") ? "Intensity [A.U.]" :
                            graphType.equals("Split ratio (horizontal)") ? "Split Ratio" :
-                           graphType.equals("Frame ratio") ? "Frame Ratio" : "Value";
+                           graphType.startsWith("Frame ratio") ? "Frame Ratio" : "Value";
         
         String chartTitle = graphName + " - " + graphType;
         if (!frameLogic.isEmpty()) {
@@ -2753,10 +2763,10 @@ void createInlineAcquisitionWindow() {
                 // Choose acquisition mode based on configuration
                 if (config.useCircularBuffer) {
                     print("Using circular buffer acquisition mode");
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels);
                 } else {
                     print("Using simple snap acquisition mode");
-                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts);
+                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels);
                 }
             } catch (Exception ex) {
                 print("ERROR in acquisition thread: " + ex.getMessage());
@@ -2775,12 +2785,22 @@ boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
     }
     
     Boolean everyOdd = (Boolean) vizRow.get(3);
-    if (everyOdd != null && everyOdd.booleanValue()) {
+    Boolean everyEven = (Boolean) vizRow.get(4);
+    
+    // Special case: if BOTH odd and even are checked (Frame Ratio graphs), accept all frames
+    boolean oddChecked = (everyOdd != null && everyOdd.booleanValue());
+    boolean evenChecked = (everyEven != null && everyEven.booleanValue());
+    
+    if (oddChecked && evenChecked) {
+        return true; // Accept both odd and even frames for Frame Ratio
+    }
+    
+    // Normal case: check individually
+    if (oddChecked) {
         return (frameNumber % 2 == 1);
     }
     
-    Boolean everyEven = (Boolean) vizRow.get(4);
-    if (everyEven != null && everyEven.booleanValue()) {
+    if (evenChecked) {
         return (frameNumber % 2 == 0);
     }
     
@@ -2814,6 +2834,61 @@ boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
 }
 
 // ==================== COMMON ACQUISITION HELPER FUNCTIONS ====================
+
+// Frame cache for ratio calculations - stores most recent even and odd frames per graph
+// Structure: Map<graphIdx, Map<"even"|"odd", CachedFrame>>
+// CachedFrame: [frameNumber, timestamp, roiValues]
+Map frameCache = new HashMap();
+
+// Initialize frame cache for a graph
+void initializeFrameCache(int graphIdx) {
+    Map graphCache = new HashMap();
+    graphCache.put("even", null);
+    graphCache.put("odd", null);
+    frameCache.put(graphIdx, graphCache);
+}
+
+// Cache frame data for ratio calculation
+void cacheFrameData(int graphIdx, int frameNumber, long timestamp, ArrayList roiValues) {
+    if (!frameCache.containsKey(graphIdx)) {
+        initializeFrameCache(graphIdx);
+    }
+    
+    Map graphCache = (Map) frameCache.get(graphIdx);
+    String frameType = (frameNumber % 2 == 0) ? "even" : "odd";
+    
+    ArrayList cachedFrame = new ArrayList();
+    cachedFrame.add(frameNumber);
+    cachedFrame.add(timestamp);
+    cachedFrame.add(new ArrayList(roiValues)); // Copy the values
+    
+    graphCache.put(frameType, cachedFrame);
+}
+
+// Calculate frame ratio: divides numerator by denominator element-wise
+// Returns ArrayList of ratio values (one per ROI)
+ArrayList calculateFrameRatio(ArrayList numeratorROIs, ArrayList denominatorROIs) {
+    ArrayList ratios = new ArrayList();
+    
+    if (numeratorROIs == null || denominatorROIs == null) {
+        return ratios; // Return empty if either is null
+    }
+    
+    int numROIs = Math.min(numeratorROIs.size(), denominatorROIs.size());
+    for (int i = 0; i < numROIs; i++) {
+        double numerator = ((Double) numeratorROIs.get(i)).doubleValue();
+        double denominator = ((Double) denominatorROIs.get(i)).doubleValue();
+        
+        // Avoid division by zero
+        if (denominator == 0.0) {
+            ratios.add(Double.NaN); // Use NaN for undefined ratios
+        } else {
+            ratios.add(numerator / denominator);
+        }
+    }
+    
+    return ratios;
+}
 
 // Update live view with image and ROI overlays
 void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsList) {
@@ -2929,7 +3004,7 @@ ArrayList buildDataRow(int frameNumber, long timestamp, ArrayList roiValues) {
 }
 
 // Update all graphs with new data
-void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues) {
+void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues, ArrayList chartPanels) {
     for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
         ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
         String graphType = (String) vizRow.get(1);
@@ -2942,29 +3017,98 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             continue;
         }
         
-        if (!graphType.equals("Intensity")) {
-            continue;
+        // Handle Intensity graphs
+        if (graphType.equals("Intensity")) {
+            final int gIdx = graphIdx;
+            final long time = currentTime;
+            final ArrayList roiValsCopy = new ArrayList(roiValues);
+            final ArrayList chartPanelsCopy = chartPanels;
+            
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                    for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
+                        XYSeries series = dataset.getSeries(roiIdx);
+                        double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
+                        series.add(time / 1000.0, value, true);
+                    }
+                    if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
+                        ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
+                        cp.revalidate();
+                        cp.repaint();
+                    }
+                }
+            });
         }
-        
-        final int gIdx = graphIdx;
-        final long time = currentTime;
-        final ArrayList roiValsCopy = new ArrayList(roiValues);
-        
-        SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-                XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
-                    XYSeries series = dataset.getSeries(roiIdx);
-                    double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
-                    series.add(time / 1000.0, value, true);
-                }
-                if (chartPanels.get(gIdx) != null) {
-                    ChartPanel cp = (ChartPanel) chartPanels.get(gIdx);
-                    cp.revalidate();
-                    cp.repaint();
-                }
+        // Handle Frame Ratio graphs
+        else if (graphType.startsWith("Frame ratio")) {
+            // Cache the current frame data
+            cacheFrameData(graphIdx, frameNumber, currentTime, roiValues);
+            
+            // Check if we have both even and odd frames cached
+            if (!frameCache.containsKey(graphIdx)) {
+                continue;
             }
-        });
+            
+            Map graphCache = (Map) frameCache.get(graphIdx);
+            ArrayList evenFrame = (ArrayList) graphCache.get("even");
+            ArrayList oddFrame = (ArrayList) graphCache.get("odd");
+            
+            // Need both frames to calculate ratio
+            if (evenFrame == null || oddFrame == null) {
+                continue;
+            }
+            
+            // Extract ROI values from cached frames
+            ArrayList evenROIs = (ArrayList) evenFrame.get(2);
+            ArrayList oddROIs = (ArrayList) oddFrame.get(2);
+            
+            // Calculate ratio based on type
+            ArrayList ratioValues = null;
+            if (graphType.equals("Frame ratio Even/Odd")) {
+                ratioValues = calculateFrameRatio(evenROIs, oddROIs); // even / odd
+            } else if (graphType.equals("Frame ratio Odd/Even")) {
+                ratioValues = calculateFrameRatio(oddROIs, evenROIs); // odd / even
+            }
+            
+            if (ratioValues == null || ratioValues.isEmpty()) {
+                continue;
+            }
+            
+            // Debug output every 10 ratio calculations
+            if (frameNumber % 20 == 1) {  // After every 10 pairs (every 20 frames, starting at frame 1)
+                print("Frame " + frameNumber + " - Ratio calculated for Graph " + (graphIdx + 1) + ": " + ratioValues);
+            }
+            
+            // Use the timestamp from the more recent frame (the one we just processed)
+            long ratioTimestamp = ((Long) (frameNumber % 2 == 0 ? evenFrame.get(1) : oddFrame.get(1))).longValue();
+            
+            final int gIdx = graphIdx;
+            final long time = ratioTimestamp;
+            final ArrayList ratioValsCopy = new ArrayList(ratioValues);
+            final ArrayList chartPanelsCopy = chartPanels;
+            
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                    for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
+                        XYSeries series = dataset.getSeries(roiIdx);
+                        Object ratioObj = ratioValsCopy.get(roiIdx);
+                        if (ratioObj != null && ratioObj instanceof Double) {
+                            double value = ((Double) ratioObj).doubleValue();
+                            if (!Double.isNaN(value) && !Double.isInfinite(value)) {
+                                series.add(time / 1000.0, value, true);
+                            }
+                        }
+                    }
+                    if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
+                        ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
+                        cp.revalidate();
+                        cp.repaint();
+                    }
+                }
+            });
+        }
     }
 }
 
@@ -3298,7 +3442,7 @@ void convertTiffsToStack(String experimentFolder) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels) {
     print("========== CIRCULAR BUFFER ACQUISITION START ==========");
     
     // Verify experiment folder exists
@@ -3482,7 +3626,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         
                         // Update graphs (throttled)
                         if (shouldUpdateGui) {
-                            updateGraphs(datasets, framesProcessed, currentTime, roiValues);
+                            updateGraphs(datasets, framesProcessed, currentTime, roiValues, chartPanels);
                             lastGuiUpdateTime = currentTime;
                         }
                         
@@ -3556,7 +3700,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList) {
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels) {
     print("========== ACQUISITION START ==========");
     
     // Verify experiment folder exists
@@ -3690,7 +3834,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 
                 // Update graphs (throttled)
                 if (shouldUpdateGui) {
-                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues);
+                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues, chartPanels);
                     lastGuiUpdateTime = currentTime;
                 }
                 
@@ -3844,7 +3988,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 
                 // Update graphs (throttled)
                 if (shouldUpdateGui) {
-                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues);
+                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues, chartPanels);
                     lastGuiUpdateTime = currentTime;
                 }
                 
@@ -3946,7 +4090,7 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
             frameLogic = custom.replace(" ", "_");
         }
         
-        String fileName = "Graph" + (graphIdx + 1) + "_" + graphType.replace(" ", "_") + "_" + frameLogic + ".csv";
+        String fileName = "Graph" + (graphIdx + 1) + "_" + graphType.replace(" ", "_").replace("/", "-") + "_" + frameLogic + ".csv";
         File csvFile = new File(experimentFolder, fileName);
         
         try {
@@ -3955,35 +4099,121 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
             // Determine actual number of ROIs from stored ROIs
             int actualNumROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
             
-            // Header with ROI columns (only actual ROIs)
-            writer.print("Frame,Timestamp [ms]");
-            for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                writer.print(",ROI" + (roiIdx + 1));
-            }
-            writer.println();
-            
-            // Write data rows - only include rows that pass this graph's frame filter
-            for (int i = 0; i < dataRows.size(); i++) {
-                ArrayList row = (ArrayList) dataRows.get(i);
+            // Handle Frame Ratio graphs differently
+            if (graphType.startsWith("Frame ratio")) {
+                // Header for ratio data
+                writer.print("Frame Pair,Timestamp [ms]");
+                for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                    writer.print(",ROI" + (roiIdx + 1) + "_Ratio");
+                }
+                writer.println();
                 
-                // row structure: [frame, timestamp, roi0, roi1, roi2, roi3]
-                int frameNum = ((Integer) row.get(0)).intValue();
+                // Collect frames into even/odd pairs and calculate ratios
+                Map evenFrames = new HashMap(); // frameNumber -> row
+                Map oddFrames = new HashMap();  // frameNumber -> row
                 
-                // Check if this frame passes the graph's filter
-                if (shouldProcessFrame(frameNum, vizRow)) {
-                    writer.print(row.get(0)); // Frame
-                    writer.print(",");
-                    writer.print(row.get(1)); // Timestamp
+                // Separate even and odd frames
+                for (int i = 0; i < dataRows.size(); i++) {
+                    ArrayList row = (ArrayList) dataRows.get(i);
+                    int frameNum = ((Integer) row.get(0)).intValue();
                     
-                    // Write only actual ROI values
-                    for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                        writer.print(",");
-                        Object roiValue = row.get(2 + roiIdx);
-                        if (roiValue != null) {
-                            writer.print(roiValue);
+                    if (shouldProcessFrame(frameNum, vizRow)) {
+                        if (frameNum % 2 == 0) {
+                            evenFrames.put(frameNum, row);
+                        } else {
+                            oddFrames.put(frameNum, row);
                         }
                     }
-                    writer.println();
+                }
+                
+                // Find consecutive pairs and calculate ratios
+                // Assuming frames come in sequence: 0,1,2,3,4,5...
+                // We pair (0,1), (2,3), (4,5), etc.
+                for (int i = 0; i < dataRows.size(); i++) {
+                    ArrayList row = (ArrayList) dataRows.get(i);
+                    int frameNum = ((Integer) row.get(0)).intValue();
+                    
+                    // Process when we have an even frame (pair with next odd)
+                    if (frameNum % 2 == 0) {
+                        ArrayList evenRow = (ArrayList) evenFrames.get(frameNum);
+                        ArrayList oddRow = (ArrayList) oddFrames.get(frameNum + 1);
+                        
+                        if (evenRow != null && oddRow != null) {
+                            // Extract ROI values
+                            ArrayList evenROIs = new ArrayList();
+                            ArrayList oddROIs = new ArrayList();
+                            
+                            for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                                evenROIs.add(evenRow.get(2 + roiIdx));
+                                oddROIs.add(oddRow.get(2 + roiIdx));
+                            }
+                            
+                            // Calculate ratios based on type
+                            ArrayList ratios = null;
+                            if (graphType.equals("Frame ratio Even/Odd")) {
+                                ratios = calculateFrameRatio(evenROIs, oddROIs);
+                            } else if (graphType.equals("Frame ratio Odd/Even")) {
+                                ratios = calculateFrameRatio(oddROIs, evenROIs);
+                            }
+                            
+                            if (ratios != null && !ratios.isEmpty()) {
+                                // Write pair identifier (e.g., "0-1" for frames 0 and 1)
+                                writer.print(frameNum + "-" + (frameNum + 1));
+                                writer.print(",");
+                                // Use timestamp from the second frame (odd frame)
+                                writer.print(oddRow.get(1));
+                                
+                                // Write ratio values
+                                for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
+                                    writer.print(",");
+                                    Object ratioVal = ratios.get(roiIdx);
+                                    if (ratioVal != null) {
+                                        double ratio = ((Double) ratioVal).doubleValue();
+                                        if (!Double.isNaN(ratio) && !Double.isInfinite(ratio)) {
+                                            writer.print(ratio);
+                                        } else {
+                                            writer.print("NaN");
+                                        }
+                                    }
+                                }
+                                writer.println();
+                            }
+                        }
+                    }
+                }
+                
+            } else {
+                // Standard intensity data export
+                // Header with ROI columns (only actual ROIs)
+                writer.print("Frame,Timestamp [ms]");
+                for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                    writer.print(",ROI" + (roiIdx + 1));
+                }
+                writer.println();
+                
+                // Write data rows - only include rows that pass this graph's frame filter
+                for (int i = 0; i < dataRows.size(); i++) {
+                    ArrayList row = (ArrayList) dataRows.get(i);
+                    
+                    // row structure: [frame, timestamp, roi0, roi1, roi2, roi3]
+                    int frameNum = ((Integer) row.get(0)).intValue();
+                    
+                    // Check if this frame passes the graph's filter
+                    if (shouldProcessFrame(frameNum, vizRow)) {
+                        writer.print(row.get(0)); // Frame
+                        writer.print(",");
+                        writer.print(row.get(1)); // Timestamp
+                        
+                        // Write only actual ROI values
+                        for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                            writer.print(",");
+                            Object roiValue = row.get(2 + roiIdx);
+                            if (roiValue != null) {
+                                writer.print(roiValue);
+                            }
+                        }
+                        writer.println();
+                    }
                 }
             }
             
