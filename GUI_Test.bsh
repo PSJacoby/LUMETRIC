@@ -58,16 +58,19 @@ import java.awt.BasicStroke;
 class AcquisitionSettings {
     boolean livePics = false; // Controls live view GUI display (images are always saved)
     boolean convertToStack = true; // Convert individual TIFFs to stack after acquisition (default: true)
+    boolean stackPerRow = false; // Create one stack per sequence row (not yet implemented)
     String saveDirectory = "";
     ArrayList sequenceRows = new ArrayList(); // Each row is ArrayList of column values
     ArrayList visualizationRows = new ArrayList();
     
     void captureFromGUI(DefaultTableModel tableModel, DefaultTableModel vizTableModel, 
-                       JCheckBox simpleSnapModeCheckbox, JCheckBox livePicsCheckbox, JCheckBox convertToStackCheckbox, String savePath) {
+                       JCheckBox simpleSnapModeCheckbox, JCheckBox livePicsCheckbox, 
+                       JCheckBox convertToStackCheckbox, JCheckBox stackPerRowCheckbox, String savePath) {
         // Capture mode
         config.useSimpleSnapMode = simpleSnapModeCheckbox.isSelected();
         livePics = livePicsCheckbox.isSelected();
         convertToStack = convertToStackCheckbox.isSelected();
+        stackPerRow = stackPerRowCheckbox.isSelected();
         saveDirectory = savePath;
         
         // Capture sequence table
@@ -220,7 +223,7 @@ config=new MicroscopeConfig();
 // Preferences for remembering last config
 prefs=Preferences.userNodeForPackage(MicroscopeConfig.class);
 
-// Table Model for the acquisition sequence
+// Table Model for the acquisition settings
 class AcquisitionTableModel extends DefaultTableModel {
 
     String[] columnNames = { "Row", "Channel", "Exposure [ms]", "Frame Interval [ms]",
@@ -741,6 +744,31 @@ simpleSnapMode.setToolTipText("Enable for single-channel acquisition with GUI se
 JCheckBox livePics = new JCheckBox("Live Pictures");
 livePics.setToolTipText("Show live view in GUI during acquisition (images are always saved to disk)");
 
+// Stack conversion checkboxes (mutually exclusive)
+JCheckBox convertToStack = new JCheckBox("Convert to Stack", true);
+convertToStack.setToolTipText("After acquisition, convert individual TIFFs to a single stack and delete originals");
+
+JCheckBox stackPerRow = new JCheckBox("Stack per Row");
+stackPerRow.setToolTipText("Create one stack for each row in the acquisition settings (not yet implemented)");
+stackPerRow.setEnabled(false); // Disabled for now
+
+// Make stack checkboxes mutually exclusive
+convertToStack.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        if (convertToStack.isSelected()) {
+            stackPerRow.setSelected(false);
+        }
+    }
+});
+
+stackPerRow.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        if (stackPerRow.isSelected()) {
+            convertToStack.setSelected(false);
+        }
+    }
+});
+
 // ===== SETTINGS TAB =====
 JPanel settingsPanel = new JPanel(new BorderLayout(10, 10));
 settingsPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
@@ -875,7 +903,7 @@ validateButton.addActionListener(new ActionListener() {
 
 JButton loadSettingsButton = new JButton("Load Settings");
 loadSettingsButton.setBackground(new Color(255, 200, 150)); // Light orange
-loadSettingsButton.setToolTipText("Load acquisition sequence and visualization settings from CSV file");
+loadSettingsButton.setToolTipText("Load acquisition settings and visualization settings from CSV file");
 loadSettingsButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         loadSettingsFromCSV();
@@ -884,7 +912,7 @@ loadSettingsButton.addActionListener(new ActionListener() {
 
 JButton saveSettingsButton = new JButton("Save Settings");
 saveSettingsButton.setBackground(new Color(150, 255, 150)); // Light green
-saveSettingsButton.setToolTipText("Save current acquisition sequence and visualization settings to CSV file");
+saveSettingsButton.setToolTipText("Save current acquisition settings and visualization settings to CSV file");
 saveSettingsButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         saveSettingsToCSV();
@@ -921,7 +949,7 @@ okButton.addActionListener(new ActionListener() {
             }
             
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, lastSavePath);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath);
             
             // Dispose GUI immediately - no more GUI dependencies
             frame.dispose();
@@ -1014,8 +1042,12 @@ dataDirPanel.add(dataDirLabel);
 dataDirPanel.add(dataDirPathLabel);
 dataDirPanel.add(selectFolderButton);
 
-// Mode panel placeholder (Live Pictures moved to Data Visualization tab)
+// Mode panel with stack conversion options
 JPanel modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+JLabel stackLabel = new JLabel("Post-Acquisition:");
+modePanel.add(stackLabel);
+modePanel.add(convertToStack);
+modePanel.add(stackPerRow);
 
 // Layout sequence tab
 JPanel bottomPanel = new JPanel(new BorderLayout());
@@ -1093,11 +1125,6 @@ JPanel vizModePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 // Add the Live Pictures checkbox
 vizModePanel.add(livePics);
 
-// Add Convert to Stack checkbox
-JCheckBox convertToStack = new JCheckBox("Convert to Stack", true);
-convertToStack.setToolTipText("After acquisition, convert individual TIFFs to a single stack and delete originals");
-vizModePanel.add(convertToStack);
-
 JPanel vizButtonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
 JButton vizStartButton = new JButton("OK - Start Acquisition");
 vizStartButton.setBackground(Color.GREEN);
@@ -1130,7 +1157,7 @@ vizStartButton.addActionListener(new ActionListener() {
             }
             
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, lastSavePath);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath);
             
             // Dispose GUI immediately
             frame.dispose();
@@ -1170,7 +1197,7 @@ vizStartButton.addActionListener(new ActionListener() {
                 }
             }).start();
         } else {
-            // Switch to Acquisition Sequence tab to show errors
+            // Switch to Acquisition Settings tab to show errors
             tabbedPane.setSelectedIndex(1);
         }
     }
@@ -1190,11 +1217,11 @@ visualizationPanel.add(vizScrollPane, BorderLayout.CENTER);
 visualizationPanel.add(vizBottomPanel, BorderLayout.SOUTH);
 
 // Add tabs
-tabbedPane.addTab("Settings", settingsPanel);
-tabbedPane.addTab("Acquisition Sequence", sequencePanel);
+tabbedPane.addTab("Setup Configuration", settingsPanel);
+tabbedPane.addTab("Acquisition Settings", sequencePanel);
 tabbedPane.addTab("Data Visualization", visualizationPanel);
 
-// Set default tab to Acquisition Sequence (middle tab)
+// Set default tab to Acquisition Settings (middle tab)
 tabbedPane.setSelectedIndex(1);
 
 // Layout
@@ -1402,7 +1429,7 @@ frame.setVisible(true);
 
     // Print sequence data for debugging - uses captured data
     void printSequenceData() {
-        print("\n=== Acquisition Sequence ===");
+        print("\n=== Acquisition Settings ===");
         print("Live Pictures: " + config.acqSettings.livePics);
         print("\nSequence Steps:");
 
@@ -2002,6 +2029,11 @@ void loadSettingsFromCSV() {
                     boolean convertToStackValue = value.equalsIgnoreCase("true");
                     convertToStack.setSelected(convertToStackValue);
                     print("  Convert to Stack: " + convertToStackValue);
+                } else if (line.contains("Stack per Row:")) {
+                    String value = line.substring(line.indexOf(":") + 1).trim();
+                    boolean stackPerRowValue = value.equalsIgnoreCase("true");
+                    stackPerRow.setSelected(stackPerRowValue);
+                    print("  Stack per Row: " + stackPerRowValue);
                 }
                 continue;
             }
@@ -2109,7 +2141,7 @@ void saveSettingsToCSV() {
     }
     
     // Set default filename
-    fileChooser.setSelectedFile(new File("AquisitionSettings.csv"));
+    fileChooser.setSelectedFile(new File("Settings.csv"));
     
     int result = fileChooser.showSaveDialog(frame);
     if (result != JFileChooser.APPROVE_OPTION) {
@@ -2159,6 +2191,7 @@ void saveSettingsToCSV() {
         writer.println("");
         writer.println("# Live Pictures: " + livePics.isSelected());
         writer.println("# Convert to Stack: " + convertToStack.isSelected());
+        writer.println("# Stack per Row: " + stackPerRow.isSelected());
         
         // Write visualization settings
         writer.println("");
@@ -3453,10 +3486,10 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
     }
     print("Using " + config.storedROIs.size() + " stored ROIs");
     
-    // Parse acquisition sequence from table
+    // Parse acquisition settings from table
     ArrayList sequence = config.acqSettings.sequenceRows;
     if (sequence == null || sequence.isEmpty()) {
-        print("ERROR: No acquisition sequence defined!");
+        print("ERROR: No acquisition settings defined!");
         return;
     }
     
