@@ -54,6 +54,16 @@ import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
 import java.awt.BasicStroke;
 
+// ImageJ imports - needed for helper functions
+import ij.IJ;
+import ij.ImagePlus;
+import ij.process.ImageProcessor;
+import ij.process.ByteProcessor;
+import ij.process.ShortProcessor;
+import ij.gui.ImageCanvas;
+import ij.gui.Overlay;
+import ij.gui.Roi;
+
 // Acquisition settings - decoupled from GUI
 class AcquisitionSettings {
     boolean livePics = false; // Controls live view GUI display (images are always saved)
@@ -1620,10 +1630,7 @@ boolean setupVisualizationROIs() {
     print("========== ROI SETUP START ==========");
     // Note: Main GUI is already disposed at this point
     
-    import ij.IJ;
-    import ij.ImagePlus;
     import ij.plugin.frame.RoiManager;
-    import ij.process.ImageProcessor;
     
     // Snap an image
     print("Snapping image...");
@@ -2803,6 +2810,163 @@ boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
     return false;
 }
 
+// ==================== COMMON ACQUISITION HELPER FUNCTIONS ====================
+
+// Update live view with image and ROI overlays
+void updateLiveView(JPanel liveViewPanel, ImageProcessor ip) {
+    if (liveViewPanel == null || ip == null) {
+        return;
+    }
+    
+    final ImageProcessor ipCopy = ip.duplicate();
+    SwingUtilities.invokeLater(new Runnable() {
+        public void run() {
+            try {
+                ImagePlus imp = new ImagePlus("Live", ipCopy);
+                
+                // Add ROI overlays with consistent colors
+                if (config.storedROIs != null && config.storedROIs.size() > 0) {
+                    java.awt.Color[] roiColors = new java.awt.Color[] {
+                        new java.awt.Color(255, 85, 85),   // ROI1 - Red
+                        new java.awt.Color(85, 85, 255),   // ROI2 - Blue
+                        new java.awt.Color(85, 255, 85),   // ROI3 - Green
+                        new java.awt.Color(255, 255, 85)   // ROI4 - Yellow
+                    };
+                    
+                    ij.gui.Overlay overlay = new ij.gui.Overlay();
+                    for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
+                        ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
+                        ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
+                        roiCopy.setStrokeColor(roiColors[roiIdx % roiColors.length]);
+                        roiCopy.setStrokeWidth(2.0);
+                        overlay.add(roiCopy);
+                    }
+                    imp.setOverlay(overlay);
+                }
+                
+                // Scale and display
+                int panelWidth = liveViewPanel.getWidth();
+                int panelHeight = liveViewPanel.getHeight();
+                
+                if (panelWidth > 0 && panelHeight > 0) {
+                    double scaleX = (double) panelWidth / imp.getWidth();
+                    double scaleY = (double) panelHeight / imp.getHeight();
+                    double scale = Math.min(scaleX, scaleY);
+                    scale = Math.max(0.1, Math.min(scale, 4.0));
+                    
+                    ij.gui.ImageCanvas canvas = new ij.gui.ImageCanvas(imp);
+                    canvas.setMagnification(scale);
+                    canvas.setSize((int)(imp.getWidth() * scale), (int)(imp.getHeight() * scale));
+                    
+                    liveViewPanel.removeAll();
+                    JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+                    centerPanel.setBackground(Color.DARK_GRAY);
+                    centerPanel.add(canvas);
+                    liveViewPanel.add(centerPanel, BorderLayout.CENTER);
+                    liveViewPanel.revalidate();
+                    liveViewPanel.repaint();
+                }
+            } catch (Exception e) {
+                print("ERROR updating live view: " + e.getMessage());
+            }
+        }
+    });
+}
+
+// Measure all ROIs on an image
+ArrayList measureROIs(ImageProcessor ip) {
+    ArrayList roiValues = new ArrayList();
+    for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
+        ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
+        ip.setRoi(roi);
+        double meanIntensity = ip.getStatistics().mean;
+        roiValues.add(meanIntensity);
+    }
+    return roiValues;
+}
+
+// Build data row for CSV export
+ArrayList buildDataRow(int frameNumber, long timestamp, ArrayList roiValues) {
+    ArrayList dataRow = new ArrayList();
+    dataRow.add(frameNumber);
+    dataRow.add(timestamp);
+    for (int i = 0; i < roiValues.size(); i++) {
+        dataRow.add(roiValues.get(i));
+    }
+    while (dataRow.size() < 6) {  // Pad to 6 columns
+        dataRow.add(null);
+    }
+    return dataRow;
+}
+
+// Update all graphs with new data
+void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues) {
+    for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
+        ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
+        String graphType = (String) vizRow.get(1);
+        
+        if (graphType.equals("none") || datasets.get(graphIdx) == null) {
+            continue;
+        }
+        
+        if (!shouldProcessFrame(frameNumber, vizRow)) {
+            continue;
+        }
+        
+        if (!graphType.equals("Intensity")) {
+            continue;
+        }
+        
+        final int gIdx = graphIdx;
+        final long time = currentTime;
+        final ArrayList roiValsCopy = new ArrayList(roiValues);
+        
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() {
+                XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
+                    XYSeries series = dataset.getSeries(roiIdx);
+                    double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
+                    series.add(time / 1000.0, value, true);
+                }
+                if (chartPanels.get(gIdx) != null) {
+                    ChartPanel cp = (ChartPanel) chartPanels.get(gIdx);
+                    cp.revalidate();
+                    cp.repaint();
+                }
+            }
+        });
+    }
+}
+
+// Convert TaggedImage to ImageProcessor
+ImageProcessor taggedImageToProcessor(Object taggedImg) {
+    try {
+        int width = (int) mmc.getImageWidth();
+        int height = (int) mmc.getImageHeight();
+        int bpp = (int) mmc.getBytesPerPixel();
+        
+        Object pixels = null;
+        if (taggedImg.getClass().getName().contains("TaggedImage")) {
+            java.lang.reflect.Field pixField = taggedImg.getClass().getField("pix");
+            pixels = pixField.get(taggedImg);
+        }
+        
+        if (bpp == 1 && pixels instanceof byte[]) {
+            ij.process.ByteProcessor ip = new ij.process.ByteProcessor(width, height);
+            ip.setPixels((byte[]) pixels);
+            return ip;
+        } else if (bpp == 2 && pixels instanceof short[]) {
+            ij.process.ShortProcessor ip = new ij.process.ShortProcessor(width, height);
+            ip.setPixels((short[]) pixels);
+            return ip;
+        }
+    } catch (Exception e) {
+        print("WARNING: Could not convert image: " + e.getMessage());
+    }
+    return null;
+}
+
 // ==================== Circular Buffer Setup ====================
 void setupCircularBuffer() {
     print("========== CIRCULAR BUFFER SETUP ==========");
@@ -2836,12 +3000,6 @@ void setupCircularBuffer() {
 
 // ==================== Save Image as TIFF ====================
 void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
-    import ij.IJ;
-    import ij.ImagePlus;
-    import ij.process.ImageProcessor;
-    import ij.process.ShortProcessor;
-    import ij.process.ByteProcessor;
-    
     try {
         // Handle both TaggedImage and MM Image types
         ImageProcessor ip = null;
@@ -2917,13 +3075,8 @@ void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
 
 // ==================== Convert TIFFs to Stack ====================
 void convertTiffsToStack(String experimentFolder) {
-    import ij.IJ;
-    import ij.ImagePlus;
     import ij.ImageStack;
     import ij.io.FileSaver;
-    import ij.process.ImageProcessor;
-    import javax.swing.JOptionPane;
-    import javax.swing.SwingUtilities;
     
     print("\n========== CONVERTING TIFFS TO STACK ==========");
     
@@ -3117,11 +3270,6 @@ void convertTiffsToStack(String experimentFolder) {
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
 void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel) {
-    import ij.IJ;
-    import ij.ImagePlus;
-    import ij.plugin.frame.RoiManager;
-    import ij.process.ImageProcessor;
-    
     print("========== CIRCULAR BUFFER ACQUISITION START ==========");
     
     // Verify experiment folder exists
@@ -3285,133 +3433,29 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         saveImageAsTiff(taggedImg, framesProcessed, config.experimentFolder);
                         
                         // Update live view (throttled, controlled by Live Pictures checkbox)
-                        if (liveViewPanel != null && shouldUpdateGui && config.acqSettings.livePics) {
-                            final ImageProcessor ipCopy = ip.duplicate();
-                            SwingUtilities.invokeLater(new Runnable() {
-                                public void run() {
-                                    try {
-                                        ImagePlus imp = new ImagePlus("Live", ipCopy);
-                                        
-                                        // Add ROI overlays with consistent colors (matching graph series)
-                                        if (config.storedROIs != null && config.storedROIs.size() > 0) {
-                                            // Define colors matching JFreeChart default series colors
-                                            java.awt.Color[] roiColors = new java.awt.Color[] {
-                                                new java.awt.Color(255, 85, 85),   // ROI1 - Red
-                                                new java.awt.Color(85, 85, 255),   // ROI2 - Blue
-                                                new java.awt.Color(85, 255, 85),   // ROI3 - Green
-                                                new java.awt.Color(255, 255, 85)   // ROI4 - Yellow
-                                            };
-                                            
-                                            ij.gui.Overlay overlay = new ij.gui.Overlay();
-                                            for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
-                                                ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
-                                                ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
-                                                roiCopy.setStrokeColor(roiColors[roiIdx % roiColors.length]);
-                                                roiCopy.setStrokeWidth(2.0);
-                                                overlay.add(roiCopy);
-                                            }
-                                            imp.setOverlay(overlay);
-                                        }
-                                        
-                                        int panelWidth = liveViewPanel.getWidth();
-                                        int panelHeight = liveViewPanel.getHeight();
-                                        
-                                        if (panelWidth > 0 && panelHeight > 0) {
-                                            double scaleX = (double) panelWidth / imp.getWidth();
-                                            double scaleY = (double) panelHeight / imp.getHeight();
-                                            double scale = Math.min(scaleX, scaleY);
-                                            scale = Math.max(0.1, Math.min(scale, 4.0));
-                                            
-                                            ij.gui.ImageCanvas canvas = new ij.gui.ImageCanvas(imp);
-                                            canvas.setMagnification(scale);
-                                            canvas.setSize((int)(imp.getWidth() * scale), (int)(imp.getHeight() * scale));
-                                            
-                                            liveViewPanel.removeAll();
-                                            JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
-                                            centerPanel.setBackground(Color.DARK_GRAY);
-                                            centerPanel.add(canvas);
-                                            liveViewPanel.add(centerPanel, BorderLayout.CENTER);
-                                            liveViewPanel.revalidate();
-                                            liveViewPanel.repaint();
-                                        }
-                                    } catch (Exception e) {
-                                        print("ERROR updating live view: " + e.getMessage());
-                                    }
-                                }
-                            });
+                        if (shouldUpdateGui && config.acqSettings.livePics) {
+                            updateLiveView(liveViewPanel, ip);
                         }
                         
                         // Measure ALL ROIs
-                        ArrayList roiValues = new ArrayList();
-                        for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
-                            ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
-                            ip.setRoi(roi);
-                            double meanIntensity = ip.getStatistics().mean;
-                            roiValues.add(meanIntensity);
-                            
-                            // Only print every 10th frame to reduce output
-                            if (framesProcessed % 10 == 0) {
-                                print("ROI" + (roiIdx + 1) + " [Frame " + framesProcessed + "]: " + meanIntensity);
+                        ArrayList roiValues = measureROIs(ip);
+                        
+                        // Only print every 10th frame to reduce output
+                        if (framesProcessed % 10 == 0) {
+                            for (int roiIdx = 0; roiIdx < roiValues.size(); roiIdx++) {
+                                print("ROI" + (roiIdx + 1) + " [Frame " + framesProcessed + "]: " + roiValues.get(roiIdx));
                             }
                         }
                         
-                        // Build data row
-                        ArrayList dataRow = new ArrayList();
-                        dataRow.add(framesProcessed);
-                        dataRow.add(currentTime);
-                        for (int i = 0; i < roiValues.size(); i++) {
-                            dataRow.add(roiValues.get(i));
-                        }
-                        while (dataRow.size() < 6) {
-                            dataRow.add(null);
-                        }
+                        // Build data row and store for CSV export
+                        ArrayList dataRow = buildDataRow(framesProcessed, currentTime, roiValues);
+                        dataRows.add(dataRow);
                         
                         // Update graphs (throttled)
-                        for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
-                            ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
-                            String graphType = (String) vizRow.get(1);
-                            
-                            if (graphType.equals("none") || datasets.get(graphIdx) == null) {
-                                continue;
-                            }
-                            
-                            if (!shouldProcessFrame(framesProcessed, vizRow)) {
-                                continue;
-                            }
-                            
-                            if (!graphType.equals("Intensity")) {
-                                continue;
-                            }
-                            
-                            if (shouldUpdateGui) {
-                                final int gIdx = graphIdx;
-                                final long time = currentTime;
-                                final ArrayList roiValsCopy = new ArrayList(roiValues);
-                                
-                                SwingUtilities.invokeLater(new Runnable() {
-                                    public void run() {
-                                        XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                                        for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
-                                            double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
-                                            XYSeries series = dataset.getSeries(roiIdx);
-                                            series.add(time, value, true);
-                                        }
-                                        if (chartPanels.get(gIdx) != null) {
-                                            ChartPanel cp = (ChartPanel) chartPanels.get(gIdx);
-                                            cp.revalidate();
-                                            cp.repaint();
-                                        }
-                                    }
-                                });
-                            }
-                        }
-                        
                         if (shouldUpdateGui) {
+                            updateGraphs(datasets, framesProcessed, currentTime, roiValues);
                             lastGuiUpdateTime = currentTime;
                         }
-                        
-                        // Store row for CSV export
-                        dataRows.add(dataRow);
                         
                         // Progress update
                         if (framesProcessed % 100 == 0) {
@@ -3484,14 +3528,6 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
 void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel) {
-    import ij.IJ;
-    import ij.ImagePlus;
-    import ij.plugin.frame.RoiManager;
-    import ij.process.ImageProcessor;
-    import org.jfree.data.xy.XYSeriesCollection;
-    import org.jfree.data.xy.XYSeries;
-    import org.jfree.chart.ChartPanel;
-    
     print("========== ACQUISITION START ==========");
     
     // Verify experiment folder exists
@@ -3614,130 +3650,20 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                 
                 // Update live view if enabled and throttled
-                if (liveViewPanel != null && shouldUpdateGui && config.acqSettings.livePics) {
-                    final ImageProcessor ipCopy = ip.duplicate();
-                    SwingUtilities.invokeLater(new Runnable() {
-                        public void run() {
-                            try {
-                                ImagePlus imp = new ImagePlus("Live", ipCopy);
-                                
-                                // Add ROI overlays with consistent colors (matching graph series)
-                                if (config.storedROIs != null && config.storedROIs.size() > 0) {
-                                    // Define colors matching JFreeChart default series colors
-                                    java.awt.Color[] roiColors = new java.awt.Color[] {
-                                        new java.awt.Color(255, 85, 85),   // ROI1 - Red
-                                        new java.awt.Color(85, 85, 255),   // ROI2 - Blue
-                                        new java.awt.Color(85, 255, 85),   // ROI3 - Green
-                                        new java.awt.Color(255, 255, 85)   // ROI4 - Yellow
-                                    };
-                                    
-                                    ij.gui.Overlay overlay = new ij.gui.Overlay();
-                                    for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
-                                        ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
-                                        ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
-                                        roiCopy.setStrokeColor(roiColors[roiIdx % roiColors.length]);
-                                        roiCopy.setStrokeWidth(2.0);
-                                        overlay.add(roiCopy);
-                                    }
-                                    imp.setOverlay(overlay);
-                                }
-                                
-                                int panelWidth = liveViewPanel.getWidth();
-                                int panelHeight = liveViewPanel.getHeight();
-                                
-                                if (panelWidth > 0 && panelHeight > 0) {
-                                    double scaleX = (double) panelWidth / imp.getWidth();
-                                    double scaleY = (double) panelHeight / imp.getHeight();
-                                    double scale = Math.min(scaleX, scaleY);
-                                    scale = Math.max(0.1, Math.min(scale, 4.0));
-                                    
-                                    ij.gui.ImageCanvas canvas = new ij.gui.ImageCanvas(imp);
-                                    canvas.setMagnification(scale);
-                                    canvas.setSize((int)(imp.getWidth() * scale), (int)(imp.getHeight() * scale));
-                                    
-                                    liveViewPanel.removeAll();
-                                    JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
-                                    centerPanel.setBackground(Color.DARK_GRAY);
-                                    centerPanel.add(canvas);
-                                    liveViewPanel.add(centerPanel, BorderLayout.CENTER);
-                                    liveViewPanel.revalidate();
-                                    liveViewPanel.repaint();
-                                }
-                            } catch (Exception e) {
-                                print("ERROR updating live view: " + e.getMessage());
-                            }
-                        }
-                    });
+                if (shouldUpdateGui && config.acqSettings.livePics) {
+                    updateLiveView(liveViewPanel, ip);
                 }
                 
-                // Measure ALL ROIs
-                ArrayList roiValues = new ArrayList();
-                for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
-                    ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
-                    ip.setRoi(roi);
-                    double meanIntensity = ip.getStatistics().mean;
-                    roiValues.add(meanIntensity);
-                }
+                // Measure ALL ROIs and build data row
+                ArrayList roiValues = measureROIs(ip);
+                ArrayList dataRow = buildDataRow(globalFrameNumber, currentTime, roiValues);
+                dataRows.add(dataRow);
                 
-                // Build data row
-                ArrayList dataRow = new ArrayList();
-                dataRow.add(globalFrameNumber);
-                dataRow.add(currentTime);
-                for (int i = 0; i < roiValues.size(); i++) {
-                    dataRow.add(roiValues.get(i));
-                }
-                while (dataRow.size() < 6) {
-                    dataRow.add(null);
-                }
-                
-                // Update graphs
-                for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
-                    ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
-                    String graphType = (String) vizRow.get(1);
-                    
-                    if (graphType.equals("none") || datasets.get(graphIdx) == null) {
-                        continue;
-                    }
-                    
-                    if (!shouldProcessFrame(globalFrameNumber, vizRow)) {
-                        continue;
-                    }
-                    
-                    if (!graphType.equals("Intensity")) {
-                        continue;
-                    }
-                    
-                    if (shouldUpdateGui) {
-                        final int gIdx = graphIdx;
-                        final long time = currentTime;
-                        final ArrayList roiValsCopy = new ArrayList(roiValues);
-                        
-                        SwingUtilities.invokeLater(new Runnable() {
-                            public void run() {
-                                XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                                
-                                for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
-                                    XYSeries series = dataset.getSeries(roiIdx);
-                                    double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
-                                    series.add(time / 1000.0, value, true);
-                                }
-                                
-                                if (chartPanels.get(gIdx) != null) {
-                                    ChartPanel cp = (ChartPanel) chartPanels.get(gIdx);
-                                    cp.revalidate();
-                                    cp.repaint();
-                                }
-                            }
-                        });
-                    }
-                }
-                
+                // Update graphs (throttled)
                 if (shouldUpdateGui) {
+                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues);
                     lastGuiUpdateTime = currentTime;
                 }
-                
-                // Store row for CSV export
-                dataRows.add(dataRow);
                 
                 // Wait for frame interval
                 long frameElapsed = System.currentTimeMillis() - frameStartTime;
@@ -3867,140 +3793,31 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 ImageProcessor ip = mm.data().ij().createProcessor(image);
                 
                 // Save image to disk (always)
+                saveImageAsTiff(image, globalFrameNumber, config.experimentFolder);
+                
                 long currentTime = System.currentTimeMillis() - startTime;
                 boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                 
                 // Update live view if enabled and throttled
-                if (liveViewPanel != null && shouldUpdateGui && config.acqSettings.livePics) {
-                    final ImageProcessor ipCopy = ip.duplicate();
-                    SwingUtilities.invokeLater(new Runnable() {
-                        public void run() {
-                            try {
-                                ImagePlus imp = new ImagePlus("Live", ipCopy);
+                if (shouldUpdateGui && config.acqSettings.livePics) {
+                    updateLiveView(liveViewPanel, ip);
+                }
                                 
-                                // Add ROI overlays with consistent colors (matching graph series)
-                                if (config.storedROIs != null && config.storedROIs.size() > 0) {
-                                    // Define colors matching JFreeChart default series colors
-                                    java.awt.Color[] roiColors = new java.awt.Color[] {
-                                        new java.awt.Color(255, 85, 85),   // ROI1 - Red
-                                        new java.awt.Color(85, 85, 255),   // ROI2 - Blue
-                                        new java.awt.Color(85, 255, 85),   // ROI3 - Green
-                                        new java.awt.Color(255, 255, 85)   // ROI4 - Yellow
-                                    };
-                                    
-                                    ij.gui.Overlay overlay = new ij.gui.Overlay();
-                                    for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
-                                        ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
-                                        ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
-                                        roiCopy.setStrokeColor(roiColors[roiIdx % roiColors.length]);
-                                        roiCopy.setStrokeWidth(2.0);
-                                        overlay.add(roiCopy);
-                                    }
-                                    imp.setOverlay(overlay);
-                                }
-                                
-                                int panelWidth = liveViewPanel.getWidth();
-                                int panelHeight = liveViewPanel.getHeight();
-                                
-                                if (panelWidth > 0 && panelHeight > 0) {
-                                    double scaleX = (double) panelWidth / imp.getWidth();
-                                    double scaleY = (double) panelHeight / imp.getHeight();
-                                    double scale = Math.min(scaleX, scaleY);
-                                    scale = Math.max(0.1, Math.min(scale, 4.0));
-                                    
-                                    ij.gui.ImageCanvas canvas = new ij.gui.ImageCanvas(imp);
-                                    canvas.setMagnification(scale);
-                                    canvas.setSize((int)(imp.getWidth() * scale), (int)(imp.getHeight() * scale));
-                                    
-                                    liveViewPanel.removeAll();
-                                    JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
-                                    centerPanel.setBackground(Color.DARK_GRAY);
-                                    centerPanel.add(canvas);
-                                    liveViewPanel.add(centerPanel, BorderLayout.CENTER);
-                                    liveViewPanel.revalidate();
-                                    liveViewPanel.repaint();
-                                }
-                            } catch (Exception e) {
-                                print("ERROR updating live view: " + e.getMessage());
-                            }
-                        }
-                    });
+                // Measure ALL ROIs and log them
+                ArrayList roiValues = measureROIs(ip);
+                for (int roiIdx = 0; roiIdx < roiValues.size(); roiIdx++) {
+                    print("ROI" + (roiIdx + 1) + " [Frame " + globalFrameNumber + "]: " + roiValues.get(roiIdx));
                 }
                 
-                // Measure ALL ROIs (always, regardless of GUI throttle)
-                ArrayList roiValues = new ArrayList();
-                for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
-                    ij.gui.Roi roi = (ij.gui.Roi) config.storedROIs.get(roiIdx);
-                    ip.setRoi(roi);
-                    double meanIntensity = ip.getStatistics().mean;
-                    roiValues.add(meanIntensity);
-                    print("ROI" + (roiIdx + 1) + " [Frame " + globalFrameNumber + "]: " + meanIntensity);
-                }
+                // Build data row and store for CSV export
+                ArrayList dataRow = buildDataRow(globalFrameNumber, currentTime, roiValues);
+                dataRows.add(dataRow);
                 
-                // Build data row with all ROI values
-                ArrayList dataRow = new ArrayList();
-                dataRow.add(globalFrameNumber);
-                dataRow.add(currentTime);
-                for (int i = 0; i < roiValues.size(); i++) {
-                    dataRow.add(roiValues.get(i));
-                }
-                // Pad with nulls if less than 4 ROIs
-                while (dataRow.size() < 6) { // frame + timestamp + 4 ROIs
-                    dataRow.add(null);
-                }
-                
-                // Update graphs based on their individual frame filters
-                for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
-                    ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
-                    String graphType = (String) vizRow.get(1);
-                    
-                    if (graphType.equals("none") || datasets.get(graphIdx) == null) {
-                        continue;
-                    }
-                    
-                    // Check this graph's frame filter
-                    if (!shouldProcessFrame(globalFrameNumber, vizRow)) {
-                        continue;
-                    }
-                    
-                    // Only handle Intensity for now
-                    if (!graphType.equals("Intensity")) {
-                        continue;
-                    }
-                    
-                    // Update this graph with ALL ROI values (throttled)
-                    if (shouldUpdateGui) {
-                        final int gIdx = graphIdx;
-                        final long time = currentTime;
-                        final ArrayList roiValsCopy = new ArrayList(roiValues);
-                        
-                        SwingUtilities.invokeLater(new Runnable() {
-                            public void run() {
-                                XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                                
-                                for (int roiIdx = 0; roiIdx < roiValsCopy.size(); roiIdx++) {
-                                    XYSeries series = dataset.getSeries(roiIdx);
-                                    double value = ((Double) roiValsCopy.get(roiIdx)).doubleValue();
-                                    series.add(time / 1000.0, value, true);
-                                }
-                                
-                                if (chartPanels.get(gIdx) != null) {
-                                    ChartPanel cp = (ChartPanel) chartPanels.get(gIdx);
-                                    cp.revalidate();
-                                    cp.repaint();
-                                }
-                            }
-                        });
-                    }
-                }
-                
-                // Update GUI timestamp if we just updated
+                // Update graphs (throttled)
                 if (shouldUpdateGui) {
+                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues);
                     lastGuiUpdateTime = currentTime;
                 }
-                
-                // Store row for CSV export
-                dataRows.add(dataRow);
                 
                 // Wait for frame interval before next snap
                 long frameElapsed = System.currentTimeMillis() - frameStartTime;
