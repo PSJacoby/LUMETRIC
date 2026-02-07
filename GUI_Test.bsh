@@ -57,15 +57,17 @@ import java.awt.BasicStroke;
 // Acquisition settings - decoupled from GUI
 class AcquisitionSettings {
     boolean livePics = false; // Controls live view GUI display (images are always saved)
+    boolean convertToStack = true; // Convert individual TIFFs to stack after acquisition (default: true)
     String saveDirectory = "";
     ArrayList sequenceRows = new ArrayList(); // Each row is ArrayList of column values
     ArrayList visualizationRows = new ArrayList();
     
     void captureFromGUI(DefaultTableModel tableModel, DefaultTableModel vizTableModel, 
-                       JCheckBox simpleSnapModeCheckbox, JCheckBox livePicsCheckbox, String savePath) {
+                       JCheckBox simpleSnapModeCheckbox, JCheckBox livePicsCheckbox, JCheckBox convertToStackCheckbox, String savePath) {
         // Capture mode
         config.useSimpleSnapMode = simpleSnapModeCheckbox.isSelected();
         livePics = livePicsCheckbox.isSelected();
+        convertToStack = convertToStackCheckbox.isSelected();
         saveDirectory = savePath;
         
         // Capture sequence table
@@ -121,6 +123,7 @@ class MicroscopeConfig {
     AcquisitionSettings acqSettings = new AcquisitionSettings();
     ArrayList storedROIs = new ArrayList(); // Store ROIs for acquisition
     String experimentFolder = ""; // Store experiment folder path
+    String imagesFolder = ""; // Store images subfolder path (for TIFF files)
 
     // Load configuration from file
     boolean loadFromFile(String filePath) {
@@ -918,7 +921,7 @@ okButton.addActionListener(new ActionListener() {
             }
             
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, lastSavePath);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, lastSavePath);
             
             // Dispose GUI immediately - no more GUI dependencies
             frame.dispose();
@@ -1087,8 +1090,13 @@ JScrollPane vizScrollPane = new JScrollPane(vizTable);
 JPanel vizBottomPanel = new JPanel(new BorderLayout());
 JPanel vizModePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 
-// Add only the Live Pictures checkbox
+// Add the Live Pictures checkbox
 vizModePanel.add(livePics);
+
+// Add Convert to Stack checkbox
+JCheckBox convertToStack = new JCheckBox("Convert to Stack", true);
+convertToStack.setToolTipText("After acquisition, convert individual TIFFs to a single stack and delete originals");
+vizModePanel.add(convertToStack);
 
 JPanel vizButtonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
 JButton vizStartButton = new JButton("OK - Start Acquisition");
@@ -1122,7 +1130,7 @@ vizStartButton.addActionListener(new ActionListener() {
             }
             
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, lastSavePath);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, lastSavePath);
             
             // Dispose GUI immediately
             frame.dispose();
@@ -1565,6 +1573,18 @@ void createExperimentFolder() {
     // Store experiment folder path in config
     config.experimentFolder = experimentFolder.getAbsolutePath();
     print("Experiment folder path set to: " + config.experimentFolder);
+    
+    // Create images subfolder for TIFF files
+    File imagesFolder = new File(experimentFolder, "images");
+    boolean imagesFolderCreated = imagesFolder.mkdir();
+    if (imagesFolderCreated) {
+        print("Created images subfolder: " + imagesFolder.getAbsolutePath());
+    } else {
+        print("WARNING: Images subfolder could not be created");
+    }
+    
+    // Store images folder path in config
+    config.imagesFolder = imagesFolder.getAbsolutePath();
 }
 
 // ==================== Setup Visualization ROIs ====================
@@ -1977,6 +1997,11 @@ void loadSettingsFromCSV() {
                     boolean livePicsValue = value.equalsIgnoreCase("true");
                     livePics.setSelected(livePicsValue);
                     print("  Live Pictures: " + livePicsValue);
+                } else if (line.contains("Convert to Stack:")) {
+                    String value = line.substring(line.indexOf(":") + 1).trim();
+                    boolean convertToStackValue = value.equalsIgnoreCase("true");
+                    convertToStack.setSelected(convertToStackValue);
+                    print("  Convert to Stack: " + convertToStackValue);
                 }
                 continue;
             }
@@ -2133,6 +2158,7 @@ void saveSettingsToCSV() {
         // Write mode settings
         writer.println("");
         writer.println("# Live Pictures: " + livePics.isSelected());
+        writer.println("# Convert to Stack: " + convertToStack.isSelected());
         
         // Write visualization settings
         writer.println("");
@@ -2833,7 +2859,10 @@ void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
             paddedNumber = "0" + paddedNumber;
         }
         String filename = "Frame_" + paddedNumber + ".tif";
-        String filepath = experimentFolder + File.separator + filename;
+        // Save to images subfolder if it exists, otherwise to experiment folder
+        String saveFolder = (config.imagesFolder != null && !config.imagesFolder.isEmpty()) ? 
+            config.imagesFolder : experimentFolder;
+        String filepath = saveFolder + File.separator + filename;
         
         // Use FileSaver instead of IJ.saveAs to avoid any GUI interactions
         ij.io.FileSaver fs = new ij.io.FileSaver(imp);
@@ -2850,6 +2879,206 @@ void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
     } catch (Exception e) {
         print("ERROR saving frame " + frameNumber + ": " + e.getClass().getName() + ": " + e.getMessage());
         e.printStackTrace();
+    }
+}
+
+// ==================== Convert TIFFs to Stack ====================
+void convertTiffsToStack(String experimentFolder) {
+    import ij.IJ;
+    import ij.ImagePlus;
+    import ij.ImageStack;
+    import ij.io.FileSaver;
+    import ij.process.ImageProcessor;
+    import javax.swing.JOptionPane;
+    import javax.swing.SwingUtilities;
+    
+    print("\n========== CONVERTING TIFFS TO STACK ==========");
+    
+    try {
+        File expFolder = new File(experimentFolder);
+        if (!expFolder.exists() || !expFolder.isDirectory()) {
+            print("ERROR: Experiment folder does not exist: " + experimentFolder);
+            return;
+        }
+        
+        // Check for images subfolder first
+        File imagesFolder = new File(expFolder, "images");
+        File searchFolder = imagesFolder.exists() ? imagesFolder : expFolder;
+        
+        print("Searching for TIFF files in: " + searchFolder.getAbsolutePath());
+        
+        // Find all Frame_*.tif files
+        File[] tiffFiles = searchFolder.listFiles(new java.io.FilenameFilter() {
+            public boolean accept(File dir, String name) {
+                return name.startsWith("Frame_") && name.endsWith(".tif");
+            }
+        });
+        
+        if (tiffFiles == null || tiffFiles.length == 0) {
+            print("No TIFF files found to convert");
+            return;
+        }
+        
+        // Sort files by name to ensure correct order
+        java.util.Arrays.sort(tiffFiles);
+        
+        int numFrames = tiffFiles.length;
+        print("Found " + numFrames + " TIFF files");
+        
+        // Calculate actual total file size
+        long totalFileSize = 0;
+        for (int i = 0; i < tiffFiles.length; i++) {
+            totalFileSize += tiffFiles[i].length();
+        }
+        long totalFileSizeMB = totalFileSize / (1024 * 1024);
+        print("Total file size on disk: " + totalFileSizeMB + " MB");
+        
+        // Load first image to get dimensions (for logging)
+        ImagePlus firstImp = IJ.openImage(tiffFiles[0].getAbsolutePath());
+        if (firstImp == null) {
+            print("ERROR: Could not open first TIFF file");
+            return;
+        }
+        
+        int width = firstImp.getWidth();
+        int height = firstImp.getHeight();
+        int bitDepth = firstImp.getBitDepth();
+        
+        print("Image dimensions: " + width + "x" + height + ", " + bitDepth + "-bit");
+        
+        // Estimate memory requirement based on actual file size
+        // Add 20% overhead for ImageStack structure and temporary objects during loading
+        long requiredMemoryBytes = (long)(totalFileSize * 1.2);
+        long requiredMemoryMB = requiredMemoryBytes / (1024 * 1024);
+        print("Estimated memory required: " + requiredMemoryMB + " MB (file size + 20% overhead)");
+        
+        // Check available memory
+        Runtime runtime = Runtime.getRuntime();
+        runtime.gc(); // Suggest garbage collection before checking memory
+        
+        long maxMemory = runtime.maxMemory(); // Maximum memory the JVM will attempt to use
+        long allocatedMemory = runtime.totalMemory(); // Current memory allocated to JVM
+        long freeMemory = runtime.freeMemory(); // Free memory within allocated memory
+        long availableMemory = maxMemory - allocatedMemory + freeMemory; // Total available
+        
+        long availableMB = availableMemory / (1024 * 1024);
+        long maxMB = maxMemory / (1024 * 1024);
+        
+        print("JVM Memory Status:");
+        print("  Max memory: " + maxMB + " MB");
+        print("  Available memory: " + availableMB + " MB");
+        
+        // Use 60% of available memory as safety margin
+        // (need extra space for overhead, intermediate objects, etc.)
+        long safeAvailableBytes = (long)(availableMemory * 0.6);
+        long safeAvailableMB = safeAvailableBytes / (1024 * 1024);
+        
+        print("  Safe usable memory (60%): " + safeAvailableMB + " MB");
+        
+        // Check if we have enough memory
+        if (requiredMemoryBytes > safeAvailableBytes) {
+            print("WARNING: Insufficient memory to create stack");
+            print("  Required: " + requiredMemoryMB + " MB");
+            print("  Available (safe): " + safeAvailableMB + " MB");
+            print("Keeping individual TIFF files");
+            
+            // Show error popup on EDT
+            final long reqMB = requiredMemoryMB;
+            final long safeMB = safeAvailableMB;
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    JOptionPane.showMessageDialog(null,
+                        "Insufficient memory to create stack.\n\n" +
+                        "Required: " + reqMB + " MB\n" +
+                        "Available: " + safeMB + " MB (60% safety margin)\n\n" +
+                        "Individual TIFF files have been kept in:\n" + experimentFolder,
+                        "Stack Conversion - Insufficient Memory",
+                        JOptionPane.WARNING_MESSAGE);
+                }
+            });
+            return;
+        }
+        
+        print("Memory check passed - proceeding with stack creation");
+        
+        // Create stack
+        ImageStack stack = new ImageStack(width, height);
+        
+        print("Loading " + numFrames + " frames into stack...");
+        for (int i = 0; i < tiffFiles.length; i++) {
+            ImagePlus imp = IJ.openImage(tiffFiles[i].getAbsolutePath());
+            if (imp == null) {
+                print("WARNING: Could not load frame " + (i+1) + ", skipping");
+                continue;
+            }
+            stack.addSlice("Frame_" + (i+1), imp.getProcessor());
+            
+            // Progress update every 100 frames
+            if ((i+1) % 100 == 0 || i == tiffFiles.length - 1) {
+                print("Loaded " + (i+1) + "/" + numFrames + " frames");
+            }
+        }
+        
+        // Create ImagePlus from stack
+        ImagePlus stackImp = new ImagePlus("Stack", stack);
+        
+        // Save stack to experiment folder (not images subfolder)
+        String stackPath = experimentFolder + File.separator + "Image_Stack.tif";
+        print("Saving stack to: " + stackPath);
+        
+        FileSaver fs = new FileSaver(stackImp);
+        boolean success = fs.saveAsTiffStack(stackPath);
+        
+        if (!success) {
+            print("ERROR: Failed to save stack");
+            print("Keeping individual TIFF files");
+            return;
+        }
+        
+        print("Stack saved successfully");
+        
+        // Delete individual TIFF files
+        print("Deleting individual TIFF files...");
+        int deletedCount = 0;
+        for (int i = 0; i < tiffFiles.length; i++) {
+            if (tiffFiles[i].delete()) {
+                deletedCount++;
+            } else {
+                print("WARNING: Could not delete " + tiffFiles[i].getName());
+            }
+        }
+        
+        print("Deleted " + deletedCount + "/" + numFrames + " individual files");
+        
+        // Remove images subfolder if it's empty
+        File imagesFolder = new File(expFolder, "images");
+        if (imagesFolder.exists() && imagesFolder.isDirectory()) {
+            File[] remainingFiles = imagesFolder.listFiles();
+            if (remainingFiles == null || remainingFiles.length == 0) {
+                if (imagesFolder.delete()) {
+                    print("Removed empty images subfolder");
+                } else {
+                    print("WARNING: Could not remove images subfolder");
+                }
+            }
+        }
+        
+        print("========== STACK CONVERSION COMPLETE ==========\n");
+        
+    } catch (Exception e) {
+        print("ERROR during stack conversion: " + e.getClass().getName() + ": " + e.getMessage());
+        e.printStackTrace();
+        print("Keeping individual TIFF files");
+        
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() {
+                JOptionPane.showMessageDialog(null,
+                    "Error during stack conversion:\n" + e.getMessage() + "\n\n" +
+                    "Individual TIFF files have been kept.",
+                    "Stack Conversion Error",
+                    JOptionPane.ERROR_MESSAGE);
+            }
+        });
     }
 }
 
@@ -3192,6 +3421,11 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         print("No buffer overflows detected.");
     }
     print("==========================================");
+    
+    // Convert to stack if requested
+    if (config.acqSettings.convertToStack) {
+        convertTiffsToStack(config.experimentFolder);
+    }
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
@@ -3450,6 +3684,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         print("\n========== ACQUISITION COMPLETE ==========");
         print("Total frames captured: " + globalFrameNumber);
         print("Total data rows: " + dataRows.size());
+        
+        // Convert to stack if requested
+        if (config.acqSettings.convertToStack) {
+            convertTiffsToStack(config.experimentFolder);
+        }
+        
         return; // Exit after simple mode completes
     }
     
@@ -3714,6 +3954,11 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
     print("\n========== ACQUISITION COMPLETE ==========");
     print("Total frames captured: " + globalFrameNumber);
     print("Total data rows: " + dataRows.size());
+    
+    // Convert to stack if requested
+    if (config.acqSettings.convertToStack) {
+        convertTiffsToStack(config.experimentFolder);
+    }
 }
 
 // ==================== CSV Export for Graph Data ====================
