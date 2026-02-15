@@ -7,3 +7,4 @@
 *.csv
 *.code-workspace
 *.ino.cpp
+Data/
