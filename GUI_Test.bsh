@@ -879,25 +879,25 @@ class VisualizationCheckBoxEditor extends DefaultCellEditor {
 }
 
 // Main GUI
-JFrame frame = new JFrame("LUMETRIC - Hardware control");
+frame = new JFrame("LUMETRIC - Hardware control");
 frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
 frame.setSize(1300, 600);
 
 // Create tabbed pane
-JTabbedPane tabbedPane = new JTabbedPane();
+tabbedPane = new JTabbedPane();
 
 // Create checkboxes at higher scope so both buttons can access them
-JCheckBox simpleSnapMode = new JCheckBox("Simple Snap Mode", true);
+simpleSnapMode = new JCheckBox("Simple Snap Mode", true);
 simpleSnapMode.setToolTipText("Enable for single-channel acquisition with GUI settings only (safe & simple)");
 
-JCheckBox livePics = new JCheckBox("Live Pictures");
+livePics = new JCheckBox("Live Pictures");
 livePics.setToolTipText("Show live view in GUI during acquisition (images are always saved to disk)");
 
 // Stack conversion checkboxes (mutually exclusive)
-JCheckBox convertToStack = new JCheckBox("Convert to Stack", true);
+convertToStack = new JCheckBox("Convert to Stack", true);
 convertToStack.setToolTipText("After acquisition, convert individual TIFFs to a single stack and delete originals");
 
-JCheckBox stackPerRow = new JCheckBox("Stack per Row");
+stackPerRow = new JCheckBox("Stack per Row");
 stackPerRow.setToolTipText("Create one stack for each row in the acquisition settings (not yet implemented)");
 stackPerRow.setEnabled(false); // Disabled for now
 
@@ -924,22 +924,22 @@ stackPerRow.addActionListener(new ActionListener() {
 });
 
 // ===== SETTINGS TAB =====
-JPanel settingsPanel = new JPanel(new BorderLayout(10, 10));
+settingsPanel = new JPanel(new BorderLayout(10, 10));
 settingsPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-JPanel configInfoPanel = new JPanel(new GridLayout(0, 2, 5, 5));
+configInfoPanel = new JPanel(new GridLayout(0, 2, 5, 5));
 configInfoPanel.setBorder(BorderFactory.createTitledBorder("Current Configuration"));
 
-JLabel configFileLabel = new JLabel("Config File: Not loaded");
-JLabel cameraGroupLabel = new JLabel("Camera Group: -");
-JLabel spectralGroupLabel = new JLabel("Spectral Group: -");
-JLabel serialPortLabel = new JLabel("Serial Port: -");
-JTextArea channelsTextArea = new JTextArea(5, 40);
+configFileLabel = new JLabel("Config File: Not loaded");
+cameraGroupLabel = new JLabel("Camera Group: -");
+spectralGroupLabel = new JLabel("Spectral Group: -");
+serialPortLabel = new JLabel("Serial Port: -");
+channelsTextArea = new JTextArea(5, 40);
 channelsTextArea.setEditable(false);
 channelsTextArea.setBorder(BorderFactory.createTitledBorder("Available Channels"));
 
-JButton loadConfigButton = new JButton("Load Configuration File");
-JButton reloadConfigButton = new JButton("Reload Current Config");
+loadConfigButton = new JButton("Load Configuration File");
+reloadConfigButton = new JButton("Reload Current Config");
 
 configInfoPanel.add(new JLabel("Config File:"));
 configInfoPanel.add(configFileLabel);
@@ -950,7 +950,7 @@ configInfoPanel.add(spectralGroupLabel);
 configInfoPanel.add(new JLabel("Serial Port:"));
 configInfoPanel.add(serialPortLabel);
 
-JPanel configButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+configButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 configButtonPanel.add(loadConfigButton);
 configButtonPanel.add(reloadConfigButton);
 
@@ -962,10 +962,10 @@ settingsPanel.add(configButtonPanel, BorderLayout.SOUTH);
 sequencePanel = new JPanel(new BorderLayout());
 
 // Top panel with Simple Snap Mode checkbox
-JPanel sequenceTopPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+sequenceTopPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 sequenceTopPanel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 sequenceTopPanel.add(simpleSnapMode);
-JLabel simpleSnapInfoLabel = new JLabel(" ← Use for single-channel acquisition with GUI settings (no multi-channel automation)");
+simpleSnapInfoLabel = new JLabel(" ← Use for single-channel acquisition with GUI settings (no multi-channel automation)");
 simpleSnapInfoLabel.setForeground(Color.DARK_GRAY);
 sequenceTopPanel.add(simpleSnapInfoLabel);
 sequencePanel.add(sequenceTopPanel, BorderLayout.NORTH);
@@ -1019,13 +1019,13 @@ table.getColumnModel().getColumn(7).setCellRenderer(new ChannelRenderer());
 table.getColumnModel().getColumn(8).setCellRenderer(new LoopSwitchGotoRenderer());
 
 // Add scrollpane for table
-JScrollPane scrollPane = new JScrollPane(table);
+scrollPane = new JScrollPane(table);
 sequencePanel.add(scrollPane, BorderLayout.CENTER);
 
 // Control panel
-JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 
-JButton addButton = new JButton("Add Row ✓");
+addButton = new JButton("Add Row ✓");
 addButton.setBackground(Color.GREEN);
 addButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
@@ -1034,7 +1034,7 @@ addButton.addActionListener(new ActionListener() {
     }
 });
 
-JButton removeButton = new JButton("Remove Row");
+removeButton = new JButton("Remove Row");
 removeButton.setBackground(Color.ORANGE);
 removeButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
@@ -1047,7 +1047,7 @@ removeButton.addActionListener(new ActionListener() {
     }
 });
 
-JButton validateButton = new JButton("Validate Sequence");
+validateButton = new JButton("Validate Sequence");
 validateButton.setBackground(Color.CYAN);
 validateButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
@@ -1055,7 +1055,7 @@ validateButton.addActionListener(new ActionListener() {
     }
 });
 
-JButton loadSettingsButton = new JButton("Load Settings");
+loadSettingsButton = new JButton("Load Settings");
 loadSettingsButton.setBackground(new Color(255, 200, 150)); // Light orange
 loadSettingsButton.setToolTipText("Load acquisition settings and visualization settings from CSV file");
 loadSettingsButton.addActionListener(new ActionListener() {
@@ -1064,7 +1064,7 @@ loadSettingsButton.addActionListener(new ActionListener() {
     }
 });
 
-JButton saveSettingsButton = new JButton("Save Settings");
+saveSettingsButton = new JButton("Save Settings");
 saveSettingsButton.setBackground(new Color(150, 255, 150)); // Light green
 saveSettingsButton.setToolTipText("Save current acquisition settings and visualization settings to CSV file");
 saveSettingsButton.addActionListener(new ActionListener() {
@@ -1073,7 +1073,7 @@ saveSettingsButton.addActionListener(new ActionListener() {
     }
 });
 
-JButton okButton = new JButton("OK - Start Acquisition");
+okButton = new JButton("OK - Start Acquisition");
 okButton.setBackground(Color.GREEN);
 okButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
@@ -1104,6 +1104,12 @@ okButton.addActionListener(new ActionListener() {
             
             // Capture all data from GUI before disposal
             config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo);
+            
+            // Debug: Show captured settings
+            print("=== GUI Settings Captured ===");
+            print("Simple Snap Mode: " + (config.useSimpleSnapMode ? "ENABLED" : "disabled"));
+            print("Live Pictures: " + (config.acqSettings.livePics ? "enabled" : "disabled"));
+            print("============================");
             
             // Dispose GUI immediately - no more GUI dependencies
             frame.dispose();
@@ -1146,7 +1152,7 @@ okButton.addActionListener(new ActionListener() {
     }
 });
 
-JButton cancelButton = new JButton("Cancel");
+cancelButton = new JButton("Cancel");
 cancelButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         frame.dispose();
@@ -1162,13 +1168,13 @@ controlPanel.add(okButton);
 controlPanel.add(cancelButton);
 
 // Data directory panel
-JPanel dataDirPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-JLabel dataDirLabel = new JLabel("Data Directory: ");
+dataDirPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+dataDirLabel = new JLabel("Data Directory: ");
 dataDirLabel.setFont(dataDirLabel.getFont().deriveFont(Font.BOLD));
-JLabel dataDirPathLabel = new JLabel("Not selected");
+dataDirPathLabel = new JLabel("Not selected");
 dataDirPathLabel.setForeground(Color.GRAY);
 
-JButton selectFolderButton = new JButton("Select Folder");
+selectFolderButton = new JButton("Select Folder");
 selectFolderButton.setBackground(new Color(200, 220, 255)); // Light blue
 selectFolderButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
@@ -1197,15 +1203,15 @@ dataDirPanel.add(dataDirPathLabel);
 dataDirPanel.add(selectFolderButton);
 
 // Mode panel with stack conversion options
-JPanel modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-JLabel stackLabel = new JLabel("Post-Acquisition:");
+modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+stackLabel = new JLabel("Post-Acquisition:");
 modePanel.add(stackLabel);
 modePanel.add(convertToStack);
 modePanel.add(stackPerRow);
 
 // Layout sequence tab
-JPanel bottomPanel = new JPanel(new BorderLayout());
-JPanel topBottomPanel = new JPanel(new BorderLayout());
+bottomPanel = new JPanel(new BorderLayout());
+topBottomPanel = new JPanel(new BorderLayout());
 topBottomPanel.add(dataDirPanel, BorderLayout.NORTH);
 topBottomPanel.add(modePanel, BorderLayout.SOUTH);
 bottomPanel.add(topBottomPanel, BorderLayout.NORTH);
@@ -1213,7 +1219,7 @@ bottomPanel.add(controlPanel, BorderLayout.SOUTH);
 sequencePanel.add(bottomPanel, BorderLayout.SOUTH);
 
 // ==================== Data Visualization Tab ====================
-JPanel visualizationPanel = new JPanel(new BorderLayout());
+visualizationPanel = new JPanel(new BorderLayout());
 visualizationPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
 // Create visualization table and model
@@ -1221,22 +1227,22 @@ vizTableModel = new VisualizationTableModel();
 vizTable = new JTable(vizTableModel);
 
 // Title
-JLabel vizTitleLabel = new JLabel("Data Visualization Configuration", SwingConstants.CENTER);
+vizTitleLabel = new JLabel("Data Visualization Configuration", SwingConstants.CENTER);
 vizTitleLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
-JPanel vizTitlePanel = new JPanel(new BorderLayout());
+vizTitlePanel = new JPanel(new BorderLayout());
 vizTitlePanel.add(vizTitleLabel, BorderLayout.CENTER);
 vizTitlePanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
 
 // ===== PROCESSING MODE SELECTION =====
-JPanel modePanel = new JPanel();
-modePanel.setLayout(new BoxLayout(modePanel, BoxLayout.Y_AXIS));
-modePanel.setBorder(BorderFactory.createCompoundBorder(
+modePanelViz = new JPanel();
+modePanelViz.setLayout(new BoxLayout(modePanelViz, BoxLayout.Y_AXIS));
+modePanelViz.setBorder(BorderFactory.createCompoundBorder(
     BorderFactory.createTitledBorder("Processing Mode"),
     BorderFactory.createEmptyBorder(5, 5, 5, 5)
 ));
 
-JPanel modeSelectionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-JLabel modeLabel = new JLabel("Mode:");
+modeSelectionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+modeLabel = new JLabel("Mode:");
 modeLabel.setFont(modeLabel.getFont().deriveFont(Font.BOLD));
 processingModeCombo = new JComboBox(new String[]{"Temporal", "Spatial"});
 processingModeCombo.setPreferredSize(new java.awt.Dimension(120, 25));
@@ -1244,16 +1250,16 @@ modeSelectionPanel.add(modeLabel);
 modeSelectionPanel.add(processingModeCombo);
 
 // Spatial configuration panel (initially hidden)
-JPanel spatialConfigPanel = new JPanel();
+spatialConfigPanel = new JPanel();
 spatialConfigPanel.setLayout(new FlowLayout(FlowLayout.LEFT));
 spatialConfigPanel.setBorder(BorderFactory.createTitledBorder("Spatial Configuration"));
 spatialConfigPanel.setVisible(false);
 
-JLabel splitAxisLabel = new JLabel("Split Axis:");
+splitAxisLabel = new JLabel("Split Axis:");
 splitAxisCombo = new JComboBox(new String[]{"Horizontal", "Vertical"});
 splitAxisCombo.setPreferredSize(new java.awt.Dimension(120, 25));
 
-JLabel roiSourceLabel = new JLabel("ROI Region:");
+roiSourceLabel = new JLabel("ROI Region:");
 roiSourceCombo = new JComboBox(new String[]{"Upper", "Lower"});  // Default for Horizontal split
 roiSourceCombo.setPreferredSize(new java.awt.Dimension(120, 25));
 
@@ -1263,11 +1269,11 @@ spatialConfigPanel.add(Box.createHorizontalStrut(15));
 spatialConfigPanel.add(roiSourceLabel);
 spatialConfigPanel.add(roiSourceCombo);
 
-modePanel.add(modeSelectionPanel);
-modePanel.add(spatialConfigPanel);
+modePanelViz.add(modeSelectionPanel);
+modePanelViz.add(spatialConfigPanel);
 
 // Mode change listener - clear table and update options
-final VisualizationTypeEditor typeEditor = new VisualizationTypeEditor();
+typeEditor = new VisualizationTypeEditor();
 processingModeCombo.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         String mode = (String) processingModeCombo.getSelectedItem();
@@ -1365,7 +1371,7 @@ roiSourceCombo.addActionListener(new ActionListener() {
 });
 
 // Instructions
-JLabel vizInfoLabel = new JLabel("<html><div style='text-align: center;'>"
+vizInfoLabel = new JLabel("<html><div style='text-align: center;'>"
         + "<b>Temporal:</b> Compare frames over time (Frame ratio). "
         + "<b>Spatial:</b> Compare regions within same frame (Split ratio).<br>"
         + "<b>Intensity</b> measures raw values in specified region."
@@ -1408,17 +1414,17 @@ for (int i = 2; i < 5; i++) {
 vizTable.getColumnModel().getColumn(5).setCellEditor(new VisualizationCustomEditor());
 vizTable.getColumnModel().getColumn(5).setPreferredWidth(150);
 
-JScrollPane vizScrollPane = new JScrollPane(vizTable);
+vizScrollPane = new JScrollPane(vizTable);
 
 // Bottom panel with Live Pictures and Start Acquisition button
-JPanel vizBottomPanel = new JPanel(new BorderLayout());
-JPanel vizModePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+vizBottomPanel = new JPanel(new BorderLayout());
+vizModePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 
 // Add the Live Pictures checkbox
 vizModePanel.add(livePics);
 
-JPanel vizButtonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-JButton vizStartButton = new JButton("OK - Start Acquisition");
+vizButtonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+vizStartButton = new JButton("OK - Start Acquisition");
 vizStartButton.setBackground(Color.GREEN);
 vizStartButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
@@ -1450,6 +1456,12 @@ vizStartButton.addActionListener(new ActionListener() {
             
             // Capture all data from GUI before disposal
             config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo);
+            
+            // Debug: Show captured settings
+            print("=== GUI Settings Captured ===");
+            print("Simple Snap Mode: " + (config.useSimpleSnapMode ? "ENABLED" : "disabled"));
+            print("Live Pictures: " + (config.acqSettings.livePics ? "enabled" : "disabled"));
+            print("============================");
             
             // Dispose GUI immediately
             frame.dispose();
@@ -1500,11 +1512,11 @@ vizBottomPanel.add(vizModePanel, BorderLayout.WEST);
 vizBottomPanel.add(vizButtonPanel, BorderLayout.CENTER);
 
 // Layout visualization panel
-JPanel vizTopPanel = new JPanel(new BorderLayout());
+vizTopPanel = new JPanel(new BorderLayout());
 vizTopPanel.add(vizTitlePanel, BorderLayout.NORTH);
-JPanel centerPanel = new JPanel();
+centerPanel = new JPanel();
 centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
-centerPanel.add(modePanel);
+centerPanel.add(modePanelViz);
 centerPanel.add(vizInfoLabel);
 vizTopPanel.add(centerPanel, BorderLayout.CENTER);
 
@@ -3336,7 +3348,16 @@ void createInlineAcquisitionWindow() {
             print("Acquisition thread started!");
             try {
                 // Choose acquisition mode based on configuration
-                if (config.useCircularBuffer) {
+                // Simple Snap Mode checkbox overrides config file setting
+                boolean useCircularBuffer = config.useCircularBuffer && !config.useSimpleSnapMode;
+                
+                print("=== Acquisition Mode Decision ===");
+                print("Config file USE_CIRCULAR_BUFFER: " + config.useCircularBuffer);
+                print("Simple Snap Mode checkbox: " + config.useSimpleSnapMode);
+                print("Final mode: " + (useCircularBuffer ? "Circular Buffer" : "Simple Snap"));
+                print("================================");
+                
+                if (useCircularBuffer) {
                     print("Using circular buffer acquisition mode");
                     runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels);
                 } else {
@@ -4602,11 +4623,19 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
     
     print("Executing " + sequence.size() + " step sequence");
     
+    // Debug: Show configuration state
+    print("\n=== ACQUISITION MODE CONFIGURATION ===");
+    print("config.useCircularBuffer (from file): " + config.useCircularBuffer);
+    print("config.useSimpleSnapMode (from checkbox): " + config.useSimpleSnapMode);
+    print("Actual mode being used: " + (config.useSimpleSnapMode ? "Simple Snap Mode" : "Full Sequence Mode"));
+    print("======================================\n");
+    
     // Check if Simple Snap Mode is enabled
     if (config.useSimpleSnapMode) {
         print("*** SIMPLE SNAP MODE ENABLED ***");
-        print("Using current MM GUI settings (no channel switching)");
-        print("Processing first sequence row only for timing parameters");
+        print("Using current MM GUI settings for camera/channel/exposure");
+        print("Using frame interval from Acquisition Settings table for timing");
+        print("Processing first sequence row only for frame interval parameter");
         
         // Get timing parameters from first row only
         ArrayList firstRow = (ArrayList) sequence.get(0);
@@ -4620,55 +4649,37 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         
         // Note: Column 0 is row number, actual data starts at column 1
         // Column 1 = Channel, Column 2 = Exposure, Column 3 = Interval, Column 4 = Frames
-        String exposureStr = (String) firstRow.get(2);
+        // In Simple Snap Mode: ONLY use Frame Interval from table, ignore all other settings
         String intervalStr = (String) firstRow.get(3);
-        String framesStr = (String) firstRow.get(4);
         
-        print("\nAttempting to parse:");
-        print("  Exposure: '" + exposureStr + "'");
+        print("\nReading Frame Interval from table (other settings from GUI):");
         print("  Interval: '" + intervalStr + "'");
-        print("  Frames: '" + framesStr + "'");
         
-        int exposureMs = 250;
-        int frameIntervalMs = 1000;
+        int frameIntervalMs = 1000; // Default
         int maxFrames = 10000; // Default to large number for continuous acquisition
         
         try {
-            exposureMs = Integer.parseInt(exposureStr.trim());
-            print("  Parsed exposure: " + exposureMs);
-        } catch (Exception e) {
-            print("  ERROR parsing exposure: " + e.getMessage());
-        }
-        
-        try {
             frameIntervalMs = Integer.parseInt(intervalStr.trim());
-            print("  Parsed interval: " + frameIntervalMs);
+            print("  Parsed interval: " + frameIntervalMs + "ms");
         } catch (Exception e) {
-            print("  ERROR parsing interval: " + e.getMessage());
+            print("  ERROR parsing interval: " + e.getMessage() + ", using default " + frameIntervalMs + "ms");
         }
         
-        try {
-            maxFrames = Integer.parseInt(framesStr.trim());
-            print("  Parsed frames: " + maxFrames);
-        } catch (Exception e) {
-            print("  ERROR parsing frames: " + e.getMessage());
-        }
-        
-        print("\nFinal values - Exposure: " + exposureMs + "ms, Interval: " + frameIntervalMs + "ms, Max Frames: " + maxFrames);
-        
-        // Set exposure from table
-        try {
-            mmc.setExposure(exposureMs);
-            print("Exposure set to " + exposureMs + "ms");
-        } catch (Exception e) {
-            print("WARNING: Could not set exposure: " + e.getMessage());
-        }
+        // Get current exposure from GUI (don't override it)
+        double currentExposure = mmc.getExposure();
+        print("\nUsing GUI settings:");
+        print("  Exposure: " + currentExposure + "ms (from GUI)");
+        print("  Channel/Camera: Current GUI configuration (not switching)");
+        print("  Max Frames: " + maxFrames + " (continuous until stopped)");
         
         int globalFrameNumber = 0;
         long lastGuiUpdateTime = 0;
         final long GUI_UPDATE_INTERVAL_MS = 250;
         
-        print("Starting acquisition: " + maxFrames + " frames at " + frameIntervalMs + "ms intervals");
+        print("\nStarting Simple Snap Mode acquisition:");
+        print("  Frame interval: " + frameIntervalMs + "ms (from table)");
+        print("  Max frames: " + maxFrames);
+        print("  Mode: Timed acquisition (NOT rolling mode - will wait between frames)");
         
         // Simple continuous snapping loop
         while (running[0] && globalFrameNumber < maxFrames) {
@@ -4681,7 +4692,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                     print("DEBUG: Starting frame " + globalFrameNumber + " capture");
                 }
                 
-                // Snap image with current GUI settings
+                // Set camera configuration and snap image
+                if (globalFrameNumber <= 3) {
+                    print("  Setting camera snap config: " + config.cameraSnapConfig);
+                }
+                mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+                
                 if (globalFrameNumber <= 3) {
                     print("  About to call mm.live().snap()");
                 }
@@ -4759,14 +4775,23 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 
                 // Debug: Log first few frames
                 if (globalFrameNumber <= 3) {
-                    print("DEBUG: Completed frame " + globalFrameNumber + " processing, about to wait for interval");
+                    print("DEBUG: Completed frame " + globalFrameNumber + " processing");
                 }
                 
-                // Wait for frame interval
+                // Wait for frame interval to maintain timing
                 long frameElapsed = System.currentTimeMillis() - frameStartTime;
                 long waitTime = frameIntervalMs - frameElapsed;
+                
+                if (globalFrameNumber <= 3) {
+                    print("  Frame processing took: " + frameElapsed + "ms");
+                    print("  Target interval: " + frameIntervalMs + "ms");
+                    print("  Waiting: " + (waitTime > 0 ? waitTime : 0) + "ms before next frame");
+                }
+                
                 if (waitTime > 0) {
                     Thread.sleep(waitTime);
+                } else if (globalFrameNumber <= 3) {
+                    print("  WARNING: Frame processing took longer than interval! No wait needed.");
                 }
                 
             } catch (InterruptedException ie) {

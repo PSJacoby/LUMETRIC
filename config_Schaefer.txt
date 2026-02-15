@@ -1,0 +1,27 @@
+# Microscope Configuration File
+# Lines starting with # are comments
+# Format: PIN_NUMBER = CHANNEL_NAME
+
+# Pin assignments (Pin 1 is always Camera TTL)
+PIN_1 = Camera
+PIN_2 = Blau
+PIN_3 = Orange
+PIN_4 = UV
+
+
+# Camera Configuration Settings (MicroManager config names)
+CAMERA_CONFIG_GROUP = Hamamatsu
+CAMERA_SNAP_CONFIG = Snapping_and_Live
+CAMERA_TRIGGER_CONFIG = Snapping_and_Live
+
+# Acquisition Mode
+# true = Use circular buffer (for real cameras with high-speed acquisition)
+# false = Use simple snap mode (for demo cameras or single frame capture)
+USE_CIRCULAR_BUFFER = true
+
+# Spectral Configuration Settings
+SPECTRAL_CONFIG_GROUP = SpectrAmazing
+SPECTRAL_DEFAULT_CONFIG = BrightLight
+
+# Serial Port
+SERIAL_PORT = COM4
