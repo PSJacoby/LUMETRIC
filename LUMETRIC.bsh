@@ -1131,6 +1131,13 @@ okButton.addActionListener(new ActionListener() {
                         
                         if (!exportTableToCSV()) {
                             print("ERROR: CSV export failed");
+                            SwingUtilities.invokeLater(new Runnable() {
+                                public void run() {
+                                    JOptionPane.showMessageDialog(null,
+                                        "Failed to save acquisition settings.\nPlease check folder permissions.",
+                                        "File Write Error", JOptionPane.ERROR_MESSAGE);
+                                }
+                            });
                             return;
                         }
                         
@@ -1145,6 +1152,22 @@ okButton.addActionListener(new ActionListener() {
                     } catch (Exception threadEx) {
                         print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
+                        // Show user-friendly error dialog on EDT
+                        // Capture error message for inner class (BeanShell compatibility)
+                        String capturedError = threadEx.getMessage();
+                        if (capturedError == null) capturedError = threadEx.getClass().getName();
+                        final String errorMsg = capturedError;
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() {
+                                JOptionPane.showMessageDialog(null,
+                                    "Acquisition setup failed:\n" + errorMsg + 
+                                    "\n\nPlease check:\n" +
+                                    "- You have write permissions to the selected folder\n" +
+                                    "- The folder is not on a network drive or read-only location\n" +
+                                    "- You're not running in a restricted directory",
+                                    "Acquisition Error", JOptionPane.ERROR_MESSAGE);
+                            }
+                        });
                     }
                 }
             }).start();
@@ -1483,6 +1506,13 @@ vizStartButton.addActionListener(new ActionListener() {
                         
                         if (!exportTableToCSV()) {
                             print("ERROR: CSV export failed");
+                            SwingUtilities.invokeLater(new Runnable() {
+                                public void run() {
+                                    JOptionPane.showMessageDialog(null,
+                                        "Failed to save acquisition settings.\nPlease check folder permissions.",
+                                        "File Write Error", JOptionPane.ERROR_MESSAGE);
+                                }
+                            });
                             return;
                         }
                         
@@ -1497,6 +1527,22 @@ vizStartButton.addActionListener(new ActionListener() {
                     } catch (Exception threadEx) {
                         print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
+                        // Show user-friendly error dialog on EDT
+                        // Capture error message for inner class (BeanShell compatibility)
+                        String capturedError = threadEx.getMessage();
+                        if (capturedError == null) capturedError = threadEx.getClass().getName();
+                        final String errorMsg = capturedError;
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() {
+                                JOptionPane.showMessageDialog(null,
+                                    "Acquisition setup failed:\n" + errorMsg + 
+                                    "\n\nPlease check:\n" +
+                                    "- You have write permissions to the selected folder\n" +
+                                    "- The folder is not on a network drive or read-only location\n" +
+                                    "- You're not running in a restricted directory",
+                                    "Acquisition Error", JOptionPane.ERROR_MESSAGE);
+                            }
+                        });
                     }
                 }
             }).start();
@@ -1896,14 +1942,24 @@ void createExperimentFolder() {
         return;
     }
     
+    // Check if parent directory is writable
+    File saveDirFile = new File(saveDir);
+    if (!saveDirFile.canWrite()) {
+        print("ERROR: No write permission for directory: " + saveDir);
+        print("Please select a folder where you have write permissions.");
+        throw new IOException("No write permission for save directory");
+    }
+    
     File experimentFolder = new File(saveDir, "Experiment_" + timestamp);
     boolean created = experimentFolder.mkdir();
     
-    if (created) {
-        print("Created experiment folder: " + experimentFolder.getAbsolutePath());
-    } else {
-        print("WARNING: Experiment folder may already exist or could not be created: " + experimentFolder.getAbsolutePath());
+    if (!created) {
+        print("ERROR: Failed to create experiment folder: " + experimentFolder.getAbsolutePath());
+        print("Please check folder permissions and try again.");
+        throw new IOException("Failed to create experiment folder");
     }
+    
+    print("Created experiment folder: " + experimentFolder.getAbsolutePath());
     
     // Store experiment folder path in config
     config.experimentFolder = experimentFolder.getAbsolutePath();
@@ -1912,11 +1968,12 @@ void createExperimentFolder() {
     // Create images subfolder for TIFF files
     File imagesFolder = new File(experimentFolder, "images");
     boolean imagesFolderCreated = imagesFolder.mkdir();
-    if (imagesFolderCreated) {
-        print("Created images subfolder: " + imagesFolder.getAbsolutePath());
-    } else {
-        print("WARNING: Images subfolder could not be created");
+    if (!imagesFolderCreated) {
+        print("ERROR: Failed to create images subfolder");
+        throw new IOException("Failed to create images subfolder");
     }
+    
+    print("Created images subfolder: " + imagesFolder.getAbsolutePath());
     
     // Store images folder path in config
     config.imagesFolder = imagesFolder.getAbsolutePath();
@@ -2008,61 +2065,76 @@ boolean setupVisualizationROIs() {
     rm.runCommand(imp, "Show All");
     print("ROI Manager ready");
     
-    // Create control window
+    // Create control window on EDT and use proper synchronization
     final boolean[] done = {false};
     final boolean[] cancelled = {false};
+    final Object lock = new Object();
     
-    JFrame btnFrame = new JFrame("ROI Setup");
-    btnFrame.setSize(400, 150);
-    btnFrame.setAlwaysOnTop(true);
-    btnFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-    
-    JPanel infoPanel = new JPanel(new BorderLayout());
-    JLabel infoLabel = new JLabel("<html><div style='text-align: center; padding: 10px;'>"
-        + "<b>Draw ROIs on the image and add them to ROI Manager</b><br>"
-        + "Press 't' to add ROIs, then click Done"
-        + "</div></html>", SwingConstants.CENTER);
-    infoPanel.add(infoLabel, BorderLayout.CENTER);
-    
-    JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 10));
-    JButton doneButton = new JButton("ROIs Done");
-    doneButton.setBackground(Color.GREEN);
-    JButton cancelButton = new JButton("Cancel");
-    cancelButton.setBackground(Color.ORANGE);
-    
-    doneButton.addActionListener(new ActionListener() {
-        public void actionPerformed(ActionEvent e) {
-            print("Done button clicked!");
-            done[0] = true;
-            btnFrame.dispose();
+    // Must create and show GUI on EDT to avoid threading issues (especially on Windows)
+    SwingUtilities.invokeLater(new Runnable() {
+        public void run() {
+            JFrame btnFrame = new JFrame("ROI Setup");
+            btnFrame.setSize(400, 150);
+            btnFrame.setAlwaysOnTop(true);
+            btnFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            
+            JPanel infoPanel = new JPanel(new BorderLayout());
+            JLabel infoLabel = new JLabel("<html><div style='text-align: center; padding: 10px;'>"
+                + "<b>Draw ROIs on the image and add them to ROI Manager</b><br>"
+                + "Press 't' to add ROIs, then click Done"
+                + "</div></html>", SwingConstants.CENTER);
+            infoPanel.add(infoLabel, BorderLayout.CENTER);
+            
+            JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 10));
+            JButton doneButton = new JButton("ROIs Done");
+            doneButton.setBackground(Color.GREEN);
+            JButton cancelButton = new JButton("Cancel");
+            cancelButton.setBackground(Color.ORANGE);
+            
+            doneButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    print("Done button clicked!");
+                    synchronized(lock) {
+                        done[0] = true;
+                        lock.notifyAll();  // Wake up waiting thread
+                    }
+                    btnFrame.dispose();
+                }
+            });
+            
+            cancelButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    print("Cancel button clicked!");
+                    synchronized(lock) {
+                        cancelled[0] = true;
+                        lock.notifyAll();  // Wake up waiting thread
+                    }
+                    btnFrame.dispose();
+                }
+            });
+            
+            buttonPanel.add(doneButton);
+            buttonPanel.add(cancelButton);
+            
+            btnFrame.setLayout(new BorderLayout());
+            btnFrame.add(infoPanel, BorderLayout.CENTER);
+            btnFrame.add(buttonPanel, BorderLayout.SOUTH);
+            btnFrame.setLocationRelativeTo(null);
+            btnFrame.setVisible(true);
         }
     });
     
-    cancelButton.addActionListener(new ActionListener() {
-        public void actionPerformed(ActionEvent e) {
-            print("Cancel button clicked!");
-            cancelled[0] = true;
-            btnFrame.dispose();
-        }
-    });
-    
-    buttonPanel.add(doneButton);
-    buttonPanel.add(cancelButton);
-    
-    btnFrame.setLayout(new BorderLayout());
-    btnFrame.add(infoPanel, BorderLayout.CENTER);
-    btnFrame.add(buttonPanel, BorderLayout.SOUTH);
-    btnFrame.setLocationRelativeTo(null);
-    btnFrame.setVisible(true);
-    
+    // Wait for user action using proper wait/notify instead of busy polling
     print("Waiting for button click...");
-    int count = 0;
-    while (done[0] == false && cancelled[0] == false) {
-        count++;
-        if (count % 10 == 0) {
-            print("Still waiting... " + count);
+    synchronized(lock) {
+        while (done[0] == false && cancelled[0] == false) {
+            try {
+                lock.wait();  // Efficiently wait for notification, no CPU polling
+            } catch (InterruptedException e) {
+                print("Wait interrupted: " + e.getMessage());
+                break;
+            }
         }
-        Thread.sleep(100);
     }
     
     print("Button clicked! done=" + done[0] + ", cancelled=" + cancelled[0]);
@@ -2198,14 +2270,47 @@ boolean setupVisualizationROIs() {
         String savePath = config.experimentFolder.isEmpty() ? 
             prefs.get("lastSavePath", "") : config.experimentFolder;
         if (!savePath.isEmpty()) {
-            File saveDir = new File(savePath);
-            File roiFile = config.experimentFolder.isEmpty() ? 
-                getNextAvailableFile(saveDir, "RoiSet", ".zip") : 
-                new File(saveDir, "RoiSet.zip");
-            print("Saving ROIs to: " + roiFile.getAbsolutePath());
-            rm.runCommand("Save", roiFile.getAbsolutePath());
-            if (roiFile.exists()) {
-                print("SUCCESS: ROI set saved (" + roiFile.length() + " bytes)");
+            try {
+                File saveDir = new File(savePath);
+                
+                // Check write permission BEFORE attempting to save
+                if (!saveDir.canWrite()) {
+                    print("WARNING: No write permission for " + savePath);
+                    print("Skipping ROI file save (ROIs are still stored in memory)");
+                } else {
+                    File roiFile = config.experimentFolder.isEmpty() ? 
+                        getNextAvailableFile(saveDir, "RoiSet", ".zip") : 
+                        new File(saveDir, "RoiSet.zip");
+                    print("Saving ROIs to: " + roiFile.getAbsolutePath());
+                    
+                    // Use a timeout thread to prevent indefinite blocking
+                    final boolean[] saveComplete = {false};
+                    final String roiPath = roiFile.getAbsolutePath();
+                    Thread saveThread = new Thread(new Runnable() {
+                        public void run() {
+                            try {
+                                rm.runCommand("Save", roiPath);
+                                saveComplete[0] = true;
+                            } catch (Exception e) {
+                                print("ERROR during ROI save: " + e.getMessage());
+                            }
+                        }
+                    });
+                    saveThread.start();
+                    saveThread.join(5000); // Wait max 5 seconds
+                    
+                    if (saveComplete[0] && roiFile.exists()) {
+                        print("SUCCESS: ROI set saved (" + roiFile.length() + " bytes)");
+                    } else {
+                        print("WARNING: ROI save timed out or failed (ROIs still in memory)");
+                        if (saveThread.isAlive()) {
+                            saveThread.interrupt();
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                print("WARNING: ROI save failed: " + e.getMessage());
+                print("Continuing with ROIs in memory...");
             }
         }
     }
@@ -2231,6 +2336,13 @@ boolean exportTableToCSV() {
     // Use experiment folder if it exists
     File saveDirFile = config.experimentFolder.isEmpty() ? 
         new File(saveDir) : new File(config.experimentFolder);
+    
+    // Check write permission before attempting to create files
+    if (!saveDirFile.canWrite()) {
+        print("ERROR: No write permission for directory: " + saveDirFile.getAbsolutePath());
+        print("Please select a folder where you have write permissions.");
+        return false;
+    }
     
     File csvFileReadable = config.experimentFolder.isEmpty() ? 
         getNextAvailableFile(saveDirFile, "AquisitionSettings", ".csv") :
