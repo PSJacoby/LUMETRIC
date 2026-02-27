@@ -64,6 +64,9 @@ import ij.gui.ImageCanvas;
 import ij.gui.Overlay;
 import ij.gui.Roi;
 
+// DEBUG_VERBOSE flag - set to true only for troubleshooting
+boolean DEBUG_VERBOSE = false;
+
 // ==================== Data Classes ====================
 
 // ROI with spatial metadata
@@ -214,7 +217,7 @@ class MicroscopeConfig {
                             int pinNum = Integer.parseInt(key.substring(4));
                             pinToChannel.put(pinNum, value);
                         } catch (NumberFormatException e) {
-                            print("Warning: Invalid pin number in line: " + line);
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                         }
                     } else if (key.equals("CAMERA_CONFIG_GROUP")) {
                         cameraConfigGroup = value;
@@ -235,7 +238,7 @@ class MicroscopeConfig {
             }
             reader.close();
             configFilePath = filePath;
-            print("Configuration loaded from: " + filePath);
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             return true;
         } catch (IOException e) {
             JOptionPane.showMessageDialog(null, "Error loading config file: " + e.getMessage(),
@@ -1025,7 +1028,7 @@ sequencePanel.add(scrollPane, BorderLayout.CENTER);
 // Control panel
 controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 
-addButton = new JButton("Add Row ✓");
+addButton = new JButton("Add Row");
 addButton.setBackground(Color.GREEN);
 addButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
@@ -1106,11 +1109,10 @@ okButton.addActionListener(new ActionListener() {
             config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo);
             
             // Debug: Show captured settings
-            print("=== GUI Settings Captured ===");
-            print("Simple Snap Mode: " + (config.useSimpleSnapMode ? "ENABLED" : "disabled"));
-            print("Live Pictures: " + (config.acqSettings.livePics ? "enabled" : "disabled"));
-            print("============================");
-            
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            // print("Simple Snap Mode: " + (config.useSimpleSnapMode ? "ENABLED" : "disabled"));
+            // print("Live Pictures: " + (config.acqSettings.livePics ? "enabled" : "disabled"));
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             // Dispose GUI immediately - no more GUI dependencies
             frame.dispose();
             
@@ -1122,15 +1124,15 @@ okButton.addActionListener(new ActionListener() {
                         createExperimentFolder();
                         
                         if (config.acqSettings.isVisualizationNeeded()) {
-                            print("Visualization needed - setting up ROIs...");
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                             if (!setupVisualizationROIs()) {
-                                print("ERROR: ROI setup failed");
+                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                                 return;
                             }
                         }
                         
                         if (!exportTableToCSV()) {
-                            print("ERROR: CSV export failed");
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                             SwingUtilities.invokeLater(new Runnable() {
                                 public void run() {
                                     JOptionPane.showMessageDialog(null,
@@ -1150,7 +1152,7 @@ okButton.addActionListener(new ActionListener() {
                             }
                         });
                     } catch (Exception threadEx) {
-                        print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
+                        // print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
                         // Show user-friendly error dialog on EDT
                         // Capture error message for inner class (BeanShell compatibility)
@@ -1481,11 +1483,10 @@ vizStartButton.addActionListener(new ActionListener() {
             config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo);
             
             // Debug: Show captured settings
-            print("=== GUI Settings Captured ===");
-            print("Simple Snap Mode: " + (config.useSimpleSnapMode ? "ENABLED" : "disabled"));
-            print("Live Pictures: " + (config.acqSettings.livePics ? "enabled" : "disabled"));
-            print("============================");
-            
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            // print("Simple Snap Mode: " + (config.useSimpleSnapMode ? "ENABLED" : "disabled"));
+            // print("Live Pictures: " + (config.acqSettings.livePics ? "enabled" : "disabled"));
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             // Dispose GUI immediately
             frame.dispose();
             
@@ -1497,15 +1498,15 @@ vizStartButton.addActionListener(new ActionListener() {
                         createExperimentFolder();
                         
                         if (config.acqSettings.isVisualizationNeeded()) {
-                            print("Visualization needed - setting up ROIs...");
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                             if (!setupVisualizationROIs()) {
-                                print("ERROR: ROI setup failed");
+                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                                 return;
                             }
                         }
                         
                         if (!exportTableToCSV()) {
-                            print("ERROR: CSV export failed");
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                             SwingUtilities.invokeLater(new Runnable() {
                                 public void run() {
                                     JOptionPane.showMessageDialog(null,
@@ -1525,7 +1526,7 @@ vizStartButton.addActionListener(new ActionListener() {
                             }
                         });
                     } catch (Exception threadEx) {
-                        print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
+                        // print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
                         // Show user-friendly error dialog on EDT
                         // Capture error message for inner class (BeanShell compatibility)
@@ -1656,7 +1657,7 @@ String lastConfigPath = prefs.get("lastConfigPath", "");
 if (!lastConfigPath.isEmpty() && new File(lastConfigPath).exists()) {
     config.loadFromFile(lastConfigPath);
     updateSettingsDisplay();
-    print("Auto-loaded last configuration: " + lastConfigPath);
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
 }
 
 // Initialize data directory display
@@ -1783,23 +1784,22 @@ frame.setVisible(true);
 
     // Print sequence data for debugging - uses captured data
     void printSequenceData() {
-        print("\n=== Acquisition Settings ===");
-        print("Live Pictures: " + config.acqSettings.livePics);
-        print("\nSequence Steps:");
-
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         for (int i = 0; i < config.acqSettings.sequenceRows.size(); i++) {
             ArrayList row = config.acqSettings.sequenceRows.get(i);
-            print("Step " + (i + 1) + ":");
-            print("  Channel: " + row.get(1));
-            print("  Exposure: " + row.get(2) + " ms");
-            print("  Frame Interval: " + row.get(3) + " ms");
-            print("  Frames: " + row.get(4));
-            print("  Loop Goto: " + row.get(5));
-            print("  Loop Times: " + row.get(6));
-            print("  Constant Illum: " + row.get(7));
-            print("  Loop Switch Goto: " + row.get(8));
+            // print("Step " + (i + 1) + ":");
+            // print("  Channel: " + row.get(1));
+            // print("  Exposure: " + row.get(2) + " ms");
+            // print("  Frame Interval: " + row.get(3) + " ms");
+            // print("  Frames: " + row.get(4));
+            // print("  Loop Goto: " + row.get(5));
+            // print("  Loop Times: " + row.get(6));
+            // print("  Constant Illum: " + row.get(7));
+            // print("  Loop Switch Goto: " + row.get(8));
         }
-        print("===========================\n");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     }
 
 // ==================== Generic CSV Export Helper ====================
@@ -1888,7 +1888,7 @@ boolean writeCSV(File csvFile, Object headers, Object data, Object comments) {
         return true;
         
     } catch (IOException e) {
-        print("ERROR: Failed to write CSV file: " + e.getMessage());
+        // print("ERROR: Failed to write CSV file: " + e.getMessage());
         e.printStackTrace();
         return false;
     }
@@ -1938,15 +1938,15 @@ void createExperimentFolder() {
     String saveDir = config.acqSettings.saveDirectory;
     
     if (saveDir == null || saveDir.isEmpty()) {
-        print("ERROR: No save directory specified!");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
     // Check if parent directory is writable
     File saveDirFile = new File(saveDir);
     if (!saveDirFile.canWrite()) {
-        print("ERROR: No write permission for directory: " + saveDir);
-        print("Please select a folder where you have write permissions.");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         throw new IOException("No write permission for save directory");
     }
     
@@ -1954,26 +1954,25 @@ void createExperimentFolder() {
     boolean created = experimentFolder.mkdir();
     
     if (!created) {
-        print("ERROR: Failed to create experiment folder: " + experimentFolder.getAbsolutePath());
-        print("Please check folder permissions and try again.");
+        // print("ERROR: Failed to create experiment folder: " + experimentFolder.getAbsolutePath());
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         throw new IOException("Failed to create experiment folder");
     }
     
-    print("Created experiment folder: " + experimentFolder.getAbsolutePath());
+    // print("Created experiment folder: " + experimentFolder.getAbsolutePath());
     
     // Store experiment folder path in config
     config.experimentFolder = experimentFolder.getAbsolutePath();
-    print("Experiment folder path set to: " + config.experimentFolder);
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Create images subfolder for TIFF files
     File imagesFolder = new File(experimentFolder, "images");
     boolean imagesFolderCreated = imagesFolder.mkdir();
     if (!imagesFolderCreated) {
-        print("ERROR: Failed to create images subfolder");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         throw new IOException("Failed to create images subfolder");
     }
     
-    print("Created images subfolder: " + imagesFolder.getAbsolutePath());
+    // print("Created images subfolder: " + imagesFolder.getAbsolutePath());
     
     // Store images folder path in config
     config.imagesFolder = imagesFolder.getAbsolutePath();
@@ -1982,28 +1981,26 @@ void createExperimentFolder() {
 // ==================== Setup Visualization ROIs ====================
 // Setup ROIs for visualization - returns true if successful, false if cancelled
 boolean setupVisualizationROIs() {
-    print("========== ROI SETUP START ==========");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Note: Main GUI is already disposed at this point
     
     import ij.plugin.frame.RoiManager;
     
     // Snap an image
-    print("Snapping image...");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
     List images = mm.live().snap(false);
     org.micromanager.data.Image image = images.get(0);
-    print("Image snapped");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     if (images == null || images.isEmpty()) {
-        print("ERROR: Failed to snap image");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return false;
     }
     
     // Get full sensor dimensions
     int fullWidth = (int) mmc.getImageWidth();
     int fullHeight = (int) mmc.getImageHeight();
-    print("Full sensor size: " + fullWidth + " x " + fullHeight);
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Create ImageJ processor from snapped image
     ImageProcessor fullIP = mm.data().ij().createProcessor(image);
     
@@ -2017,8 +2014,7 @@ boolean setupVisualizationROIs() {
     final String roiRegion = isSpatialMode ? config.acqSettings.spatialConfig.roiSourceRegion : "";
     
     if (isSpatialMode) {
-        print("Spatial mode: " + splitAxis + " split, showing " + roiRegion + " half");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         if (splitAxis.equals("Horizontal")) {
             // Split horizontally (top/bottom)
             int halfHeight = fullHeight / 2;
@@ -2057,14 +2053,12 @@ boolean setupVisualizationROIs() {
     // Create and show ImageJ display
     ImagePlus imp = new ImagePlus(displayTitle, displayIP);
     imp.show();
-    print("Image displayed");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Open ROI Manager
     IJ.run("ROI Manager...", "");
     ij.plugin.frame.RoiManager rm = ij.plugin.frame.RoiManager.getInstance();
     rm.runCommand(imp, "Show All");
-    print("ROI Manager ready");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Create control window on EDT and use proper synchronization
     final boolean[] done = {false};
     final boolean[] cancelled = {false};
@@ -2093,7 +2087,7 @@ boolean setupVisualizationROIs() {
             
             doneButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
-                    print("Done button clicked!");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     synchronized(lock) {
                         done[0] = true;
                         lock.notifyAll();  // Wake up waiting thread
@@ -2104,7 +2098,7 @@ boolean setupVisualizationROIs() {
             
             cancelButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
-                    print("Cancel button clicked!");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     synchronized(lock) {
                         cancelled[0] = true;
                         lock.notifyAll();  // Wake up waiting thread
@@ -2125,38 +2119,36 @@ boolean setupVisualizationROIs() {
     });
     
     // Wait for user action using proper wait/notify instead of busy polling
-    print("Waiting for button click...");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     synchronized(lock) {
         while (done[0] == false && cancelled[0] == false) {
             try {
                 lock.wait();  // Efficiently wait for notification, no CPU polling
             } catch (InterruptedException e) {
-                print("Wait interrupted: " + e.getMessage());
+                // print("Wait interrupted: " + e.getMessage());
                 break;
             }
         }
     }
     
-    print("Button clicked! done=" + done[0] + ", cancelled=" + cancelled[0]);
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     if (cancelled[0]) {
         // Clean up ImageJ window
         if (imp.getWindow() != null) {
             imp.getWindow().close();
         }
-        print("ROI setup cancelled");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return false;
     }
     
-    print("ROI count = " + rm.getCount());
+    // print("ROI count = " + rm.getCount());
     
     // Rename ROIs in the ROI Manager immediately
     for (int i = 0; i < rm.getCount(); i++) {
         rm.select(i);
         rm.runCommand("Rename", "ROI" + (i + 1));
     }
-    print("ROIs renamed in ROI Manager to ROI1, ROI2, etc.");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Clean up ImageJ window
     if (imp.getWindow() != null) {
         imp.getWindow().close();
@@ -2175,14 +2167,13 @@ boolean setupVisualizationROIs() {
         sourceRegion = roiRegion;
     }
     
-    print("Storing ROIs with source region: " + sourceRegion);
-    print("Image dimensions: " + imageWidth + " x " + imageHeight);
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     int originalRoiCount = rm.getCount();
     
     // First, adjust original ROIs in ROI Manager to full image coordinates (for spatial mode)
     if (isSpatialMode) {
-        print("Adjusting original ROI coordinates from cropped to full image");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         for (int i = 0; i < originalRoiCount; i++) {
             ij.gui.Roi roi = rm.getRoi(i);
             java.awt.Rectangle bounds = roi.getBounds();
@@ -2201,8 +2192,7 @@ boolean setupVisualizationROIs() {
     
     // For spatial mode: duplicate ROIs to the other half
     if (isSpatialMode) {
-        print("Duplicating " + originalRoiCount + " ROIs to other half for spatial mode");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         for (int i = 0; i < originalRoiCount; i++) {
             ij.gui.Roi roi = rm.getRoi(i);
             ij.gui.Roi mirroredRoi = (ij.gui.Roi) roi.clone();
@@ -2257,13 +2247,12 @@ boolean setupVisualizationROIs() {
             rm.runCommand("Rename", "ROI" + (i + 1));
         }
         
-        print("Stored " + originalRoiCount + " original + " + originalRoiCount + " mirrored = " + config.storedROIs.size() + " total ROIs");
+        // print("Stored " + originalRoiCount + " original + " + originalRoiCount + " mirrored = " + config.storedROIs.size() + " total ROIs");
     } else {
-        print("Stored " + config.storedROIs.size() + " ROIs for acquisition");
+        // print("Stored " + config.storedROIs.size() + " ROIs for acquisition");
     }
     
-    print("ROIs renamed to ROI1, ROI2, etc.");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Save ROI set with renamed ROIs
     if (rm.getCount() > 0) {
         // Use experiment folder if it exists, otherwise use data directory
@@ -2275,13 +2264,13 @@ boolean setupVisualizationROIs() {
                 
                 // Check write permission BEFORE attempting to save
                 if (!saveDir.canWrite()) {
-                    print("WARNING: No write permission for " + savePath);
-                    print("Skipping ROI file save (ROIs are still stored in memory)");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    // print("Skipping ROI file save (ROIs are still stored in memory)");
                 } else {
                     File roiFile = config.experimentFolder.isEmpty() ? 
                         getNextAvailableFile(saveDir, "RoiSet", ".zip") : 
                         new File(saveDir, "RoiSet.zip");
-                    print("Saving ROIs to: " + roiFile.getAbsolutePath());
+                    // print("Saving ROIs to: " + roiFile.getAbsolutePath());
                     
                     // Use a timeout thread to prevent indefinite blocking
                     final boolean[] saveComplete = {false};
@@ -2292,7 +2281,7 @@ boolean setupVisualizationROIs() {
                                 rm.runCommand("Save", roiPath);
                                 saveComplete[0] = true;
                             } catch (Exception e) {
-                                print("ERROR during ROI save: " + e.getMessage());
+                                // print("ERROR during ROI save: " + e.getMessage());
                             }
                         }
                     });
@@ -2300,26 +2289,26 @@ boolean setupVisualizationROIs() {
                     saveThread.join(5000); // Wait max 5 seconds
                     
                     if (saveComplete[0] && roiFile.exists()) {
-                        print("SUCCESS: ROI set saved (" + roiFile.length() + " bytes)");
+                        // print("SUCCESS: ROI set saved (" + roiFile.length() + " bytes)");
                     } else {
-                        print("WARNING: ROI save timed out or failed (ROIs still in memory)");
+                        // print("WARNING: ROI save timed out or failed (ROIs still in memory)");
                         if (saveThread.isAlive()) {
                             saveThread.interrupt();
                         }
                     }
                 }
             } catch (Exception e) {
-                print("WARNING: ROI save failed: " + e.getMessage());
-                print("Continuing with ROIs in memory...");
+                // print("WARNING: ROI save failed: " + e.getMessage());
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             }
         }
     }
     
     // Close ROI Manager - we have the ROIs stored
-    print("Closing ROI Manager...");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     rm.close();
     
-    print("========== ROI SETUP COMPLETE ==========");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     return true;
 }
 
@@ -2329,7 +2318,7 @@ boolean exportTableToCSV() {
     String saveDir = config.acqSettings.saveDirectory;
     
     if (saveDir.isEmpty() || !new File(saveDir).exists()) {
-        print("ERROR: Save directory not set!");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return false;
     }
     
@@ -2339,8 +2328,8 @@ boolean exportTableToCSV() {
     
     // Check write permission before attempting to create files
     if (!saveDirFile.canWrite()) {
-        print("ERROR: No write permission for directory: " + saveDirFile.getAbsolutePath());
-        print("Please select a folder where you have write permissions.");
+        // print("ERROR: No write permission for directory: " + saveDirFile.getAbsolutePath());
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return false;
     }
     
@@ -2500,13 +2489,13 @@ boolean exportTableToCSV() {
         writerArduino.println("# Live Pictures: " + config.acqSettings.livePics);
         writerArduino.close();
         
-        print("Tables exported to:");
-        print("  Readable: " + csvFileReadable.getAbsolutePath());
-        print("  Arduino:  " + csvFileArduino.getAbsolutePath());
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // print("  Readable: " + csvFileReadable.getAbsolutePath());
+        // print("  Arduino:  " + csvFileArduino.getAbsolutePath());
         return true;
         
     } catch (IOException e) {
-        print("ERROR: Failed to export CSV files: " + e.getMessage());
+        // print("ERROR: Failed to export CSV files: " + e.getMessage());
         e.printStackTrace();
         return false;
     }
@@ -2554,7 +2543,7 @@ void loadSettingsFromCSV() {
             tableModel.removeRow(0);
         }
         
-        print("Loading settings from: " + csvFile.getAbsolutePath());
+        // print("Loading settings from: " + csvFile.getAbsolutePath());
         
         while ((line = reader.readLine()) != null) {
             lineNum++;
@@ -2624,29 +2613,29 @@ void loadSettingsFromCSV() {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     boolean livePicsValue = value.equalsIgnoreCase("true");
                     livePics.setSelected(livePicsValue);
-                    print("  Live Pictures: " + livePicsValue);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 } else if (line.contains("Convert to Stack:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     boolean convertToStackValue = value.equalsIgnoreCase("true");
                     convertToStack.setSelected(convertToStackValue);
-                    print("  Convert to Stack: " + convertToStackValue);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 } else if (line.contains("Stack per Row:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     boolean stackPerRowValue = value.equalsIgnoreCase("true");
                     stackPerRow.setSelected(stackPerRowValue);
-                    print("  Stack per Row: " + stackPerRowValue);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 } else if (line.contains("Processing Mode:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     loadedMode = value;
-                    print("  Processing Mode: " + loadedMode);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 } else if (line.contains("Split Axis:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     loadedSplitAxis = value;
-                    print("  Split Axis: " + loadedSplitAxis);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 } else if (line.contains("ROI Region:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     loadedROIRegion = value;
-                    print("  ROI Region: " + loadedROIRegion);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 continue;
             }
@@ -2659,7 +2648,7 @@ void loadSettingsFromCSV() {
             // Parse CSV line
             String[] parts = parseCSVLine(line);
             if (parts.length < 8) {
-                print("WARNING: Line " + lineNum + " has only " + parts.length + " columns, skipping");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 continue;
             }
             
@@ -2689,9 +2678,9 @@ void loadSettingsFromCSV() {
         
         reader.close();
         
-        print("Successfully loaded " + tableModel.getRowCount() + " sequence steps");
+        // print("Successfully loaded " + tableModel.getRowCount() + " sequence steps");
         if (vizRowIndex > 0) {
-            print("Successfully loaded " + vizRowIndex + " visualization settings");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         }
         JOptionPane.showMessageDialog(frame, 
             "Loaded " + tableModel.getRowCount() + " sequence steps" + 
@@ -2700,7 +2689,7 @@ void loadSettingsFromCSV() {
             "Settings Loaded", JOptionPane.INFORMATION_MESSAGE);
         
     } catch (Exception e) {
-        print("ERROR: Failed to load settings from CSV: " + e.getMessage());
+        // print("ERROR: Failed to load settings from CSV: " + e.getMessage());
         e.printStackTrace();
         JOptionPane.showMessageDialog(frame, 
             "Failed to load settings:\\n" + e.getMessage(),
@@ -2857,13 +2846,13 @@ void saveSettingsToCSV() {
         
         writer.close();
         
-        print("Settings saved to: " + csvFile.getAbsolutePath());
+        // print("Settings saved to: " + csvFile.getAbsolutePath());
         JOptionPane.showMessageDialog(frame,
             "Settings saved successfully to:\\n" + csvFile.getName(),
             "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
         
     } catch (Exception e) {
-        print("ERROR: Failed to save settings to CSV: " + e.getMessage());
+        // print("ERROR: Failed to save settings to CSV: " + e.getMessage());
         e.printStackTrace();
         JOptionPane.showMessageDialog(frame,
             "Failed to save settings:\\n" + e.getMessage(),
@@ -2875,11 +2864,11 @@ void saveSettingsToCSV() {
 
 // Create acquisition control window inline (called from EDT)
 void createInlineAcquisitionWindow() {
-    print("DEBUG: createInlineAcquisitionWindow() called");
+    // print("DEBUG: createInlineAcquisitionWindow() called");
     // All imports moved to top of file to avoid BeanShell loading issues
     
     JFrame acqFrame = new JFrame("LUMETRIC - Acquisition Control");
-    print("DEBUG: Frame created");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
     
     // Adaptive sizing: use 80% of screen width and 70% of screen height
@@ -2908,8 +2897,7 @@ void createInlineAcquisitionWindow() {
     }
     boolean hasLiveView = config.acqSettings.livePics;
     
-    print("Layout: " + activeGraphs + " graphs, livePics=" + hasLiveView);
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // ===== TOP BUTTON PANEL =====
     JPanel topPanel = new JPanel(new BorderLayout());
     topPanel.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
@@ -2928,7 +2916,7 @@ void createInlineAcquisitionWindow() {
     loopSwitchButton.setPreferredSize(new java.awt.Dimension(130, 28));
     loopSwitchButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
-            print("Loop switch triggered");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             // TODO: Implement loop switch
         }
     });
@@ -2945,7 +2933,7 @@ void createInlineAcquisitionWindow() {
                     panel.restoreAutoBounds();
                 }
             }
-            print("All zooms reset");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         }
     });
     
@@ -2961,7 +2949,7 @@ void createInlineAcquisitionWindow() {
                     panel.restoreAutoDomainBounds();
                 }
             }
-            print("X-axis reset");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         }
     });
     
@@ -2989,7 +2977,7 @@ void createInlineAcquisitionWindow() {
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
-                print("Acquisition quit by user");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 acqFrame.dispose();
                 // TODO: Clean up acquisition resources
             }
@@ -3118,8 +3106,7 @@ void createInlineAcquisitionWindow() {
         rangeAxis.setAutoRange(true);
         rangeAxis.setAutoRangeMinimumSize(0.1);  // Minimum range for Y axis
         
-        print("Configuring renderer for " + graphName + "...");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Configure renderer - enable lines and make them thicker
         org.jfree.chart.renderer.xy.XYItemRenderer renderer = plot.getRenderer();
         
@@ -3136,14 +3123,13 @@ void createInlineAcquisitionWindow() {
             }
         } else {
             // Fallback: just set stroke width on base renderer
-            print("WARNING: Renderer is " + renderer.getClass().getName() + ", not XYLineAndShapeRenderer");
+            // print("WARNING: Renderer is " + renderer.getClass().getName() + ", not XYLineAndShapeRenderer");
             for (int seriesIdx = 0; seriesIdx < numSeries; seriesIdx++) {
                 renderer.setSeriesStroke(seriesIdx, new BasicStroke(2.0f));
             }
         }
         
-        print("Renderer configured for " + graphName);
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Create chart panel and store it
         ChartPanel chartPanel = new ChartPanel(chart);
         chartPanel.setMouseWheelEnabled(true);
@@ -3151,21 +3137,18 @@ void createInlineAcquisitionWindow() {
         chartPanel.setOpaque(true);
         chartPanel.setRefreshBuffer(true);
         
-        print("Chart panel created for " + graphName);
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         charts.add(chart);
         chartPlots.add(plot);
         chartPanels.add(chartPanel); // Store for repaint access
     }
     
-    print("All charts created, proceeding with layout...");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Event button - adds vertical line markers to all active graphs
     eventButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             long currentTime = System.currentTimeMillis() - acquisitionStartTime[0];
-            print("Event triggered at " + currentTime + " ms");
-            
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             // Store event time
             eventTimes.add(new Long(currentTime));
             
@@ -3385,12 +3368,12 @@ void createInlineAcquisitionWindow() {
     
     acqFrame.setVisible(true);
     
-    print("DEBUG: Frame visible=" + acqFrame.isVisible() + ", frame size=" + acqFrame.getSize());
-    print("DEBUG: Chart panels count=" + chartPanels.size());
+    // print("DEBUG: Frame visible=" + acqFrame.isVisible() + ", frame size=" + acqFrame.getSize());
+    // print("DEBUG: Chart panels count=" + chartPanels.size());
     for (int i = 0; i < chartPanels.size(); i++) {
         if (chartPanels.get(i) != null) {
             ChartPanel cp = (ChartPanel) chartPanels.get(i);
-            print("  ChartPanel " + i + ": visible=" + cp.isVisible() + ", size=" + cp.getSize());
+            // print("  ChartPanel " + i + ": visible=" + cp.isVisible() + ", size=" + cp.getSize());
         }
     }
     
@@ -3409,12 +3392,11 @@ void createInlineAcquisitionWindow() {
             }
             acqFrame.revalidate();
             acqFrame.repaint();
-            print("DEBUG: Initial repaint completed");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         }
     });
     
-    print("Window visible, starting acquisition thread...");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // ===== START ACQUISITION THREAD =====
     final boolean[] acquisitionRunning = {true};
     final ArrayList allDataRows = new ArrayList(); // Store rows [timestamp, roi0, roi1, roi2, roi3] for CSV export
@@ -3441,48 +3423,48 @@ void createInlineAcquisitionWindow() {
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
-                print("Acquisition quit by user");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 acquisitionRunning[0] = false;
                 
                 // Export data to CSV - pass visualization rows for naming
                 exportGraphDataToCSV(allDataRows, numActiveGraphs, config.acqSettings.visualizationRows);
                 exportEventTimesToCSV(eventTimes);
                 
-                acqFrame.dispose();
+                // DON'T dispose frame here - let acquisition thread show popup first
+                // Frame will be disposed after statistics popup in acquisition thread
             }
         }
     });
     
     // Start acquisition in background thread
-    print("Creating acquisition thread...");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     new Thread(new Runnable() {
         public void run() {
-            print("Acquisition thread started!");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             try {
                 // Choose acquisition mode based on configuration
                 // Simple Snap Mode checkbox overrides config file setting
                 boolean useCircularBuffer = config.useCircularBuffer && !config.useSimpleSnapMode;
                 
-                print("=== Acquisition Mode Decision ===");
-                print("Config file USE_CIRCULAR_BUFFER: " + config.useCircularBuffer);
-                print("Simple Snap Mode checkbox: " + config.useSimpleSnapMode);
-                print("Final mode: " + (useCircularBuffer ? "Circular Buffer" : "Simple Snap"));
-                print("================================");
-                
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                // print("Final mode: " + (useCircularBuffer ? "Circular Buffer" : "Simple Snap"));
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 if (useCircularBuffer) {
-                    print("Using circular buffer acquisition mode");
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels, acqFrame);
                 } else {
-                    print("Using simple snap acquisition mode");
-                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels, acqFrame);
                 }
             } catch (Exception ex) {
-                print("ERROR in acquisition thread: " + ex.getMessage());
+                // print("ERROR in acquisition thread: " + ex.getMessage());
                 ex.printStackTrace();
             }
         }
     }).start();
-    print("Acquisition thread launched.");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
 }
 
 // ==================== Frame Filtering Logic ====================
@@ -3538,7 +3520,7 @@ boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
                     
                     return ((frameNumber - offset) % interval == 0) && (frameNumber >= offset);
                 } catch (NumberFormatException e) {
-                    print("WARNING: Could not parse custom pattern: " + custom);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
             }
         }
@@ -3663,13 +3645,13 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
         return;
     }
     
-    print("DEBUG: updateLiveView called, panel=" + (liveViewPanel != null) + ", ip=" + (ip != null));
+    // print("DEBUG: updateLiveView called, panel=" + (liveViewPanel != null) + ", ip=" + (ip != null));
     
     final ImageProcessor ipCopy = ip.duplicate();
     SwingUtilities.invokeLater(new Runnable() {
         public void run() {
             try {
-                print("DEBUG: updateLiveView SwingUtilities executing");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 ImagePlus imp = new ImagePlus("Live", ipCopy);
                 
                 // Scale and display - calculate scale first
@@ -3740,10 +3722,10 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
                     liveViewPanel.add(centerPanel, BorderLayout.CENTER);
                     liveViewPanel.revalidate();
                     liveViewPanel.repaint();
-                    print("DEBUG: Live view updated successfully");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
             } catch (Exception e) {
-                print("ERROR updating live view: " + e.getMessage());
+                // print("ERROR updating live view: " + e.getMessage());
                 e.printStackTrace();
             }
         }
@@ -3780,7 +3762,7 @@ ArrayList buildDataRow(int frameNumber, long timestamp, ArrayList roiValues) {
 // Update all graphs with new data
 void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues, ArrayList chartPanels, ArrayList charts) {
     if (frameNumber <= 3) {
-        print("DEBUG updateGraphs: frame=" + frameNumber + ", time=" + currentTime + ", roiValues.size=" + roiValues.size());
+        // print("DEBUG updateGraphs: frame=" + frameNumber + ", time=" + currentTime + ", roiValues.size=" + roiValues.size());
     }
     
     for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
@@ -3789,30 +3771,30 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
         
         if (graphType.equals("none") || datasets.get(graphIdx) == null) {
             if (frameNumber <= 3) {
-                print("  Graph " + (graphIdx + 1) + ": skipped (none or null dataset)");
+                // print("  Graph " + (graphIdx + 1) + ": skipped (none or null dataset)");
             }
             continue;
         }
         
         if (!shouldProcessFrame(frameNumber, vizRow)) {
             if (frameNumber <= 3) {
-                print("  Graph " + (graphIdx + 1) + ": filtered out by shouldProcessFrame");
+                // print("  Graph " + (graphIdx + 1) + ": filtered out by shouldProcessFrame");
             }
             continue;
         }
         
         if (frameNumber <= 3) {
-            print("  Graph " + (graphIdx + 1) + " (" + graphType + "): processing...");
+            // print("  Graph " + (graphIdx + 1) + " (" + graphType + "): processing...");
         }
         
         // Handle Intensity graphs
         if (graphType.equals("Intensity") || graphType.startsWith("Intensity ")) {
             if (frameNumber <= 3) {
-                print("    Entered Intensity handler block");
-                print("    graphIdx=" + graphIdx + ", currentTime=" + currentTime);
-                print("    chartPanels=" + (chartPanels != null ? "not null" : "NULL"));
-                print("    charts=" + (charts != null ? "not null" : "NULL"));
-                print("    datasets=" + (datasets != null ? "not null" : "NULL"));
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                // print("    chartPanels=" + (chartPanels != null ? "not null" : "NULL"));
+                // print("    charts=" + (charts != null ? "not null" : "NULL"));
+                // print("    datasets=" + (datasets != null ? "not null" : "NULL"));
             }
             
             final int gIdx = graphIdx;
@@ -3821,7 +3803,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             final ArrayList chartsCopy = charts;
             
             if (frameNumber <= 3) {
-                print("    Final variables assigned");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             }
             
             // Determine how many series to update based on mode
@@ -3829,19 +3811,19 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             ArrayList valuesToPlot = new ArrayList();
             
             if (frameNumber <= 3) {
-                print("    About to check processing mode: " + config.acqSettings.processingMode);
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             }
             
             boolean isSpatialMode = config.acqSettings.processingMode.equals("Spatial");
             if (frameNumber <= 3) {
-                print("    isSpatialMode=" + isSpatialMode + ", roiValues.size=" + roiValues.size());
+                // print("    isSpatialMode=" + isSpatialMode + ", roiValues.size=" + roiValues.size());
             }
             
             if (isSpatialMode) {
                 // Spatial mode: only plot source ROIs (first half)
                 numSeriesToUpdate = roiValues.size() / 2;
                 if (frameNumber <= 3) {
-                    print("    Spatial mode: numSeriesToUpdate=" + numSeriesToUpdate);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 for (int i = 0; i < numSeriesToUpdate; i++) {
                     valuesToPlot.add(roiValues.get(i));
@@ -3850,7 +3832,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                 // Temporal mode: plot all ROIs
                 numSeriesToUpdate = roiValues.size();
                 if (frameNumber <= 3) {
-                    print("    Temporal mode: numSeriesToUpdate=" + numSeriesToUpdate);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 valuesToPlot.addAll(roiValues);
             }
@@ -3859,30 +3841,30 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             final ArrayList valuesToPlotFinal = valuesToPlot;
             
             if (frameNumber <= 3) {
-                print("    Intensity: numSeriesToUpdate=" + numSeriesToUpdateFinal + ", valuesToPlot.size=" + valuesToPlotFinal.size());
+                // print("    Intensity: numSeriesToUpdate=" + numSeriesToUpdateFinal + ", valuesToPlot.size=" + valuesToPlotFinal.size());
             }
             
             SwingUtilities.invokeLater(new Runnable() {
                 public void run() {
                     try {
                         if (frameNumber <= 3) {
-                            print("    SwingUtilities running for Intensity");
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                         }
                         XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
                         if (frameNumber <= 3) {
-                            print("    Dataset has " + dataset.getSeriesCount() + " series");
+                            // print("    Dataset has " + dataset.getSeriesCount() + " series");
                         }
                         for (int roiIdx = 0; roiIdx < numSeriesToUpdateFinal; roiIdx++) {
                             XYSeries series = dataset.getSeries(roiIdx);
                             double value = ((Double) valuesToPlotFinal.get(roiIdx)).doubleValue();
                             series.add(time / 1000.0, value, true);  // Notify on each add
                             if (frameNumber <= 3 && roiIdx == 0) {
-                                print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
-                                print("      Series now has " + series.getItemCount() + " points");
+                                // print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
+                                // print("      Series now has " + series.getItemCount() + " points");
                             }
                         }
                         if (frameNumber <= 3) {
-                            print("      All points added to Intensity graph");
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                         }
                         if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
                             ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
@@ -3892,25 +3874,25 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                             if (frameNumber <= 3) {
                                 XYPlot plot = (XYPlot) chart.getPlot();
                                 XYSeriesCollection ds = (XYSeriesCollection) plot.getDataset();
-                                print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
+                                // print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
                             }
                             
                             // Force complete chart refresh
                             chart.fireChartChanged();
                             
-                            // Force complete panel refresh
-                            cp.restoreAutoBounds();
+                            // Force complete panel refresh (WITHOUT resetting zoom)
+                            // cp.restoreAutoBounds(); // REMOVED - this resets user zoom
                             cp.invalidate();
                             cp.validate();
                             cp.repaint();
                             if (frameNumber <= 3) {
-                                print("      ChartPanel full refresh called for Intensity graph");
+                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                             }
                         } else if (frameNumber <= 3) {
-                            print("      WARNING: ChartPanel is null for Intensity graph " + (gIdx + 1));
+                            // print("      WARNING: ChartPanel is null for Intensity graph " + (gIdx + 1));
                         }
                     } catch (Exception e) {
-                        print("ERROR updating Intensity graph " + (gIdx + 1) + ": " + e.getClass().getName() + ": " + e.getMessage());
+                        // print("ERROR updating Intensity graph " + (gIdx + 1) + ": " + e.getClass().getName() + ": " + e.getMessage());
                         e.printStackTrace();
                     }
                 }
@@ -3953,7 +3935,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             
             // Debug output every 10 ratio calculations
             if (frameNumber % 20 == 1) {  // After every 10 pairs (every 20 frames, starting at frame 1)
-                print("Frame " + frameNumber + " - Ratio calculated for Graph " + (graphIdx + 1) + ": " + ratioValues);
+                // print("Frame " + frameNumber + " - Ratio calculated for Graph " + (graphIdx + 1) + ": " + ratioValues);
             }
             
             // Use the timestamp from the more recent frame (the one we just processed)
@@ -3985,7 +3967,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                             cp.repaint();
                         }
                     } catch (Exception e) {
-                        print("ERROR updating Frame ratio graph " + (gIdx + 1) + ": " + e.getMessage());
+                        // print("ERROR updating Frame ratio graph " + (gIdx + 1) + ": " + e.getMessage());
                         e.printStackTrace();
                     }
                 }
@@ -3994,31 +3976,31 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
         // Handle Split Ratio graphs (Spatial mode)
         else if (graphType.startsWith("Split ratio")) {
             if (frameNumber <= 3) {
-                print("    Entered Split ratio handler, graphType=" + graphType);
-                print("    roiValues.size=" + roiValues.size());
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                // print("    roiValues.size=" + roiValues.size());
             }
             
             // Calculate spatial ratios directly from current frame's ROI values
             ArrayList ratioValues = calculateSpatialRatio(roiValues, graphType);
             
             if (frameNumber <= 3) {
-                print("    calculateSpatialRatio returned, ratioValues=" + (ratioValues != null ? ratioValues.size() + " values" : "NULL"));
+                // print("    calculateSpatialRatio returned, ratioValues=" + (ratioValues != null ? ratioValues.size() + " values" : "NULL"));
             }
             
             if (ratioValues == null || ratioValues.isEmpty()) {
                 if (frameNumber <= 3) {
-                    print("    Skipping Split ratio - no values");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 continue;
             }
             
             // Debug output periodically
             if (frameNumber % 10 == 1) {
-                print("Frame " + frameNumber + " - " + graphType + " calculated for Graph " + (graphIdx + 1) + ": " + ratioValues);
+                // print("Frame " + frameNumber + " - " + graphType + " calculated for Graph " + (graphIdx + 1) + ": " + ratioValues);
             }
             
             if (frameNumber <= 3) {
-                print("    About to create final variables for Split ratio");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             }
             
             final int gIdx = graphIdx;
@@ -4028,7 +4010,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             final ArrayList chartsCopy = charts;
             
             if (frameNumber <= 3) {
-                print("    Final variables created, about to call SwingUtilities.invokeLater");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             }
             
             SwingUtilities.invokeLater(new Runnable() {
@@ -4036,8 +4018,8 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                     try {
                         XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
                         if (frameNumber <= 3) {
-                            print("    SwingUtilities running for Split ratio, dataset has " + dataset.getSeriesCount() + " series");
-                            print("    ratioValsCopy.size=" + ratioValsCopy.size() + ", time=" + (time/1000.0));
+                            // print("    SwingUtilities running for Split ratio, dataset has " + dataset.getSeriesCount() + " series");
+                            // print("    ratioValsCopy.size=" + ratioValsCopy.size() + ", time=" + (time/1000.0));
                         }
                         for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
                             XYSeries series = dataset.getSeries(roiIdx);
@@ -4047,18 +4029,18 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                                 if (!Double.isNaN(value) && !Double.isInfinite(value)) {
                                     series.add(time / 1000.0, value, true);  // Notify on each add
                                     if (frameNumber <= 3 && roiIdx == 0) {
-                                        print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
-                                        print("      Series now has " + series.getItemCount() + " points");
+                                        // print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
+                                        // print("      Series now has " + series.getItemCount() + " points");
                                     }
                                 } else if (frameNumber <= 3) {
-                                    print("      Skipped NaN/Infinite value for ROI " + roiIdx);
+                                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                                 }
                             } else if (frameNumber <= 3) {
-                                print("      Skipped null or non-Double value for ROI " + roiIdx);
+                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                             }
                         }
                         if (frameNumber <= 3) {
-                            print("      All points added to Split ratio graph");
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                         }
                         if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
                             ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
@@ -4066,25 +4048,25 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                             if (frameNumber <= 3) {
                                 JFreeChart chart = cp.getChart();
                                 if (chart == null) {
-                                    print("      ERROR: ChartPanel.getChart() returned null!");
+                                    // print("      ERROR: ChartPanel.getChart() returned null!");
                                 } else {
                                     XYPlot plot = (XYPlot) chart.getPlot();
                                     XYSeriesCollection ds = (XYSeriesCollection) plot.getDataset();
-                                    print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
-                                    print("      Chart visible=" + chart.isNotify() + ", Panel visible=" + cp.isVisible() + ", Panel size=" + cp.getSize());
+                                    // print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
+                                    // print("      Chart visible=" + chart.isNotify() + ", Panel visible=" + cp.isVisible() + ", Panel size=" + cp.getSize());
                                     
                                     // Verify data is actually in the series
                                     XYSeries series0 = ds.getSeries(0);
                                     if (series0.getItemCount() > 0) {
                                         org.jfree.data.xy.XYDataItem item = series0.getDataItem(0);
-                                        print("      First data point: X=" + item.getX() + ", Y=" + item.getY());
+                                        // print("      First data point: X=" + item.getX() + ", Y=" + item.getY());
                                     }
                                     
                                     // Check renderer configuration
                                     org.jfree.chart.renderer.xy.XYItemRenderer renderer = plot.getRenderer();
-                                    print("      Renderer type: " + renderer.getClass().getName());
-                                    print("      Series 0 visible: " + renderer.getItemVisible(0, 0));
-                                    print("      Series 0 lines visible: " + renderer.getSeriesLinesVisible(0));
+                                    // print("      Renderer type: " + renderer.getClass().getName());
+                                    // print("      Series 0 visible: " + renderer.getItemVisible(0, 0));
+                                    // print("      Series 0 lines visible: " + renderer.getSeriesLinesVisible(0));
                                     
                                     // Force axis range recalculation
                                     org.jfree.chart.axis.ValueAxis domainAxis = plot.getDomainAxis();
@@ -4093,27 +4075,27 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                                     rangeAxis.configure();
                                     
                                     // Print axis ranges for debugging
-                                    print("      Domain axis range: " + domainAxis.getLowerBound() + " to " + domainAxis.getUpperBound());
-                                    print("      Range axis range: " + rangeAxis.getLowerBound() + " to " + rangeAxis.getUpperBound());
+                                    // print("      Domain axis range: " + domainAxis.getLowerBound() + " to " + domainAxis.getUpperBound());
+                                    // print("      Range axis range: " + rangeAxis.getLowerBound() + " to " + rangeAxis.getUpperBound());
                                     
                                     // Force complete chart refresh
                                     chart.fireChartChanged();
                                 }
                             }
-                            // Force complete panel refresh
-                            cp.restoreAutoBounds();
+                            // Force complete panel refresh (WITHOUT resetting zoom)
+                            // cp.restoreAutoBounds(); // REMOVED - this resets user zoom
                             cp.invalidate();
                             cp.validate();
                             cp.repaint();
                             if (frameNumber <= 3) {
-                                print("      ChartPanel full refresh called for Split ratio graph");
-                                print("      SwingUtilities.invokeLater completed successfully");
+                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                             }
                         } else if (frameNumber <= 3) {
-                            print("      WARNING: ChartPanel is null for Split ratio graph " + (gIdx + 1));
+                            // print("      WARNING: ChartPanel is null for Split ratio graph " + (gIdx + 1));
                         }
                     } catch (Exception e) {
-                        print("ERROR updating Split ratio graph " + (gIdx + 1) + ": " + e.getMessage());
+                        // print("ERROR updating Split ratio graph " + (gIdx + 1) + ": " + e.getMessage());
                         e.printStackTrace();
                     }
                 }
@@ -4145,15 +4127,14 @@ ImageProcessor taggedImageToProcessor(Object taggedImg) {
             return ip;
         }
     } catch (Exception e) {
-        print("WARNING: Could not convert image: " + e.getMessage());
+        // print("WARNING: Could not convert image: " + e.getMessage());
     }
     return null;
 }
 
 // ==================== Circular Buffer Setup ====================
 void setupCircularBuffer() {
-    print("========== CIRCULAR BUFFER SETUP ==========");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Calculate memory allocation
     long maxMem = Runtime.getRuntime().maxMemory();
     long bufferMem = (long)(maxMem * 0.75);
@@ -4169,14 +4150,13 @@ void setupCircularBuffer() {
         long bytesPerImage = imageWidth * imageHeight * bytesPerPixel;
         int approxCapacity = (int)(bufferMem / bytesPerImage);
         
-        print("Buffer size: " + bufferSizeMB + " MB");
-        print("Image dimensions: " + imageWidth + " x " + imageHeight);
-        print("Bytes per pixel: " + bytesPerPixel);
-        print("Approximate capacity: " + approxCapacity + " frames");
-        print("==========================================");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     } catch (Exception e) {
-        print("ERROR: Failed to setup circular buffer: " + e.getMessage());
+        // print("ERROR: Failed to setup circular buffer: " + e.getMessage());
         e.printStackTrace();
     }
 }
@@ -4215,12 +4195,12 @@ void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
                     ip.setPixels((short[]) pixels);
                 }
             } catch (Exception e) {
-                print("WARNING: Could not extract pixels from TaggedImage: " + e.getMessage());
+                // print("WARNING: Could not extract pixels from TaggedImage: " + e.getMessage());
             }
         }
         
         if (ip == null) {
-            print("WARNING: Could not create ImageProcessor for frame " + frameNumber);
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             return;
         }
         
@@ -4242,16 +4222,16 @@ void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
         ij.io.FileSaver fs = new ij.io.FileSaver(imp);
         boolean success = fs.saveAsTiff(filepath);
         if (!success) {
-            print("WARNING: Failed to save frame " + frameNumber);
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         }
         
         // Log every 100 frames
         if (frameNumber % 100 == 0) {
-            print("Saved frame " + frameNumber + " to disk");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         }
         
     } catch (Exception e) {
-        print("ERROR saving frame " + frameNumber + ": " + e.getClass().getName() + ": " + e.getMessage());
+        // print("ERROR saving frame " + frameNumber + ": " + e.getClass().getName() + ": " + e.getMessage());
         e.printStackTrace();
     }
 }
@@ -4261,12 +4241,11 @@ void convertTiffsToStack(String experimentFolder) {
     import ij.ImageStack;
     import ij.io.FileSaver;
     
-    print("\n========== CONVERTING TIFFS TO STACK ==========");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     try {
         File expFolder = new File(experimentFolder);
         if (!expFolder.exists() || !expFolder.isDirectory()) {
-            print("ERROR: Experiment folder does not exist: " + experimentFolder);
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             return;
         }
         
@@ -4274,7 +4253,7 @@ void convertTiffsToStack(String experimentFolder) {
         File imagesFolder = new File(expFolder, "images");
         File searchFolder = imagesFolder.exists() ? imagesFolder : expFolder;
         
-        print("Searching for TIFF files in: " + searchFolder.getAbsolutePath());
+        // print("Searching for TIFF files in: " + searchFolder.getAbsolutePath());
         
         // Find all Frame_*.tif files
         File[] tiffFiles = searchFolder.listFiles(new java.io.FilenameFilter() {
@@ -4284,7 +4263,7 @@ void convertTiffsToStack(String experimentFolder) {
         });
         
         if (tiffFiles == null || tiffFiles.length == 0) {
-            print("No TIFF files found to convert");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             return;
         }
         
@@ -4292,20 +4271,18 @@ void convertTiffsToStack(String experimentFolder) {
         java.util.Arrays.sort(tiffFiles);
         
         int numFrames = tiffFiles.length;
-        print("Found " + numFrames + " TIFF files");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Calculate actual total file size
         long totalFileSize = 0;
         for (int i = 0; i < tiffFiles.length; i++) {
             totalFileSize += tiffFiles[i].length();
         }
         long totalFileSizeMB = totalFileSize / (1024 * 1024);
-        print("Total file size on disk: " + totalFileSizeMB + " MB");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Load first image to get dimensions (for logging)
         ImagePlus firstImp = IJ.openImage(tiffFiles[0].getAbsolutePath());
         if (firstImp == null) {
-            print("ERROR: Could not open first TIFF file");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             return;
         }
         
@@ -4313,13 +4290,12 @@ void convertTiffsToStack(String experimentFolder) {
         int height = firstImp.getHeight();
         int bitDepth = firstImp.getBitDepth();
         
-        print("Image dimensions: " + width + "x" + height + ", " + bitDepth + "-bit");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Estimate memory requirement based on actual file size
         // Add 20% overhead for ImageStack structure and temporary objects during loading
         long requiredMemoryBytes = (long)(totalFileSize * 1.2);
         long requiredMemoryMB = requiredMemoryBytes / (1024 * 1024);
-        print("Estimated memory required: " + requiredMemoryMB + " MB (file size + 20% overhead)");
+        // print("Estimated memory required: " + requiredMemoryMB + " MB (file size + 20% overhead)");
         
         // Check available memory
         Runtime runtime = Runtime.getRuntime();
@@ -4333,24 +4309,22 @@ void convertTiffsToStack(String experimentFolder) {
         long availableMB = availableMemory / (1024 * 1024);
         long maxMB = maxMemory / (1024 * 1024);
         
-        print("JVM Memory Status:");
-        print("  Max memory: " + maxMB + " MB");
-        print("  Available memory: " + availableMB + " MB");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Use 60% of available memory as safety margin
         // (need extra space for overhead, intermediate objects, etc.)
         long safeAvailableBytes = (long)(availableMemory * 0.6);
         long safeAvailableMB = safeAvailableBytes / (1024 * 1024);
         
-        print("  Safe usable memory (60%): " + safeAvailableMB + " MB");
+        // print("  Safe usable memory (60%): " + safeAvailableMB + " MB");
         
         // Check if we have enough memory
         if (requiredMemoryBytes > safeAvailableBytes) {
-            print("WARNING: Insufficient memory to create stack");
-            print("  Required: " + requiredMemoryMB + " MB");
-            print("  Available (safe): " + safeAvailableMB + " MB");
-            print("Keeping individual TIFF files");
-            
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            // print("  Available (safe): " + safeAvailableMB + " MB");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             // Show error popup on EDT
             final long reqMB = requiredMemoryMB;
             final long safeMB = safeAvailableMB;
@@ -4368,23 +4342,22 @@ void convertTiffsToStack(String experimentFolder) {
             return;
         }
         
-        print("Memory check passed - proceeding with stack creation");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Create stack
         ImageStack stack = new ImageStack(width, height);
         
-        print("Loading " + numFrames + " frames into stack...");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         for (int i = 0; i < tiffFiles.length; i++) {
             ImagePlus imp = IJ.openImage(tiffFiles[i].getAbsolutePath());
             if (imp == null) {
-                print("WARNING: Could not load frame " + (i+1) + ", skipping");
+                // print("WARNING: Could not load frame " + (i+1) + ", skipping");
                 continue;
             }
             stack.addSlice("Frame_" + (i+1), imp.getProcessor());
             
             // Progress update every 100 frames
             if ((i+1) % 100 == 0 || i == tiffFiles.length - 1) {
-                print("Loaded " + (i+1) + "/" + numFrames + " frames");
+                // print("Loaded " + (i+1) + "/" + numFrames + " frames");
             }
         }
         
@@ -4393,52 +4366,47 @@ void convertTiffsToStack(String experimentFolder) {
         
         // Save stack to experiment folder (not images subfolder)
         String stackPath = experimentFolder + File.separator + "Image_Stack.tif";
-        print("Saving stack to: " + stackPath);
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         FileSaver fs = new FileSaver(stackImp);
         boolean success = fs.saveAsTiffStack(stackPath);
         
         if (!success) {
-            print("ERROR: Failed to save stack");
-            print("Keeping individual TIFF files");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             return;
         }
         
-        print("Stack saved successfully");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Delete individual TIFF files
-        print("Deleting individual TIFF files...");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         int deletedCount = 0;
         for (int i = 0; i < tiffFiles.length; i++) {
             if (tiffFiles[i].delete()) {
                 deletedCount++;
             } else {
-                print("WARNING: Could not delete " + tiffFiles[i].getName());
+                // print("WARNING: Could not delete " + tiffFiles[i].getName());
             }
         }
         
-        print("Deleted " + deletedCount + "/" + numFrames + " individual files");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Remove images subfolder if it's empty
         File imagesFolder = new File(expFolder, "images");
         if (imagesFolder.exists() && imagesFolder.isDirectory()) {
             File[] remainingFiles = imagesFolder.listFiles();
             if (remainingFiles == null || remainingFiles.length == 0) {
                 if (imagesFolder.delete()) {
-                    print("Removed empty images subfolder");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 } else {
-                    print("WARNING: Could not remove images subfolder");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
             }
         }
         
-        print("========== STACK CONVERSION COMPLETE ==========\n");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     } catch (Exception e) {
-        print("ERROR during stack conversion: " + e.getClass().getName() + ": " + e.getMessage());
+        // print("ERROR during stack conversion: " + e.getClass().getName() + ": " + e.getMessage());
         e.printStackTrace();
-        print("Keeping individual TIFF files");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         SwingUtilities.invokeLater(new Runnable() {
             public void run() {
                 JOptionPane.showMessageDialog(null,
@@ -4452,34 +4420,32 @@ void convertTiffsToStack(String experimentFolder) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels) {
-    print("========== CIRCULAR BUFFER ACQUISITION START ==========");
-    
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame) {
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
-        print("ERROR: No experiment folder set! Cannot save images.");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
     File expFolder = new File(config.experimentFolder);
     if (!expFolder.exists()) {
-        print("ERROR: Experiment folder does not exist: " + config.experimentFolder);
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
     if (!expFolder.canWrite()) {
-        print("ERROR: Cannot write to experiment folder: " + config.experimentFolder);
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
-    print("Images will be saved to: " + config.experimentFolder);
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Get stored ROIs from config
     if (config.storedROIs == null || config.storedROIs.isEmpty()) {
-        print("ERROR: No ROIs stored!");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
-    print("Using " + config.storedROIs.size() + " stored ROIs");
+    // print("Using " + config.storedROIs.size() + " stored ROIs");
     
     // Setup circular buffer
     setupCircularBuffer();
@@ -4497,9 +4463,9 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     try {
         mmc.setConfig(config.cameraConfigGroup, config.cameraTriggerConfig);
         Thread.sleep(100); // Allow config to settle
-        print("Camera set to trigger mode: " + config.cameraTriggerConfig);
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     } catch (Exception e) {
-        print("ERROR: Failed to set camera config: " + e.getMessage());
+        // print("ERROR: Failed to set camera config: " + e.getMessage());
         return;
     }
     
@@ -4509,13 +4475,13 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     boolean stopOnOverflow = false; // Continuous mode
     
     try {
-        print("Starting sequence acquisition...");
-        print("Number of frames: " + numFrames);
-        print("Stop on overflow: " + stopOnOverflow);
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         mmc.startSequenceAcquisition(numFrames, 0, stopOnOverflow);
-        print("Acquisition started!");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     } catch (Exception e) {
-        print("ERROR: Failed to start sequence acquisition: " + e.getMessage());
+        // print("ERROR: Failed to start sequence acquisition: " + e.getMessage());
         e.printStackTrace();
         return;
     }
@@ -4550,14 +4516,14 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
             if (bufferUsage > 0.90) {
                 long currentTime = System.currentTimeMillis();
                 if (currentTime - lastWarningTime > 5000) {
-                    print("CRITICAL: Buffer at " + (int)(bufferUsage * 100) + "% (" + remaining + "/" + approxCapacity + " frames)");
-                    print("Processing rate may be too slow!");
+                    // print("CRITICAL: Buffer at " + (int)(bufferUsage * 100) + "% (" + remaining + "/" + approxCapacity + " frames)");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     lastWarningTime = currentTime;
                 }
             } else if (bufferUsage > 0.75) {
                 long currentTime = System.currentTimeMillis();
                 if (currentTime - lastWarningTime > 10000) {
-                    print("WARNING: Buffer at " + (int)(bufferUsage * 100) + "% (" + remaining + "/" + approxCapacity + " frames)");
+                    // print("WARNING: Buffer at " + (int)(bufferUsage * 100) + "% (" + remaining + "/" + approxCapacity + " frames)");
                     lastWarningTime = currentTime;
                 }
             }
@@ -4565,9 +4531,9 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
             // Check for overflow
             if (mmc.isBufferOverflowed()) {
                 if (!overflowDetected) {
-                    print("!!! BUFFER OVERFLOW DETECTED !!!");
-                    print("Frames were lost at frame ~" + framesProcessed);
-                    print("Buffer depth at overflow: " + remaining + " frames");
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     overflowDetected = true;
                 }
             }
@@ -4608,7 +4574,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                             ip.setPixels((short[]) pixels);
                         }
                     } catch (Exception e) {
-                        print("WARNING: Could not convert image: " + e.getMessage());
+                        // print("WARNING: Could not convert image: " + e.getMessage());
                     }
                     
                     if (ip != null) {
@@ -4626,7 +4592,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         // Only print every 10th frame to reduce output
                         if (framesProcessed % 10 == 0) {
                             for (int roiIdx = 0; roiIdx < roiValues.size(); roiIdx++) {
-                                print("ROI" + (roiIdx + 1) + " [Frame " + framesProcessed + "]: " + roiValues.get(roiIdx));
+                                // print("ROI" + (roiIdx + 1) + " [Frame " + framesProcessed + "]: " + roiValues.get(roiIdx));
                             }
                         }
                         
@@ -4642,7 +4608,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         
                         // Progress update
                         if (framesProcessed % 100 == 0) {
-                            print("Processed: " + framesProcessed + " frames, Buffer: " + remaining);
+                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                         }
                     }
                 }
@@ -4655,13 +4621,13 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                     currentTime - noFrameWarningTime > NO_FRAME_WARNING_INTERVAL) {
                     
                     if (!noFrameWarningShown) {
-                        print("\n!!! WARNING: No frames received for " + (timeSinceLastFrame / 1000) + " seconds !!!");
-                        print("Circular buffer acquisition is waiting for HARDWARE TRIGGERS.");
-                        print("Possible causes:");
-                        print("  1. Using DEMO CAMERA - Set USE_CIRCULAR_BUFFER = false in config");
-                        print("  2. Arduino not connected or not sending triggers");
-                        print("  3. Camera trigger mode not configured correctly");
-                        print("TIP: Press 'Quit' button to stop acquisition.\n");
+                        // print("\n!!! WARNING: No frames received for " + (timeSinceLastFrame / 1000) + " seconds !!!");
+                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                         noFrameWarningShown = true;
                     }
                     noFrameWarningTime = currentTime;
@@ -4671,10 +4637,10 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
             }
             
         } catch (InterruptedException ie) {
-            print("Acquisition interrupted");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             break;
         } catch (Exception e) {
-            print("ERROR in acquisition loop: " + e.getMessage());
+            // print("ERROR in acquisition loop: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -4682,81 +4648,91 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     // Stop acquisition if still running
     try {
         if (mmc.isSequenceRunning()) {
-            print("Stopping sequence acquisition...");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             mmc.stopSequenceAcquisition();
         }
     } catch (Exception e) {
-        print("ERROR stopping acquisition: " + e.getMessage());
+        // print("ERROR stopping acquisition: " + e.getMessage());
     }
     
     // Final report
-    print("\n========== ACQUISITION COMPLETE ==========");
-    print("Total frames processed: " + framesProcessed);
-    print("Maximum buffer depth: " + maxBufferDepth + " frames");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     if (approxCapacity > 0) {
-        print("Peak buffer usage: " + (int)((double)maxBufferDepth / approxCapacity * 100) + "%");
+        // print("Peak buffer usage: " + (int)((double)maxBufferDepth / approxCapacity * 100) + "%");
     }
     if (overflowDetected) {
-        print("WARNING: Buffer overflow occurred during acquisition!");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     } else {
-        print("No buffer overflows detected.");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     }
-    print("==========================================");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Convert to stack if requested
     if (config.acqSettings.convertToStack) {
         convertTiffsToStack(config.experimentFolder);
     }
+    
+    // Dispose the acquisition frame after acquisition completes
+    if (acqFrame != null) {
+        try {
+            SwingUtilities.invokeAndWait(new Runnable() {
+                public void run() {
+                    acqFrame.dispose();
+                }
+            });
+        } catch (Exception ex) {
+            System.err.println("ERROR disposing acquisition frame (Circular Buffer Mode):");
+            ex.printStackTrace();
+        }
+    }
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels) {
-    print("========== ACQUISITION START ==========");
-    
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame) {
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
-        print("ERROR: No experiment folder set! Cannot save images.");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
     // Get stored ROIs from config (no need for visible ROI Manager)
     if (config.storedROIs == null || config.storedROIs.isEmpty()) {
-        print("ERROR: No ROIs stored!");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
-    print("Using " + config.storedROIs.size() + " stored ROIs");
+    // print("Using " + config.storedROIs.size() + " stored ROIs");
     
     // Parse acquisition settings from table
     ArrayList sequence = config.acqSettings.sequenceRows;
     if (sequence == null || sequence.isEmpty()) {
-        print("ERROR: No acquisition settings defined!");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
-    print("Executing " + sequence.size() + " step sequence");
+    // print("Executing " + sequence.size() + " step sequence");
     
     // Debug: Show configuration state
-    print("\n=== ACQUISITION MODE CONFIGURATION ===");
-    print("config.useCircularBuffer (from file): " + config.useCircularBuffer);
-    print("config.useSimpleSnapMode (from checkbox): " + config.useSimpleSnapMode);
-    print("Actual mode being used: " + (config.useSimpleSnapMode ? "Simple Snap Mode" : "Full Sequence Mode"));
-    print("======================================\n");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    // print("config.useCircularBuffer (from file): " + config.useCircularBuffer);
+    // print("config.useSimpleSnapMode (from checkbox): " + config.useSimpleSnapMode);
+    // print("Actual mode being used: " + (config.useSimpleSnapMode ? "Simple Snap Mode" : "Full Sequence Mode"));
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Check if Simple Snap Mode is enabled
     if (config.useSimpleSnapMode) {
-        print("*** SIMPLE SNAP MODE ENABLED ***");
-        print("Using current MM GUI settings for camera/channel/exposure");
-        print("Using frame interval from Acquisition Settings table for timing");
-        print("Processing first sequence row only for frame interval parameter");
-        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         // Get timing parameters from first row only
         ArrayList firstRow = (ArrayList) sequence.get(0);
         
         // Debug: print what we have
-        print("\nDEBUG: First row size = " + firstRow.size());
+        // print("\nDEBUG: First row size = " + firstRow.size());
         for (int i = 0; i < firstRow.size(); i++) {
             Object val = firstRow.get(i);
-            print("  Column " + i + ": '" + val + "' (type: " + (val != null ? val.getClass().getName() : "null") + ")");
+            // print("  Column " + i + ": '" + val + "' (type: " + (val != null ? val.getClass().getName() : "null") + ")");
         }
         
         // Note: Column 0 is row number, actual data starts at column 1
@@ -4764,34 +4740,43 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         // In Simple Snap Mode: ONLY use Frame Interval from table, ignore all other settings
         String intervalStr = (String) firstRow.get(3);
         
-        print("\nReading Frame Interval from table (other settings from GUI):");
-        print("  Interval: '" + intervalStr + "'");
-        
+        // print("\nReading Frame Interval from table (other settings from GUI):");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         int frameIntervalMs = 1000; // Default
         int maxFrames = 10000; // Default to large number for continuous acquisition
         
         try {
             frameIntervalMs = Integer.parseInt(intervalStr.trim());
-            print("  Parsed interval: " + frameIntervalMs + "ms");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         } catch (Exception e) {
-            print("  ERROR parsing interval: " + e.getMessage() + ", using default " + frameIntervalMs + "ms");
+            // print("  ERROR parsing interval: " + e.getMessage() + ", using default " + frameIntervalMs + "ms");
         }
         
         // Get current exposure from GUI (don't override it)
         double currentExposure = mmc.getExposure();
-        print("\nUsing GUI settings:");
-        print("  Exposure: " + currentExposure + "ms (from GUI)");
-        print("  Channel/Camera: Current GUI configuration (not switching)");
-        print("  Max Frames: " + maxFrames + " (continuous until stopped)");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // print("  Exposure: " + currentExposure + "ms (from GUI)");
+        // print("  Channel/Camera: Current GUI configuration (not switching)");
+        // print("  Max Frames: " + maxFrames + " (continuous until stopped)");
         
         int globalFrameNumber = 0;
         long lastGuiUpdateTime = 0;
         final long GUI_UPDATE_INTERVAL_MS = 250;
         
-        print("\nStarting Simple Snap Mode acquisition:");
-        print("  Frame interval: " + frameIntervalMs + "ms (from table)");
-        print("  Max frames: " + maxFrames);
-        print("  Mode: Timed acquisition (NOT rolling mode - will wait between frames)");
+        // Track actual frame intervals for performance warning
+        long maxActualFrameInterval = 0;
+        long totalActualFrameInterval = 0;
+        int frameIntervalCount = 0;
+        long lastFrameTime = 0;
+        
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // print("  Frame interval: " + frameIntervalMs + "ms (from table)");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // print("  Mode: Timed acquisition (NOT rolling mode - will wait between frames)");
+        
+        // Make copies as final for use in popup messages  
+        final int finalFrameIntervalMs = frameIntervalMs;
+        final int finalMaxFrames = maxFrames;
         
         // Simple continuous snapping loop
         while (running[0] && globalFrameNumber < maxFrames) {
@@ -4799,127 +4784,239 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 globalFrameNumber++;
                 long frameStartTime = System.currentTimeMillis();
                 
+                // Track actual frame interval for warning
+                if (lastFrameTime > 0) {
+                    long actualInterval = frameStartTime - lastFrameTime;
+                    if (actualInterval > maxActualFrameInterval) {
+                        maxActualFrameInterval = actualInterval;
+                    }
+                    totalActualFrameInterval += actualInterval;
+                    frameIntervalCount++;
+                }
+                lastFrameTime = frameStartTime;
+                
                 // Debug: Log first few frames
-                if (globalFrameNumber <= 3) {
-                    print("DEBUG: Starting frame " + globalFrameNumber + " capture");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
                 // Set camera configuration and snap image
-                if (globalFrameNumber <= 3) {
-                    print("  Setting camera snap config: " + config.cameraSnapConfig);
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
                 
-                if (globalFrameNumber <= 3) {
-                    print("  About to call mm.live().snap()");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // print("  About to call mm.live().snap()");
                 }
-                List images = mm.live().snap(false);
                 
-                if (globalFrameNumber <= 3) {
-                    print("  Snap completed, got " + (images != null ? images.size() : "null") + " images");
+                // WARNING: This is a BLOCKING call with NO TIMEOUT
+                // If the camera/USB is too slow or stalled, this will HANG INDEFINITELY
+                // and cause the entire script to freeze.
+                // The frame interval check below only works if snap() returns successfully.
+                long snapStartTime = System.currentTimeMillis();
+                List images = mm.live().snap(false);
+                long snapDuration = System.currentTimeMillis() - snapStartTime;
+                
+                // If snap took longer than frame interval, we're falling behind
+                // But we DON'T break - we just skip the wait and continue as fast as possible
+                if (snapDuration > frameIntervalMs) {
+                    // Camera is too slow for the requested frame interval
+                    // The script will just run at maximum camera speed instead of breaking
+                }
+                
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // print("  Snap completed, got " + (images != null ? images.size() : "null") + " images");
                 }
                 
                 if (images == null || images.isEmpty()) {
-                    print("WARNING: Failed to snap image at frame " + globalFrameNumber);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     Thread.sleep(1000);
                     continue;
                 }
                 
                 org.micromanager.data.Image image = images.get(0);
-                if (globalFrameNumber <= 3) {
-                    print("  Got image, creating processor");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 ImageProcessor ip = mm.data().ij().createProcessor(image);
                 
-                if (globalFrameNumber <= 3) {
-                    print("  Processor created, saving to disk");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
                 // Save image to disk (always)
                 saveImageAsTiff(image, globalFrameNumber, config.experimentFolder);
                 
-                if (globalFrameNumber <= 3) {
-                    print("  Image saved");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
-                // Progress indicator every 10 frames
-                if (globalFrameNumber % 10 == 0) {
-                    print("Frame " + globalFrameNumber + " captured");
+                // Progress indicator every 25 frames (reduced from every 10)
+                if (globalFrameNumber % 25 == 0) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
                 long currentTime = System.currentTimeMillis() - startTime;
                 boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                 
-                if (globalFrameNumber <= 3) {
-                    print("  currentTime=" + currentTime + ", lastGuiUpdateTime=" + lastGuiUpdateTime + ", shouldUpdateGui=" + shouldUpdateGui);
-                    print("  config.acqSettings.livePics=" + config.acqSettings.livePics);
-                    print("  Will update live view: " + ((shouldUpdateGui || globalFrameNumber <= 3) && config.acqSettings.livePics));
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    // print("  Will update live view: " + ((shouldUpdateGui || globalFrameNumber <= 3) && config.acqSettings.livePics));
                 }
                 
                 // Update live view if enabled (always update first few frames for debugging)
-                if ((shouldUpdateGui || globalFrameNumber <= 3) && config.acqSettings.livePics) {
+                if ((shouldUpdateGui || (DEBUG_VERBOSE && globalFrameNumber <= 3)) && config.acqSettings.livePics) {
                     updateLiveView(liveViewPanel, ip, chartsList);
                 }
                 
-                if (globalFrameNumber <= 3) {
-                    print("  About to measure ROIs");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
                 // Measure ALL ROIs and build data row
                 ArrayList roiValues = measureROIs(ip);
                 
-                if (globalFrameNumber <= 3) {
-                    print("  ROIs measured, roiValues.size=" + roiValues.size());
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // print("  ROIs measured, roiValues.size=" + roiValues.size());
                 }
                 
                 ArrayList dataRow = buildDataRow(globalFrameNumber, currentTime, roiValues);
                 dataRows.add(dataRow);
                 
-                if (globalFrameNumber <= 3) {
-                    print("  Data row built, about to update graphs");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
                 // Update graphs (throttled, but always update first few frames)
-                if (shouldUpdateGui || globalFrameNumber <= 3) {
+                if (shouldUpdateGui || (DEBUG_VERBOSE && globalFrameNumber <= 3)) {
                     updateGraphs(datasets, globalFrameNumber, currentTime, roiValues, chartPanels, chartsList);
                     lastGuiUpdateTime = currentTime;
                 }
                 
                 // Debug: Log first few frames
-                if (globalFrameNumber <= 3) {
-                    print("DEBUG: Completed frame " + globalFrameNumber + " processing");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
-                // Wait for frame interval to maintain timing
+                // Timing logic for frame interval:
+                // - Calculate how long this frame took (snap + processing + GUI updates)
+                // - If faster than frameIntervalMs: sleep for the remaining time
+                // - If slower than frameIntervalMs: NO SLEEP, just continue immediately
+                // This means the script will acquire as fast as possible if camera is too slow
                 long frameElapsed = System.currentTimeMillis() - frameStartTime;
                 long waitTime = frameIntervalMs - frameElapsed;
                 
-                if (globalFrameNumber <= 3) {
-                    print("  Frame processing took: " + frameElapsed + "ms");
-                    print("  Target interval: " + frameIntervalMs + "ms");
-                    print("  Waiting: " + (waitTime > 0 ? waitTime : 0) + "ms before next frame");
+                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    // print("  Waiting: " + (waitTime > 0 ? waitTime : 0) + "ms before next frame");
                 }
                 
                 if (waitTime > 0) {
-                    Thread.sleep(waitTime);
-                } else if (globalFrameNumber <= 3) {
-                    print("  WARNING: Frame processing took longer than interval! No wait needed.");
+                    Thread.sleep(waitTime);  // Sleep to maintain requested frame interval
+                } else {
+                    // waitTime <= 0 means we're falling behind - just continue immediately
+                    // This prevents breaking and allows acquisition at maximum camera speed
                 }
                 
             } catch (InterruptedException ie) {
-                print("Acquisition interrupted (InterruptedException)");
+                // print("Acquisition interrupted (InterruptedException)");
                 break;
             } catch (Exception e) {
-                print("ERROR in simple snap loop at frame " + globalFrameNumber + ": " + e.getClass().getName() + ": " + e.getMessage());
+                // print("ERROR in simple snap loop at frame " + globalFrameNumber + ": " + e.getClass().getName() + ": " + e.getMessage());
                 e.printStackTrace();
-                print("Continuing to next frame...");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 // Don't break - try to continue
             }
         }
         
-        print("\n========== ACQUISITION COMPLETE ==========");
-        print("Total frames captured: " + globalFrameNumber);
-        print("Total data rows: " + dataRows.size());
+
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // print("Total data rows: " + dataRows.size());
+        
+        // Wrap statistics display and frame disposal in try-finally to guarantee cleanup
+        try {
+            // Make final copies for use in popup messages
+            final int finalGlobalFrameNumber = globalFrameNumber;
+            final int finalFrameIntervalCount = frameIntervalCount;
+            final long finalTotalActualFrameInterval = totalActualFrameInterval;
+            final long finalMaxActualFrameInterval = maxActualFrameInterval;
+            
+            // Always show acquisition completion statistics
+            String statsMsg;
+            int msgType;
+            String dialogTitle;
+            
+            if (finalFrameIntervalCount > 0) {
+                long avgActualInterval = finalTotalActualFrameInterval / finalFrameIntervalCount;
+                
+                // Show warning if actual interval was significantly slower (>10% slower)
+                if (avgActualInterval > finalFrameIntervalMs * 1.1) {
+                    // Calculate percentage difference
+                    double percentSlower = ((double)(avgActualInterval - finalFrameIntervalMs) * 100.0) / (double)finalFrameIntervalMs;
+                    // Round to 1 decimal place
+                    long percentSlowerRounded = Math.round(percentSlower * 10.0) / 10;
+                    
+                    statsMsg = "Frame interval performance warning:\n\n" +
+                        "Set Frame Interval: " + finalFrameIntervalMs + " ms\n" +
+                        "Actual Average Frame Interval: " + avgActualInterval + " ms (" + 
+                        (Math.round(percentSlower * 10.0) / 10.0) + "% slower)\n" +
+                        "Maximum Frame Interval: " + finalMaxActualFrameInterval + " ms\n\n" +
+                        "Your camera could not keep up with the requested frame rate.\n" +
+                        "For faster acquisition, consider using TTL hardware triggering.";
+                    msgType = JOptionPane.WARNING_MESSAGE;
+                    dialogTitle = "Frame Rate Warning";
+                } else {
+                    // Good performance
+                    statsMsg = "Acquisition Complete\n\n" +
+                        "Total Frames: " + finalGlobalFrameNumber + "\n" +
+                        "Set Frame Interval: " + finalFrameIntervalMs + " ms\n" +
+                        "Actual Average: " + avgActualInterval + " ms\n" +
+                        "Maximum: " + finalMaxActualFrameInterval + " ms";
+                    msgType = JOptionPane.INFORMATION_MESSAGE;
+                    dialogTitle = "Acquisition Complete";
+                }
+            } else {
+                // Less than 2 frames captured
+                statsMsg = "Acquisition Stopped\n\n" +
+                    "Total Frames: " + finalGlobalFrameNumber + "\n\n" +
+                    "(Need at least 2 frames to calculate timing statistics)";
+                msgType = JOptionPane.INFORMATION_MESSAGE;
+                dialogTitle = "Acquisition Stopped";
+            }
+            
+            // Show popup on EDT - use modal dialog to block until dismissed
+            final String finalStatsMsg = statsMsg;
+            final int finalMsgType = msgType;
+            final String finalDialogTitle = dialogTitle;
+            
+            SwingUtilities.invokeAndWait(new Runnable() {
+                public void run() {
+                    JOptionPane.showMessageDialog(null, finalStatsMsg, 
+                        finalDialogTitle, finalMsgType);
+                }
+            });
+        } catch (Exception ex) {
+            System.err.println("ERROR showing statistics popup:");
+            ex.printStackTrace();
+        } finally {
+            // ALWAYS dispose the acquisition frame, even if popup fails
+            if (acqFrame != null) {
+                try {
+                    SwingUtilities.invokeAndWait(new Runnable() {
+                        public void run() {
+                            acqFrame.dispose();
+                        }
+                    });
+                } catch (Exception ex) {
+                    System.err.println("ERROR disposing acquisition frame:");
+                    ex.printStackTrace();
+                }
+            }
+        }
         
         // Convert to stack if requested
         if (config.acqSettings.convertToStack) {
@@ -4930,16 +5027,15 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
     }
     
     // ========== ADVANCED MODE: Full Sequence Logic ==========
-    print("*** ADVANCED SEQUENCE MODE ***");
-    print("Executing " + sequence.size() + " step sequence");
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    // print("Executing " + sequence.size() + " step sequence");
     
     int globalFrameNumber = 0; // Total frame counter across all steps
     int currentStepIndex = 0;  // Current step in sequence (0-based)
     long lastGuiUpdateTime = 0;
     final long GUI_UPDATE_INTERVAL_MS = 250;
     
-    print("Starting sequence acquisition...");
-    
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Main acquisition loop with sequence logic
     while (running[0]) {
         try {
@@ -4947,9 +5043,9 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
             ArrayList stepRow = (ArrayList) sequence.get(currentStepIndex);
             
             // Debug: print what we got
-            print("\nDEBUG: Step row size = " + stepRow.size());
+            // print("\nDEBUG: Step row size = " + stepRow.size());
             for (int i = 0; i < stepRow.size(); i++) {
-                print("  Column " + i + ": '" + stepRow.get(i) + "'");
+                // print("  Column " + i + ": '" + stepRow.get(i) + "'");
             }
             
             // Note: Column 0 is row number, actual data starts at column 1
@@ -4968,24 +5064,23 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
             try {
                 exposureMs = Integer.parseInt(exposureStr.trim());
             } catch (Exception e) {
-                print("WARNING: Could not parse exposure '" + exposureStr + "', using default " + exposureMs);
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             }
             
             try {
                 frameIntervalMs = Integer.parseInt(intervalStr.trim());
             } catch (Exception e) {
-                print("WARNING: Could not parse interval '" + intervalStr + "', using default " + frameIntervalMs);
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             }
             
             try {
                 framesInStep = Integer.parseInt(framesStr.trim());
             } catch (Exception e) {
-                print("WARNING: Could not parse frames '" + framesStr + "', using default " + framesInStep);
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             }
             
-            print("\n--- Step " + (currentStepIndex + 1) + ": " + channelName + " ---");
-            print("Exposure: " + exposureMs + "ms, Interval: " + frameIntervalMs + "ms, Frames: " + framesInStep);
-            
+            // print("\n--- Step " + (currentStepIndex + 1) + ": " + channelName + " ---");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             // Set channel configuration
             if (!channelName.isEmpty()) {
                 try {
@@ -5001,12 +5096,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                             mmc.setExposure(exposureMs);
                             
                             // Additional channel-specific settings could go here
-                            print("Configured for channel: " + channelName + " (" + exposureMs + "ms exposure)");
+                            // print("Configured for channel: " + channelName + " (" + exposureMs + "ms exposure)");
                             break;
                         }
                     }
                 } catch (Exception e) {
-                    print("WARNING: Failed to set channel config: " + e.getMessage());
+                    // print("WARNING: Failed to set channel config: " + e.getMessage());
                 }
             }
             
@@ -5018,7 +5113,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 // Snap image
                 List images = mm.live().snap(false);
                 if (images == null || images.isEmpty()) {
-                    print("WARNING: Failed to snap image at frame " + globalFrameNumber);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     Thread.sleep(1000);
                     continue;
                 }
@@ -5040,7 +5135,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 // Measure ALL ROIs and log them
                 ArrayList roiValues = measureROIs(ip);
                 for (int roiIdx = 0; roiIdx < roiValues.size(); roiIdx++) {
-                    print("ROI" + (roiIdx + 1) + " [Frame " + globalFrameNumber + "]: " + roiValues.get(roiIdx));
+                    // print("ROI" + (roiIdx + 1) + " [Frame " + globalFrameNumber + "]: " + roiValues.get(roiIdx));
                 }
                 
                 // Build data row and store for CSV export
@@ -5068,13 +5163,13 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                     int nextStep = Integer.parseInt(loopGotoStr);
                     if (nextStep >= 1 && nextStep <= sequence.size()) {
                         currentStepIndex = nextStep - 1; // Convert to 0-based index
-                        print("Looping to step " + nextStep);
+                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     } else {
-                        print("WARNING: Invalid Loop Goto value: " + loopGotoStr);
+                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                         currentStepIndex++;
                     }
                 } catch (NumberFormatException e) {
-                    print("WARNING: Could not parse Loop Goto: " + loopGotoStr);
+                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     currentStepIndex++;
                 }
             } else {
@@ -5084,41 +5179,55 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
             
             // If we've gone past the last step and no loop, exit
             if (currentStepIndex >= sequence.size()) {
-                print("Sequence complete");
+                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 break;
             }
             
         } catch (InterruptedException ie) {
-            print("Acquisition interrupted");
+            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             break;
         } catch (Exception e) {
-            print("ERROR in acquisition loop: " + e.getMessage());
+            // print("ERROR in acquisition loop: " + e.getMessage());
             e.printStackTrace();
             break;
         }
     }
     
-    print("\n========== ACQUISITION COMPLETE ==========");
-    print("Total frames captured: " + globalFrameNumber);
-    print("Total data rows: " + dataRows.size());
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    // print("Total data rows: " + dataRows.size());
     
     // Convert to stack if requested
     if (config.acqSettings.convertToStack) {
         convertTiffsToStack(config.experimentFolder);
+    }
+    
+    // Dispose the acquisition frame after acquisition completes (Advanced Mode)
+    if (acqFrame != null) {
+        try {
+            SwingUtilities.invokeAndWait(new Runnable() {
+                public void run() {
+                    acqFrame.dispose();
+                }
+            });
+        } catch (Exception ex) {
+            System.err.println("ERROR disposing acquisition frame (Advanced Mode):");
+            ex.printStackTrace();
+        }
     }
 }
 
 // ==================== CSV Export for Graph Data ====================
 void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList visualizationRows) {
     if (dataRows.isEmpty()) {
-        print("No data to export");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
     // Use experiment folder instead of root data directory
     File experimentFolder = new File(config.experimentFolder);
     if (!experimentFolder.exists()) {
-        print("ERROR: Experiment folder not found");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
@@ -5346,10 +5455,10 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
             }
             
             writer.close();
-            print("Graph " + (graphIdx + 1) + " data exported to: " + csvFile.getName());
+            // print("Graph " + (graphIdx + 1) + " data exported to: " + csvFile.getName());
             
         } catch (IOException e) {
-            print("ERROR: Failed to export graph " + (graphIdx + 1) + " data: " + e.getMessage());
+            // print("ERROR: Failed to export graph " + (graphIdx + 1) + " data: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -5358,13 +5467,13 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
 // Export event times to CSV
 void exportEventTimesToCSV(ArrayList eventTimes) {
     if (eventTimes.isEmpty()) {
-        print("No events recorded");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
     String experimentFolder = config.experimentFolder;
     if (experimentFolder.isEmpty()) {
-        print("ERROR: No experiment folder set");
+        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         return;
     }
     
@@ -5384,12 +5493,12 @@ void exportEventTimesToCSV(ArrayList eventTimes) {
         }
         
         writer.close();
-        print("Event data exported to: " + csvFile.getName());
+        // print("Event data exported to: " + csvFile.getName());
         
     } catch (IOException e) {
-        print("ERROR: Failed to export event data: " + e.getMessage());
+        // print("ERROR: Failed to export event data: " + e.getMessage());
         e.printStackTrace();
     }
 }
 
-print("GUI Test loaded. Close the window to exit.");
+// // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
