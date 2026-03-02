@@ -178,14 +178,16 @@ class MicroscopeConfig {
     String cameraTriggerConfig = "GlobalResetLevelTriggerArduinoMode";
     String spectralConfigGroup = "SpectrAmazing";
     String spectralDefaultConfig = "BrightLight";
+    String arduinoConfigGroup = "";
     String serialPort = "COM4";
     String configFilePath = "";
     
     // Acquisition mode: true = use circular buffer (for real camera), false = simple snap mode (for demo)
-    boolean useCircularBuffer = false;  // Default: false for demo camera compatibility
+    boolean useCircularBuffer = true;  // Default: true (overridden by USE_CIRCULAR_BUFFER in config file)
     
     // Simple snap mode: true = use GUI settings only (no channel switching), false = full sequence logic
-    boolean useSimpleSnapMode = true;  // Default: true for maximum simplicity
+    boolean useSimpleSnapMode = false;  // Default: false (overridden by checkbox in GUI)
+    boolean useTestTable = false;        // If true: send case 69 (hardcoded test table) instead of case 60
     
     AcquisitionSettings acqSettings = new AcquisitionSettings();
     ArrayList storedROIs = new ArrayList(); // Store ROIs for acquisition
@@ -231,6 +233,8 @@ class MicroscopeConfig {
                         spectralConfigGroup = value;
                     } else if (key.equals("SPECTRAL_DEFAULT_CONFIG")) {
                         spectralDefaultConfig = value;
+                    } else if (key.equals("ARDUINO_CONFIG_GROUP")) {
+                        arduinoConfigGroup = value;
                     } else if (key.equals("SERIAL_PORT")) {
                         serialPort = value;
                     }
@@ -269,6 +273,158 @@ class MicroscopeConfig {
         }
         return -1;
     }
+
+    // Save current configuration back to the loaded config file
+    boolean saveToFile(String filePath) {
+        try {
+            PrintWriter writer = new PrintWriter(new FileWriter(filePath));
+            writer.println("# Microscope Configuration File");
+            writer.println("# Lines starting with # are comments");
+            writer.println("# Format: PIN_NUMBER = CHANNEL_NAME");
+            writer.println();
+
+            // Pin assignments - sorted by pin number
+            writer.println("# Pin assignments (Pin 1 is always Camera TTL)");
+            List sortedPins = new ArrayList(pinToChannel.keySet());
+            java.util.Collections.sort(sortedPins);
+            for (Object pinObj : sortedPins) {
+                writer.println("PIN_" + pinObj + " = " + pinToChannel.get(pinObj));
+            }
+            writer.println();
+
+            // Camera settings
+            writer.println("# Camera Configuration Settings (MicroManager config names)");
+            writer.println("CAMERA_CONFIG_GROUP = " + cameraConfigGroup);
+            writer.println("CAMERA_SNAP_CONFIG = " + cameraSnapConfig);
+            writer.println("CAMERA_TRIGGER_CONFIG = " + cameraTriggerConfig);
+            writer.println();
+
+            // Acquisition mode
+            writer.println("# Acquisition Mode");
+            writer.println("# true = Use circular buffer (for real cameras with high-speed acquisition)");
+            writer.println("# false = Use simple snap mode (for demo cameras or single frame capture)");
+            writer.println("USE_CIRCULAR_BUFFER = " + useCircularBuffer);
+            writer.println();
+
+            // Spectral settings
+            writer.println("# Spectral Configuration Settings");
+            writer.println("SPECTRAL_CONFIG_GROUP = " + spectralConfigGroup);
+            writer.println("SPECTRAL_DEFAULT_CONFIG = " + spectralDefaultConfig);
+            writer.println();
+
+            // Arduino config group
+            writer.println("# Arduino channel config group (MicroManager config group where presets set Arduino-Switch,State)");
+            writer.println("# Each preset name becomes a channel name; its State value (2,4,8,...) maps to PIN_2, PIN_3, PIN_4,...");
+            writer.println("ARDUINO_CONFIG_GROUP = " + arduinoConfigGroup);
+            writer.println();
+
+            // Serial port
+            writer.println("# Serial Port");
+            writer.println("SERIAL_PORT = " + serialPort);
+            writer.println();
+
+            writer.close();
+            return true;
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(null, "Error saving config file: " + e.getMessage(),
+                    "Config Error", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+    }
+
+    // Load channel configuration from Micro-Manager config groups.
+    // MM config groups (e.g. "Channel") store presets like "DAPI", "GFP" that each set
+    // Arduino-Switch,State to a power-of-2 value (1=PIN_1, 2=PIN_2, 4=PIN_3, 8=PIN_4, ...).
+    // We scan all config groups for presets that set a StateDevice "State" property,
+    // then map the numeric state value to a PIN number and use the preset name as the channel name.
+    boolean loadFromHub(mmcorej.CMMCore core) {
+        try {
+            // --- Step 1: find the Arduino Switch device name ---
+            String switchDevice = null;
+            mmcorej.StrVector devices = core.getLoadedDevices();
+            for (int i = 0; i < devices.size(); i++) {
+                String dev = devices.get(i);
+                if (dev.toLowerCase().contains("switch")) {
+                    switchDevice = dev;
+                    break;
+                }
+            }
+            if (switchDevice == null) {
+                for (int i = 0; i < devices.size(); i++) {
+                    String dev = devices.get(i);
+                    try {
+                        if (core.getDeviceType(dev) == mmcorej.DeviceType.StateDevice) {
+                            switchDevice = dev;
+                            break;
+                        }
+                    } catch (Exception ex) {}
+                }
+            }
+            if (switchDevice == null) {
+                JOptionPane.showMessageDialog(null,
+                    "No Arduino Switch (StateDevice) found in Micro-Manager.\n" +
+                    "Please load your MM hardware configuration first.",
+                    "Hub Error", JOptionPane.ERROR_MESSAGE);
+                return false;
+            }
+
+            // --- Step 2: scan config groups for presets that set <switchDevice>,State ---
+            // If ARDUINO_CONFIG_GROUP is set in config file, only look in that group.
+            Map newPinToChannel = new HashMap();
+            mmcorej.StrVector groups;
+            if (arduinoConfigGroup != null && !arduinoConfigGroup.isEmpty()) {
+                groups = new mmcorej.StrVector();
+                groups.add(arduinoConfigGroup);
+            } else {
+                groups = core.getAvailableConfigGroups();
+            }
+            for (int g = 0; g < groups.size(); g++) {
+                String group = groups.get(g);
+                mmcorej.StrVector presets = core.getAvailableConfigs(group);
+                for (int p = 0; p < presets.size(); p++) {
+                    String preset = presets.get(p);
+                    mmcorej.Configuration cfg = core.getConfigData(group, preset);
+                    for (int s = 0; s < cfg.size(); s++) {
+                        mmcorej.PropertySetting ps = cfg.getSetting(s);
+                        if (ps.getDeviceLabel().equals(switchDevice) &&
+                            (ps.getPropertyName().equals("State") || ps.getPropertyName().equals("Label"))) {
+                            try {
+                                int stateVal = Integer.parseInt(ps.getPropertyValue());
+                                // Power-of-2: exactly one pin active
+                                if (stateVal > 0 && (stateVal & (stateVal - 1)) == 0) {
+                                    int pinNum = Integer.numberOfTrailingZeros(stateVal) + 1;
+                                    newPinToChannel.put(pinNum, preset);
+                                }
+                            } catch (NumberFormatException ex) {}
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (newPinToChannel.isEmpty()) {
+                String groupHint = (arduinoConfigGroup != null && !arduinoConfigGroup.isEmpty())
+                    ? "'" + arduinoConfigGroup + "'"
+                    : "any config group";
+                JOptionPane.showMessageDialog(null,
+                    "No channel presets found in " + groupHint + " that control '" + switchDevice + "'.\n" +
+                    "Each preset must set " + switchDevice + ",State to a power-of-2 value (2,4,8,...).\n" +
+                    "Check ARDUINO_CONFIG_GROUP in your config file.",
+                    "Hub Warning", JOptionPane.WARNING_MESSAGE);
+                return false;
+            }
+
+            pinToChannel.clear();
+            pinToChannel.putAll(newPinToChannel);
+            return true;
+
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null,
+                "Error reading channels from Arduino Hub:\n" + e.getMessage(),
+                "Hub Error", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+    }
 }
 
 // Simple FileFilter for config files
@@ -301,7 +457,7 @@ class AcquisitionTableModel extends DefaultTableModel {
                 "Frames", "Loop Goto", "Loop Times", "Constant Illum", "Loop Switch Goto" };
         setColumnIdentifiers(dataColumnNames);
         // Add one default row with upper limits as defaults
-        addRow(new Object[] { "", "250", "10000", "10000", "1", "", "", "" });
+        addRow(new Object[] { "", "60000", "60000", "60000", "1", "", "", "" });
     }
 
     public int getColumnCount() {
@@ -343,14 +499,14 @@ class AcquisitionTableModel extends DefaultTableModel {
 
         // Validate and clamp numeric fields
         Object correctedValue = value;
-        if (col == 2) { // Exposure [ms] - limit 250
-            correctedValue = clampValue(value.toString(), 0, 250);
-        } else if (col == 3) { // Frame Interval [ms] - limit 10000
-            correctedValue = clampValue(value.toString(), 0, 10000);
-        } else if (col == 4) { // Frames - limit 10000
-            correctedValue = clampValue(value.toString(), 0, 10000);
-        } else if (col == 6) { // Loop Times - limit 10000
-            correctedValue = clampValue(value.toString(), 0, 10000);
+        if (col == 2) { // Exposure [ms] - limit 60000
+            correctedValue = clampValue(value.toString(), 0, 60000);
+        } else if (col == 3) { // Frame Interval [ms] - limit 60000
+            correctedValue = clampValue(value.toString(), 0, 60000);
+        } else if (col == 4) { // Frames - limit 60000
+            correctedValue = clampValue(value.toString(), 0, 60000);
+        } else if (col == 6) { // Loop Times - limit 60000
+            correctedValue = clampValue(value.toString(), 0, 60000);
         }
 
         super.setValueAt(correctedValue, row, col - 1);
@@ -890,7 +1046,7 @@ frame.setSize(1300, 600);
 tabbedPane = new JTabbedPane();
 
 // Create checkboxes at higher scope so both buttons can access them
-simpleSnapMode = new JCheckBox("Simple Snap Mode", true);
+simpleSnapMode = new JCheckBox("Simple Snap Mode", false);
 simpleSnapMode.setToolTipText("Enable for single-channel acquisition with GUI settings only (safe & simple)");
 
 livePics = new JCheckBox("Live Pictures");
@@ -936,6 +1092,7 @@ configInfoPanel.setBorder(BorderFactory.createTitledBorder("Current Configuratio
 configFileLabel = new JLabel("Config File: Not loaded");
 cameraGroupLabel = new JLabel("Camera Group: -");
 spectralGroupLabel = new JLabel("Spectral Group: -");
+arduinoGroupLabel = new JLabel("-");
 serialPortLabel = new JLabel("Serial Port: -");
 channelsTextArea = new JTextArea(5, 40);
 channelsTextArea.setEditable(false);
@@ -943,6 +1100,11 @@ channelsTextArea.setBorder(BorderFactory.createTitledBorder("Available Channels"
 
 loadConfigButton = new JButton("Load Configuration File");
 reloadConfigButton = new JButton("Reload Current Config");
+readFromHubButton = new JButton("Read Channels from Hub");
+readFromHubButton.setToolTipText("Query the Micro-Manager Arduino Switch device to populate the channel list automatically");
+saveConfigButton = new JButton("Save Config");
+saveConfigButton.setToolTipText("Save the current channel/pin configuration back to the loaded config file");
+saveConfigButton.setBackground(new Color(180, 220, 255));
 
 configInfoPanel.add(new JLabel("Config File:"));
 configInfoPanel.add(configFileLabel);
@@ -950,12 +1112,16 @@ configInfoPanel.add(new JLabel("Camera Group:"));
 configInfoPanel.add(cameraGroupLabel);
 configInfoPanel.add(new JLabel("Spectral Group:"));
 configInfoPanel.add(spectralGroupLabel);
+configInfoPanel.add(new JLabel("Arduino Config Group:"));
+configInfoPanel.add(arduinoGroupLabel);
 configInfoPanel.add(new JLabel("Serial Port:"));
 configInfoPanel.add(serialPortLabel);
 
 configButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 configButtonPanel.add(loadConfigButton);
 configButtonPanel.add(reloadConfigButton);
+configButtonPanel.add(readFromHubButton);
+configButtonPanel.add(saveConfigButton);
 
 settingsPanel.add(configInfoPanel, BorderLayout.NORTH);
 settingsPanel.add(new JScrollPane(channelsTextArea), BorderLayout.CENTER);
@@ -1033,7 +1199,7 @@ addButton.setBackground(Color.GREEN);
 addButton.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         int nextRow = tableModel.getRowCount() + 1;
-        tableModel.addRow(new Object[]{"", "250", "10000", "10000", String.valueOf(nextRow), "", "", ""});
+        tableModel.addRow(new Object[]{"", "60000", "60000", "60000", String.valueOf(nextRow), "", "", ""});
     }
 });
 
@@ -1076,6 +1242,9 @@ saveSettingsButton.addActionListener(new ActionListener() {
     }
 });
 
+JCheckBox useTestTableCheckbox = new JCheckBox("Use hardcoded test table (case 69)", false);
+useTestTableCheckbox.setToolTipText("Bypasses serial table upload — loads pin=17, exp=100ms, int=1000ms, frames=1000 directly on Arduino");
+
 okButton = new JButton("OK - Start Acquisition");
 okButton.setBackground(Color.GREEN);
 okButton.addActionListener(new ActionListener() {
@@ -1113,6 +1282,8 @@ okButton.addActionListener(new ActionListener() {
             // print("Simple Snap Mode: " + (config.useSimpleSnapMode ? "ENABLED" : "disabled"));
             // print("Live Pictures: " + (config.acqSettings.livePics ? "enabled" : "disabled"));
             // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            // Capture test table flag before GUI is disposed
+            config.useTestTable = useTestTableCheckbox.isSelected();
             // Dispose GUI immediately - no more GUI dependencies
             frame.dispose();
             
@@ -1189,6 +1360,7 @@ controlPanel.add(removeButton);
 controlPanel.add(validateButton);
 controlPanel.add(saveSettingsButton);
 controlPanel.add(loadSettingsButton);
+controlPanel.add(useTestTableCheckbox);
 controlPanel.add(okButton);
 controlPanel.add(cancelButton);
 
@@ -1589,12 +1761,14 @@ void updateSettingsDisplay() {
         configFileLabel.setText("Not loaded");
         cameraGroupLabel.setText("-");
         spectralGroupLabel.setText("-");
+        arduinoGroupLabel.setText("-");
         serialPortLabel.setText("-");
         channelsTextArea.setText("No configuration loaded.\nPlease load a configuration file.");
     } else {
         configFileLabel.setText(config.configFilePath);
         cameraGroupLabel.setText(config.cameraConfigGroup);
         spectralGroupLabel.setText(config.spectralConfigGroup);
+        arduinoGroupLabel.setText(config.arduinoConfigGroup.isEmpty() ? "(not set - will scan all groups)" : config.arduinoConfigGroup);
         serialPortLabel.setText(config.serialPort);
         
         StringBuilder channelText = new StringBuilder();
@@ -1652,6 +1826,42 @@ reloadConfigButton.addActionListener(new ActionListener() {
     }
 });
 
+// Save config button action
+saveConfigButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        if (config.configFilePath.isEmpty()) {
+            JOptionPane.showMessageDialog(frame,
+                "No configuration file loaded yet.\nLoad a config file first.",
+                "Info", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(frame,
+            "Overwrite '" + config.configFilePath + "' with the current configuration?",
+            "Save Config", JOptionPane.YES_NO_OPTION);
+        if (confirm == JOptionPane.YES_OPTION) {
+            if (config.saveToFile(config.configFilePath)) {
+                JOptionPane.showMessageDialog(frame,
+                    "Configuration saved successfully!",
+                    "Saved", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+    }
+});
+
+// Read channels from Arduino Hub button action
+readFromHubButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        if (config.loadFromHub(mmc)) {
+            updateSettingsDisplay();
+            JOptionPane.showMessageDialog(frame,
+                "Channels read from Arduino Hub successfully!\n" +
+                "Found " + config.pinToChannel.size() + " channel(s).\n" +
+                "The Sequence tab channel list has been updated.",
+                "Success", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+});
+
 // Try to load last used config on startup
 String lastConfigPath = prefs.get("lastConfigPath", "");
 if (!lastConfigPath.isEmpty() && new File(lastConfigPath).exists()) {
@@ -1694,8 +1904,8 @@ frame.setVisible(true);
                 if (!exposure.isEmpty()) {
                     int exp = Integer.parseInt(exposure);
                     exposureValue = exp;
-                    if (exp < 0 || exp > 250) {
-                        errors.append("Row " + (i + 1) + ": Exposure must be 0-250 ms\n");
+                    if (exp < 0 || exp > 60000) {
+                        errors.append("Row " + (i + 1) + ": Exposure must be 0-60000 ms\n");
                     }
                 }
             } catch (NumberFormatException e) {
@@ -1707,8 +1917,8 @@ frame.setVisible(true);
                 if (!frameRate.isEmpty()) {
                     int fr = Integer.parseInt(frameRate);
                     frameIntervalValue = fr;
-                    if (fr < 0 || fr > 10000) {
-                        errors.append("Row " + (i + 1) + ": Frame interval must be 0-10000 ms\n");
+                    if (fr < 0 || fr > 60000) {
+                        errors.append("Row " + (i + 1) + ": Frame interval must be 0-60000 ms\n");
                     }
                 }
             } catch (NumberFormatException e) {
@@ -1725,8 +1935,8 @@ frame.setVisible(true);
                 String frames = tableModel.getValueAt(i, 4).toString();
                 if (!frames.isEmpty()) {
                     int f = Integer.parseInt(frames);
-                    if (f < 0 || f > 10000) {
-                        errors.append("Row " + (i + 1) + ": Frames must be 0-10000\n");
+                    if (f < 0 || f > 60000) {
+                        errors.append("Row " + (i + 1) + ": Frames must be 0-60000\n");
                     }
                 }
             } catch (NumberFormatException e) {
@@ -1738,8 +1948,8 @@ frame.setVisible(true);
                 String loopTimes = tableModel.getValueAt(i, 6).toString();
                 if (!loopTimes.isEmpty()) {
                     int lt = Integer.parseInt(loopTimes);
-                    if (lt < 0 || lt > 10000) {
-                        errors.append("Row " + (i + 1) + ": Loop Times must be 0-10000\n");
+                    if (lt < 0 || lt > 60000) {
+                        errors.append("Row " + (i + 1) + ": Loop Times must be 0-60000\n");
                     }
                 }
             } catch (NumberFormatException e) {
@@ -2916,8 +3126,14 @@ void createInlineAcquisitionWindow() {
     loopSwitchButton.setPreferredSize(new java.awt.Dimension(130, 28));
     loopSwitchButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-            // TODO: Implement loop switch
+            // Send byte 67 to Arduino to trigger loop-switch during acquisition
+            try {
+                mmcorej.CharVector cv67 = new mmcorej.CharVector();
+                cv67.add((char)67);
+                mmc.writeToSerialPort(config.serialPort, cv67);
+            } catch (Exception ardEx) {
+                // print("Arduino loop-switch error: " + ardEx.getMessage());
+            }
         }
     });
     
@@ -3366,6 +3582,191 @@ void createInlineAcquisitionWindow() {
         }
     }
     
+    // ===== SEND ACQUISITION TABLE (CASE 60) + START COMMAND (CASE 61) TO ARDUINO =====
+    // Only used in circular buffer mode:
+    //   - Circular buffer: camera is put into hardware-trigger mode inside runCircularBufferAcquisition;
+    //     Arduino controls LED timing and camera TTL; BeanShell reads from the image buffer.
+    //   - Simple snap mode: BeanShell does software snaps; camera must stay in snap mode;
+    //     no Arduino TTL synchronization possible via CAM_FEEDBACK_PIN — do NOT set trigger mode here.
+    boolean useCircularBufferMode = config.useCircularBuffer && !config.useSimpleSnapMode;
+    if (useCircularBufferMode) {
+    try {
+        ArrayList tableData = config.acqSettings.sequenceRows;
+        int nRows = tableData.size();
+        // Firmware limit is MAX_ACQ_ROWS = 32. Exceeding it causes the Arduino to reject
+        // the table header but leave the row bytes in the RX buffer, corrupting the stream.
+        if (nRows > 32) {
+            JOptionPane.showMessageDialog(acqFrame,
+                "Acquisition table has " + nRows + " rows, but the Arduino firmware\n" +
+                "supports a maximum of 32 rows. Only the first 32 rows will be sent.",
+                "Table Truncated", JOptionPane.WARNING_MESSAGE);
+            nRows = 32;
+        }
+        if (nRows == 0) throw new Exception("Acquisition table is empty.");
+        mmcorej.CharVector cv60 = new mmcorej.CharVector();
+
+        // encodeU16: add val as exactly 2 bytes to cv, using sentinel hi-byte
+        // values to avoid sending 40 (MM keep-alive) anywhere on the wire.
+        // Values are capped at 60000 (max real hi = 234 = 0xEA, so sentinels
+        // 235-239 are permanently free and never equal 40).
+        //
+        //  Condition              sent bytes   Arduino decodes as
+        //  ---------------------- ------------ --------------------
+        //  normal (no 40/251)     [hi][lo]     (hi<<8)|lo
+        //  hi==40, lo normal      [235][lo]    (40<<8)|lo
+        //  lo==40,  hi normal     [236][hi]    (hi<<8)|40
+        //  lo==251, hi normal     [237][hi]    (hi<<8)|251
+        //  hi==40,  lo==40        [238][0]     (40<<8)|40
+        //  hi==40,  lo==251       [239][0]     (40<<8)|251
+        //
+        // Single-byte fields (pinPattern, loopGoto, constIllum, lsGoto) always
+        // have hi=0 (value <= 255), so only the lo-encoding cases ever apply.
+        // All fields — single-byte and uint16 — use this same function.
+        encodeU16(mmcorej.CharVector cv, int val) {
+            int hi = (val >> 8) & 0xFF;
+            int lo =  val       & 0xFF;
+            if      (hi != 40 && lo != 40 && lo != 251) { cv.add((char)hi);  cv.add((char)lo); }
+            else if (hi == 40 && lo != 40 && lo != 251) { cv.add((char)235); cv.add((char)lo); }
+            else if (hi != 40 && lo == 40)               { cv.add((char)236); cv.add((char)hi); }
+            else if (hi != 40 && lo == 251)              { cv.add((char)237); cv.add((char)hi); }
+            else if (hi == 40 && lo == 40)               { cv.add((char)238); cv.add((char)0);  }
+            else                                          { cv.add((char)239); cv.add((char)0);  } // hi==40, lo==251
+        }
+
+        cv60.add((char)60);    // command byte (value 60, never 40 — no encoding needed)
+        cv60.add((char)nRows); // row count (single byte; max rows well below 40 in practice)
+        for (int ri = 0; ri < nRows; ri++) {
+            ArrayList row = (ArrayList) tableData.get(ri);
+
+            // --- pinPattern (uint8, sent as uint16 with hi=0) ---
+            int pinPattern = 0;
+            String channelVal = row.get(1).toString().trim();
+            if (channelVal.isEmpty()) {
+                String expStr = row.get(2).toString().trim();
+                int expCheck = 0;
+                try { expCheck = Integer.parseInt(expStr); } catch (Exception e2) {}
+                pinPattern = expCheck > 0 ? 1 : 0;
+            } else {
+                pinPattern = 1; // bit0 = camera TTL always on
+                String[] channels = channelVal.split(",");
+                for (String ch : channels) {
+                    int pinNum = config.getPinForChannel(ch.trim());
+                    if (pinNum != -1) pinPattern |= (1 << (pinNum - 1));
+                }
+            }
+            encodeU16(cv60, pinPattern);
+
+            // --- exposureMs (uint16, capped at 60000 ms) ---
+            int expMs = 0;
+            try { expMs = Integer.parseInt(row.get(2).toString().trim()); } catch (Exception e2) {}
+            expMs = Math.min(expMs, 60000);
+            encodeU16(cv60, expMs);
+
+            // --- intervalMs (uint16, capped at 60000 ms) ---
+            int intMs = 0;
+            try { intMs = Integer.parseInt(row.get(3).toString().trim()); } catch (Exception e2) {}
+            intMs = Math.min(intMs, 60000);
+            encodeU16(cv60, intMs);
+
+            // --- frames (uint16, capped at 60000; 0 = run until switch/quit) ---
+            int frames = 0;
+            try { frames = Integer.parseInt(row.get(4).toString().trim()); } catch (Exception e2) {}
+            frames = Math.min(frames, 60000);
+            encodeU16(cv60, frames);
+
+            // --- loopGoto (uint8, sent as uint16 with hi=0; 1-based row, 0 = advance) ---
+            int loopGoto = 0;
+            try { loopGoto = Integer.parseInt(row.get(5).toString().trim()); } catch (Exception e2) {}
+            encodeU16(cv60, loopGoto);
+
+            // --- loopTimes (uint16, capped at 60000; 0 = infinite) ---
+            int loopTimes = 0;
+            try { loopTimes = Integer.parseInt(row.get(6).toString().trim()); } catch (Exception e2) {}
+            loopTimes = Math.min(loopTimes, 60000);
+            encodeU16(cv60, loopTimes);
+
+            // --- constIllum (uint8, sent as uint16 with hi=0) ---
+            String constVal = row.get(7).toString().trim();
+            int constIllum = 0;
+            if (!constVal.isEmpty()) {
+                String[] cChannels = constVal.split(",");
+                for (String ch : cChannels) {
+                    int pinNum = config.getPinForChannel(ch.trim());
+                    if (pinNum != -1) constIllum |= (1 << (pinNum - 1));
+                }
+            }
+            constIllum &= 0xFE; // ensure camera bit (bit 0) is never set in constIllum
+            encodeU16(cv60, constIllum);
+
+            // --- loopSwitchGoto (uint8, sent as uint16 with hi=0; 1-based row, 0 = disabled) ---
+            int lsGoto = 0;
+            try { lsGoto = Integer.parseInt(row.get(8).toString().trim()); } catch (Exception e2) {}
+            encodeU16(cv60, lsGoto);
+        }
+
+        // --- DEBUG: dump cv60 byte-by-byte to file so we can verify what is sent ---
+        try {
+            String dbgDir = (config.experimentFolder != null && !config.experimentFolder.isEmpty())
+                ? config.experimentFolder
+                : System.getProperty("user.home");
+            String dbgPath = dbgDir + "\\cv60_debug.txt";
+            PrintWriter dbgWriter = new PrintWriter(new FileWriter(dbgPath));
+            print("cv60 debug path: " + dbgPath);
+            dbgWriter.println("cv60 total bytes: " + cv60.size());
+            dbgWriter.println("Byte[0] cmd  = " + ((int)(char)cv60.get(0) & 0xFF));
+            int dbgNRows = (int)(char)cv60.get(1) & 0xFF;
+            dbgWriter.println("Byte[1] nRows= " + dbgNRows);
+            String[] fNames = {"pinPattern","exposureMs","intervalMs","frames",
+                               "loopGoto","loopTimes","constIllum","loopSwitchGoto"};
+            for (int dbgR = 0; dbgR < dbgNRows; dbgR++) {
+                int dbgBase = 2 + dbgR * 16;
+                dbgWriter.println("--- Row " + (dbgR+1)
+                    + "  (raw bytes " + dbgBase + ".." + (dbgBase+15) + ") ---");
+                for (int dbgF = 0; dbgF < 8; dbgF++) {
+                    int dbgIdx = dbgBase + dbgF * 2;
+                    int dbgHi  = (int)(char)cv60.get(dbgIdx)     & 0xFF;
+                    int dbgLo  = (int)(char)cv60.get(dbgIdx + 1) & 0xFF;
+                    int dbgVal;
+                    if      (dbgHi == 235) dbgVal = (40     << 8) | dbgLo;
+                    else if (dbgHi == 236) dbgVal = (dbgLo  << 8) | 40;
+                    else if (dbgHi == 237) dbgVal = (dbgLo  << 8) | 251;
+                    else if (dbgHi == 238) dbgVal = (40     << 8) | 40;
+                    else if (dbgHi == 239) dbgVal = (40     << 8) | 251;
+                    else                   dbgVal = (dbgHi  << 8) | dbgLo;
+                    dbgWriter.println("  " + fNames[dbgF]
+                        + ":  hi=" + dbgHi + "  lo=" + dbgLo + "  => " + dbgVal);
+                }
+            }
+            dbgWriter.println("--- raw bytes (all) ---");
+            for (int dbgI = 0; dbgI < cv60.size(); dbgI++) {
+                dbgWriter.print((int)(char)cv60.get(dbgI) & 0xFF);
+                dbgWriter.print(' ');
+            }
+            dbgWriter.println();
+            dbgWriter.close();
+            print("cv60 debug dump written.");
+        } catch (Exception dbgEx) {
+            print("cv60 debug dump FAILED: " + dbgEx.getMessage());
+        }
+        // --- END DEBUG ---
+
+        if (config.useTestTable) {
+            // Send case 69: load hardcoded test table on Arduino (bypasses serial read)
+            mmcorej.CharVector cv69 = new mmcorej.CharVector();
+            cv69.add((char)69);
+            mmc.writeToSerialPort(config.serialPort, cv69);
+            print("TEST TABLE (case 69) sent to Arduino.");
+        } else {
+            mmc.writeToSerialPort(config.serialPort, cv60);
+        }
+
+        // NOTE: case 61 (start) is sent later, after mmc.startSequenceAcquisition(),
+        // so that Arduino only begins firing triggers once the camera is armed.
+    } catch (Exception ardEx) {
+        // print("Arduino serial send error: " + ardEx.getMessage());
+    }
+    } // end if (useCircularBufferMode)
+    
     acqFrame.setVisible(true);
     
     // print("DEBUG: Frame visible=" + acqFrame.isVisible() + ", frame size=" + acqFrame.getSize());
@@ -3424,6 +3825,14 @@ void createInlineAcquisitionWindow() {
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
                 // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                // Send kill command (byte 66) to Arduino to stop hardware acquisition
+                try {
+                    mmcorej.CharVector cv66 = new mmcorej.CharVector();
+                    cv66.add((char)66);
+                    mmc.writeToSerialPort(config.serialPort, cv66);
+                } catch (Exception ardEx) {
+                    // print("Arduino kill error: " + ardEx.getMessage());
+                }
                 acquisitionRunning[0] = false;
                 
                 // Export data to CSV - pass visualization rows for naming
@@ -3437,34 +3846,31 @@ void createInlineAcquisitionWindow() {
     });
     
     // Start acquisition in background thread
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     new Thread(new Runnable() {
         public void run() {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             try {
                 // Choose acquisition mode based on configuration
                 // Simple Snap Mode checkbox overrides config file setting
                 boolean useCircularBuffer = config.useCircularBuffer && !config.useSimpleSnapMode;
-                
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                // print("Final mode: " + (useCircularBuffer ? "Circular Buffer" : "Simple Snap"));
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+
+                print("=== ACQUISITION MODE ROUTING ===");
+                print("  config.useCircularBuffer  = " + config.useCircularBuffer);
+                print("  config.useSimpleSnapMode  = " + config.useSimpleSnapMode);
+                print("  --> useCircularBuffer     = " + useCircularBuffer);
+                print("  (if false → snap loop runs, camera self-triggers, no Arduino sync)");
+                print("================================");
+
                 if (useCircularBuffer) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels, acqFrame);
                 } else {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                     runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels, acqFrame);
                 }
             } catch (Exception ex) {
-                // print("ERROR in acquisition thread: " + ex.getMessage());
+                print("ERROR in acquisition thread: " + ex.getMessage());
                 ex.printStackTrace();
             }
         }
     }).start();
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
 }
 
 // ==================== Frame Filtering Logic ====================
@@ -4459,13 +4865,48 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     long bytesPerImage = imageWidth * imageHeight * bytesPerPixel;
     int approxCapacity = (int)(bufferMem / bytesPerImage);
     
-    // Set camera to triggered mode
+    // PRE-ARM CLEANUP:
+    // IMPORTANT: stopSequenceAcquisition() blocks for ~30s if the camera is in external-trigger
+    // mode (Hamamatsu waits for the current trigger cycle to complete / timeout → DCAMERR_BUSY).
+    // Fix: switch to snap config FIRST (breaks trigger-wait), then stop, then arm.
+    print("Pre-arm: restoring snap mode to clear any stale trigger-wait state...");
+    try { mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig); } catch (Exception e) {}
+    Thread.sleep(300);
+    try { mmc.stopSequenceAcquisition(); } catch (Exception e) {}
+    Thread.sleep(200);
+    print("Pre-arm cleanup done.");
+
+    // Set camera to triggered mode.
+    // The Hamamatsu needs up to ~1.5 s to fully commit to LEVEL trigger mode.
+    // If byte 61 fires too soon, early frames still use EDGE + internal exposure
+    // → integration ≠ J0 HIGH duration → wrong brightness for those frames.
     try {
+        print("=== CAMERA CONFIG SWITCH ===");
+        print("  Config group : " + config.cameraConfigGroup);
+        print("  Config preset: " + config.cameraTriggerConfig);
         mmc.setConfig(config.cameraConfigGroup, config.cameraTriggerConfig);
-        Thread.sleep(100); // Allow config to settle
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        Thread.sleep(1500); // Hamamatsu needs ~1-1.5 s to fully apply LEVEL trigger mode
+
+        // Dump every property defined in the config preset so we can verify
+        // TriggerSource, TriggerActive, GlobalExposure etc. are all applied.
+        try {
+            mmcorej.Configuration cfgData = mmc.getConfigData(config.cameraConfigGroup, config.cameraTriggerConfig);
+            print("  Properties in preset '" + config.cameraTriggerConfig + "' (" + cfgData.size() + " total):");
+            for (int pi = 0; pi < (int)cfgData.size(); pi++) {
+                mmcorej.PropertySetting ps = cfgData.getSetting(pi);
+                // Also read back the live value from the device to catch any mismatch
+                String liveVal = "";
+                try { liveVal = mmc.getProperty(ps.getDeviceLabel(), ps.getPropertyName()); } catch (Exception re) { liveVal = "?"; }
+                print("    [" + ps.getDeviceLabel() + "] " + ps.getPropertyName()
+                      + " = " + ps.getPropertyValue()
+                      + "  (live: " + liveVal + ")");
+            }
+        } catch (Exception dumpEx) {
+            print("  WARNING: Could not dump config preset: " + dumpEx.getMessage());
+        }
+        print("=== END CAMERA CONFIG ===");
     } catch (Exception e) {
-        // print("ERROR: Failed to set camera config: " + e.getMessage());
+        print("ERROR: Failed to set camera config: " + e.getMessage());
         return;
     }
     
@@ -4475,14 +4916,63 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     boolean stopOnOverflow = false; // Continuous mode
     
     try {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // Disable auto-shutter and close Arduino-Shutter before arming camera.
+        mmc.setAutoShutter(false);
+        mmc.setShutterOpen(false);
+        Thread.sleep(50);
         mmc.startSequenceAcquisition(numFrames, 0, stopOnOverflow);
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+
+        // Some Hamamatsu adapter versions reset TRIGGER SOURCE to INTERNAL after startSequenceAcquisition.
+        // Force it back to EXTERNAL directly on the device as insurance.
+        try {
+            String camDev = mmc.getCameraDevice();
+            mmc.setProperty(camDev, "TRIGGER SOURCE", "EXTERNAL");
+            print("Forced TRIGGER SOURCE = EXTERNAL on " + camDev + " after arming.");
+        } catch (Exception trigEx) {
+            print("NOTE: Could not force TRIGGER SOURCE after arm: " + trigEx.getMessage());
+        }
+
+        // DEBUG: read back all preset properties immediately after arming to detect
+        // whether the adapter silently resets them (e.g. TRIGGER SOURCE → INTERNAL).
+        print("=== POST-ARM PROPERTY READBACK ===");
+        try {
+            mmcorej.Configuration cfgData = mmc.getConfigData(config.cameraConfigGroup, config.cameraTriggerConfig);
+            for (int pi = 0; pi < (int)cfgData.size(); pi++) {
+                mmcorej.PropertySetting ps = cfgData.getSetting(pi);
+                String live = "?";
+                try { live = mmc.getProperty(ps.getDeviceLabel(), ps.getPropertyName()); } catch (Exception re) {}
+                String status = live.equals(ps.getPropertyValue()) ? "OK" : "*** RESET ***";
+                print("  [" + status + "] " + ps.getPropertyName()
+                      + " : preset=" + ps.getPropertyValue() + "  live=" + live);
+            }
+        } catch (Exception dbg) { print("  readback failed: " + dbg.getMessage()); }
+        print("==================================");
+
+        // Give the camera time to finish its internal arming sequence before
+        // the first Arduino trigger pulse arrives.
+        Thread.sleep(500);
+        // Camera is armed — send byte 61 to start Arduino trigger loop.
+        if (config.useCircularBuffer && !config.useSimpleSnapMode) {
+            try {
+                mmcorej.CharVector cv61 = new mmcorej.CharVector();
+                cv61.add((char)61);
+                mmc.writeToSerialPort(config.serialPort, cv61);
+                print("Byte 61 sent — Arduino acquisition started.");
+            } catch (Exception ardEx) {
+                print("Arduino start error: " + ardEx.getMessage());
+            }
+        }
     } catch (Exception e) {
-        // print("ERROR: Failed to start sequence acquisition: " + e.getMessage());
+        print("ERROR: Failed to start sequence acquisition: " + e.getMessage());
         e.printStackTrace();
+        // Snap config FIRST (breaks trigger-wait, prevents 30s hang), then stop
+        try {
+            mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+            Thread.sleep(200);
+            print("Camera restored to snap config after arm failure.");
+        } catch (Exception ce) { print("WARNING: Could not restore snap config: " + ce.getMessage()); }
+        try { mmc.stopSequenceAcquisition(); } catch (Exception ce) {}
+        try { mmc.setAutoShutter(true); } catch (Exception ce) {}
         return;
     }
     
@@ -4645,15 +5135,30 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         }
     }
     
-    // Stop acquisition if still running
+    // CLEANUP — order matters for Hamamatsu:
+    // stopSequenceAcquisition() blocks ~30s if camera is still in external-trigger-wait.
+    // Fix: switch to snap config FIRST, then stop.
+
+    // 1. Stop Arduino triggers
     try {
-        if (mmc.isSequenceRunning()) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-            mmc.stopSequenceAcquisition();
-        }
-    } catch (Exception e) {
-        // print("ERROR stopping acquisition: " + e.getMessage());
-    }
+        mmcorej.CharVector cv66 = new mmcorej.CharVector();
+        cv66.add((char)66);
+        mmc.writeToSerialPort(config.serialPort, cv66);
+        print("Byte 66 sent — Arduino triggers stopped.");
+    } catch (Exception e) { print("WARNING: Could not send stop byte: " + e.getMessage()); }
+
+    // 2. Switch camera to snap mode (breaks external-trigger-wait, stop returns instantly)
+    try {
+        mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+        Thread.sleep(200);
+        print("Camera switched to snap mode.");
+    } catch (Exception e) { print("WARNING: Could not restore snap config: " + e.getMessage()); }
+
+    // 3. Now stop the sequence — safe, won't block
+    try { mmc.stopSequenceAcquisition(); } catch (Exception e) {}
+
+    // 4. Restore auto-shutter
+    try { mmc.setAutoShutter(true); } catch (Exception e) {}
     
     // Final report
     // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK

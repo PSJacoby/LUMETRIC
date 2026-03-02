@@ -1,114 +1,247 @@
-================================================================================
+?================================================================================
                     LUMETRIC ACQUISITION SYSTEM
                     Capability Summary & User Guide
 ================================================================================
 
 OVERVIEW
 --------
-The LUMETRIC acquisition system is a comprehensive Micro-Manager BeanShell 
-script for automated time-lapse fluorescence microscopy with real-time ROI 
-analysis, graphical visualization, and event-driven control. It supports both 
-hardware-triggered and software-controlled acquisition modes.
+The LUMETRIC acquisition system is a Micro-Manager BeanShell script for
+automated time-lapse fluorescence microscopy with real-time ROI analysis,
+graphical visualization, and event-driven control. It supports both
+hardware-triggered (Arduino) and software-controlled acquisition modes.
+
+Main script: LUMETRIC.bsh (~5800 lines)
 
 
 ACQUISITION MODES
 -----------------
 
 1. SNAP MODE (Software-Controlled)
-   Configuration: USE_CIRCULAR_BUFFER = false
-   
+   Configuration: USE_CIRCULAR_BUFFER = false  (or USE_SIMPLE_SNAP_MODE = true)
+
    How it works:
    - Script captures frames on-demand using mm.live().snap()
    - Software controls timing and channel switching
-   - No external trigger hardware required
-   
+   - No Arduino hardware trigger involved
+
    Hardware requirements:
    - Any compatible camera (demo or real)
    - Standard Micro-Manager setup
-   - No Arduino or external triggers needed
-   
+   - No Arduino required
+
    Best for:
    - Testing and development
    - Demo camera setups
    - Single-channel acquisitions
    - When software timing is sufficient (most biological imaging)
-   - Users who want GUI control without hardware complexity
-   
+
    Performance:
    - Timing accuracy: ~10-50 ms (software overhead)
    - Frame rate: Up to 10-20 fps depending on camera and processing
-   - Suitable for: Cell imaging, slow dynamics, time-lapse (seconds-minutes)
 
 
-2. CIRCULAR BUFFER MODE (Hardware-Triggered)
-   Configuration: USE_CIRCULAR_BUFFER = true
-   
+2. CIRCULAR BUFFER MODE (Hardware-Triggered via Arduino)
+   Configuration: USE_CIRCULAR_BUFFER = true  (and USE_SIMPLE_SNAP_MODE = false)
+
    How it works:
    - Micro-Manager pre-allocates large memory buffer (75% of heap)
-   - Arduino sends hardware trigger pulses to camera
-   - Camera captures to buffer at hardware-precise intervals
-   - Script reads frames from buffer for processing
-   
+   - BeanShell uploads the acquisition table to Arduino (serial command 60),
+     then sends the start command (serial command 61)
+   - Arduino controls all timing: sends TTL trigger to camera, fires LEDs
+     for each frame according to the uploaded table
+   - Camera captures frames to buffer at hardware-precise intervals
+   - Script reads frames from buffer in parallel for ROI processing and saving
+
    Hardware requirements:
    - Real camera with external trigger support
-   - Arduino or other trigger generator connected
-   - Camera configured for external trigger mode
-   - Trigger signal wired to camera trigger input
-   
+   - Arduino Giga R1 (or compatible) running LUMETRIC_ArdFirmware
+   - Camera TTL trigger wired to Arduino Port J bit 0 (camera trigger output)
+   - Camera feedback (shutter open) wired to Arduino CAM_FEEDBACK_PIN
+   - LED channels wired to Arduino Port J bits 1-5
+
    Best for:
    - High-speed acquisitions
    - Precise timing requirements (sub-millisecond accuracy)
-   - Multi-channel synchronized imaging
+   - Multi-channel synchronized imaging with LED control
    - Long experiments with many frames
-   - Production/research setups
-   
+   - Photoswitching / RESOLFT protocols
+
    Performance:
    - Timing accuracy: Hardware-limited (typically <1 ms)
-   - Frame rate: Camera-limited (up to 100+ fps on fast cameras)
+   - Frame rate: Camera-limited (tested up to 100 fps)
    - Buffer capacity: ~6000 frames @ 512x512 (3 GB buffer)
-   - Suitable for: Fast dynamics, precise synchronization, high-throughput
+
+
+ACQUISITION TABLE
+-----------------
+
+Each row in the acquisition sequence table defines one step. Up to 32 rows
+supported (Arduino firmware limit MAX_ACQ_ROWS = 32).
+
+Columns:
+  Channel        LED channel name(s), comma-separated (e.g. "488nm" or "405nm,488nm")
+                 In circular buffer mode, maps to Port J LED bits via config pin
+                 assignments. Leave empty for photoswitching rows (see below).
+
+  Exposure [ms]  LED on-time and camera exposure duration in milliseconds.
+                 Set to 0 for a photoswitching row (no camera trigger; see below).
+
+  Interval [ms]  Full frame period including exposure and inter-frame gap.
+                 Must be >= Exposure. Timer starts at the beginning of each frame.
+
+  Frames         Number of frames to capture (0 = run until loop ends or quit).
+
+  Loop Goto      Row number to jump back to when frames are exhausted (0 = no loop).
+
+  Loop Times     Number of loop repetitions (0 = infinite).
+
+  Constant Illum LED channel(s) to hold on during the inter-frame gap
+                 (comma-separated channel names). These LEDs fire simultaneously
+                 with the camera trigger at the start of exposure, and remain on
+                 during the gap until the next frame. The camera trigger bit is
+                 never included (BeanShell masks it automatically).
+                 Leave empty to turn off all LEDs during the gap.
+
+  Loop Switch Goto  Row number to jump to when the Loop Switch button is pressed
+                    during acquisition (0 = disabled for this row).
+
+
+PHOTOSWITCHING ROWS (Exposure = 0)
+-----------------------------------
+Setting Exposure [ms] = 0 creates a photoswitching row:
+  - No camera trigger is generated
+  - No camera feedback wait
+  - The Constant Illum pattern is applied to the LEDs immediately
+  - The Arduino waits for the full Interval [ms] duration
+  - Useful for illuminating the sample for photoswitching, photoactivation,
+    or bleaching steps between imaging steps, without capturing a frame.
+
+Example: Row 1 = Channel empty, 0 ms exposure, 500 ms interval,
+                 Constant Illum = "405nm"
+         ??? pulses 405nm LED for 500 ms, no image captured (photoswitch)
+         Row 2 = Channel "488nm", 50 ms exposure, 1000 ms interval
+         ??? images the result with 488nm
+
+
+FRAME TIMING (Circular Buffer Mode)
+-------------------------------------
+The frame interval timer starts at the beginning of each frame:
+
+  [t = 0 ms]       Camera trigger + Constant Illum LEDs fired simultaneously
+  [t ~ 0]          Wait for camera feedback pin (shutter open signal)
+  [after feedback] Full channel pinPattern applied (exposure LEDs on)
+  [t = exposureMs] Channel LEDs off; Constant Illum LEDs remain on
+  [t = intervalMs] Next frame begins (or row ends if frames exhausted)
+
+Shutter latency is included in the interval budget, giving accurate
+frame-to-frame timing regardless of camera response time.
+For exposureMs = 0, steps 1-4 are skipped; only Constant Illum is applied
+and the interval timer runs.
+
+
+ARDUINO SERIAL PROTOCOL (Circular Buffer Mode)
+-----------------------------------------------
+Communication: 57600 baud, binary
+
+Keep-alive (Micro-Manager internal):
+  BeanShell sends byte 40   ??? Arduino replies [40][currentPinStates]
+  Arduino handles this transparently during table upload and acquisition.
+
+Command bytes sent by BeanShell:
+  60  Load acquisition table
+      Payload: [60][nRows][row0...][row1...]...
+      Each row = 13 bytes:
+        pinPattern     (uint8)   Port J bit pattern (bit0=camera, bits1-5=LEDs)
+        exposureMs     (uint16 big-endian)
+        intervalMs     (uint16 big-endian)
+        frames         (uint16 big-endian)
+        loopGoto       (uint8)   1-based row index, 0 = no loop
+        loopTimes      (uint16 big-endian)
+        constIllum     (uint8)   Port J pattern for gap LEDs (bit0 always 0)
+        loopSwitchGoto (uint8)   1-based row index, 0 = disabled
+
+  61  Start acquisition (run uploaded table)
+
+  66  Quit acquisition (Arduino stops all outputs immediately)
+
+  67  Loop-switch (jump to loopSwitchGoto of current row)
+
+PORT J BIT MAPPING (Arduino Giga R1):
+  Bit 0 (0x01)  Camera TTL trigger output
+  Bit 1 (0x02)  LED channel assigned to pin 1 in config
+  Bit 2 (0x04)  LED channel assigned to pin 2 in config
+  Bit 3 (0x08)  LED channel assigned to pin 3 in config
+  Bit 4 (0x10)  LED channel assigned to pin 4 in config
+  Bit 5 (0x20)  LED channel assigned to pin 5 in config
 
 
 CORE CAPABILITIES
 -----------------
 
 Image Acquisition:
-  ✓ Multi-channel sequential imaging (up to 8 channels)
-  ✓ Configurable exposure times per channel
-  ✓ Frame intervals and frame counts per step
-  ✓ Looping sequences with goto/repeat logic
-  ✓ Automatic TIFF image saving (Frame_00001.tif, Frame_00002.tif, ...)
+  ??? Multi-step sequences (up to 32 rows)
+  ??? Multi-channel illumination per step (comma-separated channels)
+  ??? Configurable exposure times per step (0 = photoswitching row)
+  ??? Frame intervals and frame counts per step
+  ??? Looping sequences with goto/repeat logic
+  ??? Loop-switch: jump to alternate row on demand during acquisition
+  ??? Constant illumination LEDs during inter-frame gaps
+  ??? Photoswitching rows (exposure = 0, no camera trigger)
+  ??? Automatic TIFF image saving (Frame_00001.tif, Frame_00002.tif, ...)
 
 Real-Time Analysis:
-  ✓ Multiple ROI intensity measurements (fluorescence, mean intensity)
-  ✓ Processing during acquisition (no post-processing delay)
-  ✓ ROI data exported to CSV files
-  ✓ Frame-by-frame measurements printed to console
+  ??? Multiple ROI intensity measurements (mean intensity)
+  ??? Processing during acquisition (no post-processing delay)
+  ??? ROI data exported to CSV files
+  ??? Temporal mode: per-frame ROI intensity over time
+  ??? Spatial mode: split-image ratio analysis (Up/Down, Left/Right, inverses)
+  ??? Frame ratio: divide odd/even frame intensities element-wise per ROI
 
 Visualization:
-  ✓ Live camera view with zoom/fit panel
-  ✓ Real-time intensity graphs (up to 4 simultaneous graphs)
-  ✓ Frame filtering (every frame, odd, even, every Nth)
-  ✓ Multi-ROI plotting on single graph
-  ✓ Customizable graph titles and ROI selection
+  ??? Live camera view with zoom/fit panel
+  ??? Real-time intensity graphs (up to 4 simultaneous graphs)
+  ??? Frame filtering: every frame, odd, even, every Nth (with offset)
+  ??? Multi-ROI plotting on single graph
+  ??? Graph types: Intensity, Frame ratio, Split ratio
+  ??? Zoom reset per graph or all graphs
+  ??? Event time markers (vertical lines) on all active graphs
 
 Event Detection & Control:
-  ✓ Configurable event detection system (Arduino serial communication)
-  ✓ Event timestamps logged to CSV
-  ✓ Can trigger actions based on detected events
-  ✓ Integration with external hardware
+  ??? Event button: logs timestamp, draws marker line on all graphs
+  ??? Loop Switch button: sends byte 67 to Arduino to trigger row-jump
+  ??? Quit button: sends stop command (byte 66) to Arduino, saves all data
+  ??? Event timestamps exported to CSV
 
 Data Management:
-  ✓ Automatic experiment folder creation (timestamp-based)
-  ✓ ROI set saved as RoiSet.zip
-  ✓ Acquisition settings exported (human-readable and Arduino format)
-  ✓ All data organized in experiment-specific folders
+  ??? Automatic experiment folder creation (timestamp-based)
+  ??? ROI set saved as RoiSet.zip
+  ??? Acquisition settings exported: human-readable CSV + Arduino CSV
+  ??? Graph data exported to CSV on quit
+  ??? All data organized in experiment-specific folders
 
 Buffer Management (Circular Buffer Mode):
-  ✓ Automatic memory allocation (75% heap)
-  ✓ Real-time buffer monitoring (warnings at 75%, critical at 90%)
-  ✓ Overflow detection and reporting
-  ✓ Capacity estimation and reporting
+  ??? Automatic memory allocation (75% heap)
+  ??? Real-time buffer monitoring (warnings at 75%, critical at 90%)
+  ??? Overflow detection and reporting
+  ??? Capacity estimation and reporting
+
+
+PROCESSING MODES
+----------------
+
+Temporal Mode:
+  Compares ROI intensities across frames over time.
+  Graph types: Intensity, Frame ratio (odd/even frames)
+  Each ROI produces one data series per graph.
+  Frame selection: every, odd, even, every Nth (with optional offset).
+
+Spatial Mode:
+  Compares two halves of the same frame (e.g. dual-view splitimage setup).
+  Image is split along a horizontal or vertical axis.
+  ROIs are drawn on one half; the system mirrors them to the opposite half.
+  Graph types: Intensity (source half only), Split ratio (source / mirror)
+  Split ratio variants: Up/Down, Down/Up, Left/Right, Right/Left
+  Every frame is processed in spatial mode.
 
 
 TYPICAL USE CASES
@@ -118,57 +251,57 @@ USE CASE 1: Basic Testing / Demo Setup
    Mode: Snap mode (circular buffer OFF)
    Hardware: Demo camera
    Configuration: config_example.txt
-   
+
    Perfect for:
    - Learning the system
-   - Testing ROI setups
-   - Verifying acquisition sequences
+   - Testing ROI setups and sequences
    - No special hardware needed
 
-USE CASE 2: Research Lab - Manual Control
+USE CASE 2: Research Lab - Manual Light Control
    Mode: Snap mode (circular buffer OFF)
    Hardware: Real camera (no triggers)
-   Configuration: config_RealCamera_NoArduino.txt (create custom)
-   
+
    Perfect for:
    - Live cell imaging with GUI control
    - Single or multi-channel time-lapse
-   - Event-driven experiments
-   - When hardware triggers aren't available
-   - Simplified setup without Arduino
+   - When hardware triggers are not available
 
-USE CASE 3: Production - Automated High-Speed
+USE CASE 3: Production - Hardware-Synchronized
    Mode: Circular buffer mode (circular buffer ON)
-   Hardware: Real camera + Arduino triggers
+   Hardware: Real camera + Arduino Giga R1 + LED drivers
    Configuration: config_RealSetup.txt
-   
+
    Perfect for:
    - High-throughput screening
    - Fast dynamics imaging
-   - Precise multi-channel synchronization
+   - Precise multi-channel LED synchronization
+   - Photoswitching / RESOLFT protocols
    - Long acquisitions (thousands of frames)
-   - Automated systems
 
 
 CONFIGURATION OPTIONS
 ---------------------
 
 Essential Settings:
-  USE_CIRCULAR_BUFFER = true/false    Choose acquisition mode
-  CAMERA_CONFIG       = <group>       Camera configuration group
-  CAMERA_TRIGGER_CONFIG = <preset>    Trigger mode (if using circular buffer)
-  SPECTRAL_1 ... SPECTRAL_8           Channel definitions (filter, LED, etc.)
-  SERIAL_PORT         = <port>        Arduino communication port (if used)
+  USE_CIRCULAR_BUFFER     = true/false   Choose acquisition mode
+  USE_SIMPLE_SNAP_MODE    = true/false   Override to snap mode even if buffer enabled
+  CAMERA_CONFIG           = <group>      Camera configuration group
+  CAMERA_TRIGGER_CONFIG   = <preset>     External trigger mode preset (circular buffer)
+  SPECTRAL_1 ... SPECTRAL_N              Channel definitions (name + pin assignment)
+  SERIAL_PORT             = <port>       Arduino COM port (circular buffer only)
 
-Acquisition Sequence:
-  - Define up to 8 steps
-  - Each step: Channel, Exposure, Interval, Frames, Loop logic
-  - Flexible sequencing with goto/repeat
+  Channel pin assignments in config map each named channel to a Port J bit (1-5).
+  Pin 1 = bit 1 (0x02), Pin 2 = bit 2 (0x04), ..., Pin 5 = bit 5 (0x20).
+  Pin 0 (bit 0) is reserved for the camera trigger ??? do not assign a channel to it.
 
-Visualization:
-  - Choose which frames to display (every, odd, even, every Nth)
-  - Select which ROIs to plot on each graph
-  - Up to 4 graphs simultaneously
+Acquisition Sequence Constraints:
+  - intervalMs must be >= exposureMs (not enforced by firmware; incorrect values
+    will cause the interval wait to return immediately)
+  - exposureMs = 0 is valid ??? creates a photoswitching row
+  - frames = 0 means run until loop counter expires or quit is pressed
+  - loopGoto = 0 means no loop; > 0 is 1-based row index
+  - constIllum channel names must not include a channel on pin 1
+    (BeanShell automatically masks the camera bit: constIllum &= 0xFE)
 
 Live Pictures Checkbox:
   - Controls GUI display only
@@ -184,17 +317,14 @@ Minimum (Snap Mode):
   - Any compatible camera (including demo)
   - PC with Java runtime
 
-Recommended (Snap Mode):
-  - 8+ GB RAM
-  - Real microscope camera
-  - 100+ GB storage for image data
-
 Required (Circular Buffer Mode):
   - All of the above, plus:
-  - Camera with external trigger support
-  - Arduino or trigger generator
-  - Trigger cable connection
-  - 16+ GB RAM (for large buffers)
+  - Camera with external trigger input
+  - Arduino Giga R1 running LUMETRIC_ArdFirmware (PlatformIO project)
+  - Camera trigger cable: Arduino Port J bit 0 ??? camera trigger input
+  - Camera feedback cable: camera trigger output / shutter signal ??? Arduino CAM_FEEDBACK_PIN
+  - LED driver cables: Arduino Port J bits 1-5 ??? LED drivers / AOTF modulators
+  - 16+ GB RAM recommended (for large circular buffers)
 
 
 PERFORMANCE BENCHMARKS
@@ -216,68 +346,96 @@ TROUBLESHOOTING QUICK REFERENCE
 --------------------------------
 
 Acquisition hangs / no frames captured:
-  → Using demo camera with USE_CIRCULAR_BUFFER = true
-  → Solution: Set USE_CIRCULAR_BUFFER = false
+  ??? Using demo camera with USE_CIRCULAR_BUFFER = true
+  ??? Solution: Set USE_CIRCULAR_BUFFER = false  OR  USE_SIMPLE_SNAP_MODE = true
 
 Buffer overflow warnings:
-  → Acquisition too fast or processing too slow
-  → Solution: Increase frame intervals or reduce ROIs
+  ??? Acquisition too fast or processing too slow
+  ??? Solution: Increase frame intervals, reduce ROI count, or reduce resolution
 
 Images not being saved:
-  → Check experiment folder was created
-  → Check disk space available
-  → Verify console shows "Saved frame X" messages
+  ??? Check experiment folder was created (console messages)
+  ??? Check available disk space
+  ??? Verify console shows "Saved frame X" messages
 
-Arduino events not detected:
-  → Check SERIAL_PORT setting
-  → Verify Arduino is connected and sending data
-  → Test serial monitor in Arduino IDE first
+Arduino not responding:
+  ??? Check SERIAL_PORT matches Windows Device Manager COM port
+  ??? Verify firmware was uploaded (PlatformIO: Upload task, exit code 0)
+  ??? Test serial monitor at 57600 baud
+
+Camera trigger not working (frames not captured):
+  ??? Verify pinPattern bit 0 is set for rows with exposure > 0 (automatic if
+     Channel field is non-empty)
+  ??? Check CAM_FEEDBACK_PIN wiring (camera shutter signal ??? Arduino)
+  ??? Confirm camera is in external trigger mode (CAMERA_TRIGGER_CONFIG)
+
+Constant Illum LEDs not behaving correctly:
+  ??? Confirm channel name in Constant Illum column matches config exactly
+  ??? Verify channel is not assigned to pin 1 (camera pin)
+  ??? Check Port J wiring for the expected bit
+
+Photoswitching row does nothing visible:
+  ??? Ensure Constant Illum column is set to the desired LED channel.
+     With exposure = 0, pinPattern = 0 (no trigger), only constIllum fires.
 
 
 GETTING STARTED
 ---------------
 
 Step 1: Choose your mode
-   - Testing? Use config_example.txt (demo camera + snap mode)
-   - Lab use without Arduino? Create custom config (real camera + snap mode)
-   - Production? Use config_RealSetup.txt (real camera + circular buffer)
+   - Testing?      Use config_example.txt (demo camera + snap mode)
+   - Lab imaging?  Create custom config (real camera + snap mode)
+   - Production?   Use config_RealSetup.txt (real camera + circular buffer)
 
 Step 2: Edit configuration file
-   - Set USE_CIRCULAR_BUFFER appropriately
+   - Set USE_CIRCULAR_BUFFER and USE_SIMPLE_SNAP_MODE appropriately
    - Configure camera settings for your hardware
-   - Define your channel sequence
-   - Set up visualization preferences
+   - Define channel names and pin assignments
+   - Set SERIAL_PORT for Arduino (if using circular buffer)
 
 Step 3: Load and run
    - Open Micro-Manager
-   - Run GUI_Test.bsh script
+   - Run LUMETRIC.bsh
    - Load configuration file (auto-loads last used)
-   - Set up ROIs
+   - Build acquisition sequence in the Acquisition Settings tab
+   - Set up visualization in the Data Visualization tab
    - Click "OK - Start Acquisition"
 
 Step 4: Monitor
-   - Watch console for frame progress
-   - Check graphs for ROI data
-   - Verify images saving to experiment folder
+   - Live view panel (if enabled) shows current frames with ROI overlays
+   - Graphs update in real time
+   - Press "Event" to mark timestamps on all graphs
+   - Press "Loop Switch" to send byte 67 to Arduino (row-jump)
+   - Press "Quit Acquisition" to stop, save all data, and export CSVs
 
 
 ADVANCED FEATURES
 -----------------
 
-Custom Event Integration:
-  - Modify event detection logic for specific protocols
-  - Integrate with external hardware via serial
-  - Trigger actions based on ROI intensities
+Photoswitching / RESOLFT Protocols:
+  - Use photoswitching rows (exposure = 0) to interleave illumination steps
+    between imaging rows without capturing frames
+  - Set Constant Illum to the switching laser channel for that row
 
-Multi-Experiment Sessions:
-  - Each acquisition creates new timestamped folder
-  - All data self-contained and organized
-  - Easy to run multiple experiments in sequence
+Multi-Channel Synchronized Imaging:
+  - Comma-separate multiple channel names in the Channel column
+  - All listed LED bits fire together with the camera trigger
+  - Use separate rows for sequential (alternating) channel imaging
 
-Frame Filtering for Visualization:
-  - Display only relevant frames in graphs
-  - Reduce computation overhead
-  - Example: Plot CFP every frame, YFP every 10th frame
+Loop Switch for Triggered Experiments:
+  - Assign loopSwitchGoto to a recovery or imaging row
+  - Press the Loop Switch button (or send byte 67) to jump on demand,
+    e.g. to switch from a stimulation sequence to an imaging sequence
+
+Frame Ratio Imaging:
+  - Alternate illumination channels on odd/even frames (two table rows in a loop)
+  - Use "Frame ratio" graph type: odd frame / even frame per ROI
+  - Ratiometric measurement corrects for intensity drift
+
+Split Ratio (Dual-View / Ratiometric):
+  - Configure Spatial mode with splitAxis and roiSourceRegion in settings
+  - Draw ROIs once on the source half; system mirrors them to the opposite half
+  - Use "Split ratio" graph type for ratiometric or FRET analysis
 
 
 TECHNICAL SPECIFICATIONS
@@ -285,48 +443,55 @@ TECHNICAL SPECIFICATIONS
 
 Supported Image Formats:
   - Input: 8-bit (byte), 16-bit (short) grayscale
-  - Output: TIFF (uncompressed)
+  - Output: TIFF (uncompressed, Frame_XXXXX.tif)
 
 ROI Types Supported:
-  - Rectangle, Circle, Freehand (any ImageJ ROI type)
-  - Up to 4 ROIs per acquisition (expandable)
+  - Any ImageJ ROI type (rectangle, oval, freehand, polygon)
 
 Data Output:
-  - Images: Frame_XXXXX.tif (5-digit zero-padded)
-  - ROI Data: CSV format with headers
-  - Settings: CSV format (human + Arduino readable)
-  - ROIs: ImageJ RoiSet.zip format
+  - Images:      Frame_XXXXX.tif (5-digit zero-padded)
+  - Settings:    AquisitionSettings.csv (human-readable)
+                 AquisitionSettings_Arduino.csv (pin/byte values)
+  - Graph data:  Graph1_<type>.csv, Graph2_<type>.csv ...
+  - Events:      EventTimes.csv
+  - ROIs:        RoiSet.zip (ImageJ format)
+
+Acquisition Table Limits:
+  - Maximum rows:  32 (Arduino firmware MAX_ACQ_ROWS)
+  - exposureMs:    0-65535 ms (uint16); 0 = photoswitching row
+  - intervalMs:    0-65535 ms (uint16)
+  - frames:        0-65535 (uint16); 0 = run until loop end or quit
+  - loopTimes:     0-65535 (uint16); 0 = infinite loop
 
 Memory Management:
   - Snap mode: Minimal overhead
   - Circular buffer: 75% heap allocated automatically
-  - Recommended JVM heap: 4-8 GB minimum
+  - Recommended JVM heap: 4-8 GB minimum for circular buffer
 
 
 SUPPORT & DOCUMENTATION
 ------------------------
 
 Additional documentation:
-  - CIRCULAR_BUFFER_README.md - Detailed circular buffer guide
-  - config_example.txt - Commented example configuration
-  - config_RealSetup.txt - Production configuration template
+  - CIRCULAR_BUFFER_README.md  - Detailed circular buffer guide
+  - config_example.txt         - Commented example configuration
+  - config_RealSetup.txt       - Production configuration template
 
-Script structure:
-  - GUI_Test.bsh - Main acquisition script (3100+ lines)
-  - Lines 1-200: Configuration classes
-  - Lines 200-800: GUI construction
-  - Lines 800-1600: Setup and initialization
-  - Lines 1600-2400: Visualization system
-  - Lines 2400-3100: Acquisition engines
+Project files:
+  - LUMETRIC.bsh               - Main BeanShell acquisition script
+  - LUMETRIC_ArdFirmware.ino   - Arduino firmware (PlatformIO / Arduino Giga R1)
+  - platformio.ini             - PlatformIO build configuration
 
 
 VERSION INFORMATION
 -------------------
 
-Script: GUI_Test.bsh
-Last Updated: February 2026
-Micro-Manager: 2.0 required
-BeanShell: 2.0b6
-Java: 8+ required
+Script:          LUMETRIC.bsh
+Firmware:        LUMETRIC_ArdFirmware.ino
+Last Updated:    March 2026
+Micro-Manager:   2.0 required
+BeanShell:       2.0b6
+Java:            8+ required
+Arduino target:  Arduino Giga R1 (STM32H747), via PlatformIO
 
 ================================================================================

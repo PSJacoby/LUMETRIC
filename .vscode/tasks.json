@@ -1,0 +1,10 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "PlatformIO Upload giga_r1_m7",
+			"type": "shell",
+			"command": "C:\\Users\\pauli\\.platformio\\penv\\Scripts\\platformio.exe run --target upload --environment giga_r1_m7"
+		}
+	]
+}

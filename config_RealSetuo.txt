@@ -27,5 +27,9 @@ USE_CIRCULAR_BUFFER = true
 SPECTRAL_CONFIG_GROUP = SpectrAmazing
 SPECTRAL_DEFAULT_CONFIG = BrightLight
 
+# Arduino channel config group (MicroManager config group where presets set Arduino-Switch,State)
+# Each preset name becomes a channel name; its State value (2,4,8,...) maps to PIN_2, PIN_3, PIN_4,...
+ARDUINO_CONFIG_GROUP = Channel
+
 # Serial Port
 SERIAL_PORT = COM4

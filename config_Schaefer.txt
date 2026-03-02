@@ -3,16 +3,15 @@
 # Format: PIN_NUMBER = CHANNEL_NAME
 
 # Pin assignments (Pin 1 is always Camera TTL)
-PIN_1 = Camera
-PIN_2 = Blau
-PIN_3 = Orange
-PIN_4 = UV
-
+PIN_2 = _365
+PIN_3 = _395
+PIN_4 = _450
+PIN_5 = _White
 
 # Camera Configuration Settings (MicroManager config names)
 CAMERA_CONFIG_GROUP = Hamamatsu
 CAMERA_SNAP_CONFIG = Snapping_and_Live
-CAMERA_TRIGGER_CONFIG = Snapping_and_Live
+CAMERA_TRIGGER_CONFIG = TTL
 
 # Acquisition Mode
 # true = Use circular buffer (for real cameras with high-speed acquisition)
@@ -23,5 +22,9 @@ USE_CIRCULAR_BUFFER = true
 SPECTRAL_CONFIG_GROUP = SpectrAmazing
 SPECTRAL_DEFAULT_CONFIG = BrightLight
 
+# Arduino channel config group (MicroManager config group where presets set Arduino-Switch,State)
+# Each preset name becomes a channel name; its State value (2,4,8,...) maps to PIN_2, PIN_3, PIN_4,...
+ARDUINO_CONFIG_GROUP = LUMETRIC
+
 # Serial Port
-SERIAL_PORT = COM4
+SERIAL_PORT = COM3
