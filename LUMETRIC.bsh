@@ -3363,7 +3363,9 @@ void createInlineAcquisitionWindow() {
     // Event button - adds vertical line markers to all active graphs
     eventButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
-            long currentTime = System.currentTimeMillis() - acquisitionStartTime[0];
+            long systemTime = System.currentTimeMillis();
+            long currentTime = systemTime - acquisitionStartTime[0];
+            print("EVENT PRESSED: systemTime=" + systemTime + ", acquisitionStartTime[0]=" + acquisitionStartTime[0] + ", offset=" + currentTime + " ms");
             // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
             // Store event time
             eventTimes.add(new Long(currentTime));
@@ -3864,9 +3866,9 @@ void createInlineAcquisitionWindow() {
                 print("================================");
 
                 if (useCircularBuffer) {
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels, acqFrame);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame);
                 } else {
-                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime[0], liveViewPanelRef[0], charts, chartPanels, acqFrame);
+                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame);
                 }
             } catch (Exception ex) {
                 print("ERROR in acquisition thread: " + ex.getMessage());
@@ -4809,7 +4811,7 @@ void convertTiffsToStack(String experimentFolder) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame) {
     // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -5052,10 +5054,18 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     }
 
     // Timing reference anchored to the moment byte 61 fires (Arduino starts), not GUI creation.
-    // startTime passed in was set several seconds earlier at GUI init — that offset would make
+    // startTime[0] was set several seconds earlier at GUI init — that offset would make
     // all timestamps in the CSV/graphs appear shifted by the full pre-arm duration.
     // (Same approach as Paulis_AACon: `long start = System.nanoTime()` after serial write.)
+    // Update startTime[0] NOW so event button timestamps match frame timestamps.
     long acqLoopStart = System.currentTimeMillis();
+    print("=== TIMING ANCHOR DEBUG ===");
+    print("  acquisitionStartTime[0] BEFORE update: " + startTime[0]);
+    print("  acqLoopStart (byte 61 time):            " + acqLoopStart);
+    print("  Offset (GUI creation to byte 61):       " + (acqLoopStart - startTime[0]) + " ms");
+    startTime[0] = acqLoopStart;
+    print("  acquisitionStartTime[0] AFTER update:  " + startTime[0]);
+    print("===========================");
 
     // Monitoring variables
     int maxBufferDepth = 0;
@@ -5116,8 +5126,13 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                 
                 if (taggedImg != null) {
                     framesProcessed++;
-                    long currentTime = System.currentTimeMillis() - acqLoopStart;
+                    long systemTime = System.currentTimeMillis();
+                    long currentTime = systemTime - acqLoopStart;
                     boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
+                    
+                    if (framesProcessed <= 3) {
+                        print("FRAME " + framesProcessed + ": systemTime=" + systemTime + ", acqLoopStart=" + acqLoopStart + ", timestamp=" + currentTime + " ms");
+                    }
                     
                     // Reset frame timeout
                     lastFrameTime = System.currentTimeMillis();
@@ -5302,7 +5317,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame) {
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame) {
     // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -5401,6 +5416,9 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         // which prevents the camera from opening its shutter during snap().
         try { mmc.setAutoShutter(true); } catch (Exception e) {}
         
+        // Update timing reference to NOW (start of snap loop), so event timestamps match frame timestamps
+        startTime[0] = System.currentTimeMillis();
+        
         // Simple continuous snapping loop
         while (running[0] && globalFrameNumber < maxFrames) {
             try {
@@ -5475,7 +5493,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                     // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
-                long currentTime = System.currentTimeMillis() - startTime;
+                long currentTime = System.currentTimeMillis() - startTime[0];
                 boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
@@ -5742,7 +5760,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 // Save image to disk (always)
                 saveImageAsTiff(image, globalFrameNumber, config.experimentFolder);
                 
-                long currentTime = System.currentTimeMillis() - startTime;
+                long currentTime = System.currentTimeMillis() - startTime[0];
                 boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                 
                 // Update live view if enabled and throttled
