@@ -140,7 +140,7 @@ int    acqRowCount_ = 0;
 // This ensures the LED pulse exactly matches confirmed sensor integration time,
 // eliminating any latency between J0↑ and actual sensor-open.
 // Max wait for FIRE HIGH is CAM_FEEDBACK_TIMEOUT_US (abort frame if exceeded).
-// #define CAM_FEEDBACK_BYPASS
+#define CAM_FEEDBACK_BYPASS   // ← BYPASS MODE: Camera feedback wire is NOT connected
 
 #define CAM_FEEDBACK_TIMEOUT_US 50000UL  // 50 ms max wait for FIRE signal
 
@@ -176,6 +176,9 @@ void setup() {
    pinMode(31, OUTPUT);
    pinMode(33, OUTPUT);
    pinMode(35, OUTPUT);
+
+   // Initialize all Port J pins to LOW (off state)
+   setPortJ(0);
 
    #ifdef TLV5618
    digitalWrite(latchPin, HIGH);
@@ -296,13 +299,23 @@ void checkSerial_acq(bool &running, bool &switchReq) {
 //   If exposureMs == 0 (photoswitching / dark row):
 //     Apply constIllum only — no camera trigger, no shutter wait
 //   Both: wait until intervalMs has elapsed from frame start, then return
+//
+// INTERVAL TIMING NOTE: The interval gap uses millis() (1 ms resolution), not micros().
+// This deliberately introduces ±1 ms of quantisation jitter into the frame period,
+// matching the behaviour of the old Arduino UNO firmware (which also used millis() for
+// the interval).  Without this jitter the Giga R1's micros() precision phase-locks the
+// trigger to the camera's internal clock cycle (112 ppm crystal difference).  When the
+// locked phase falls inside the camera's ~20 ms readout-blind window, every frame is
+// double-bright until the slow drift walks the phase out again.  The ±1 ms dither is
+// 10× larger than the per-frame clock drift and randomises the phase each frame,
+// distributing any doubles uniformly and infrequently instead of in dense clusters.
+// The EXPOSURE timing retains micros() precision since exact LED pulse width matters.
 
 void doExposure(byte pinPattern, uint16_t exposureMs, byte constIllum, uint16_t intervalMs,
                 bool &running, bool &switchReq) {
 
-   // Use micros() throughout — DWT cycle counter on Giga R1 (480 MHz), ~2 ns resolution.
-   unsigned long frameStartUs = micros();
-   unsigned long intervalUs   = (unsigned long)intervalMs * 1000UL;
+   // Interval paced with millis() to restore natural ±1 ms jitter (see NOTE above).
+   unsigned long frameStartMs = millis();
 
    if (exposureMs > 0) {
       unsigned long exposureUs  = (unsigned long)exposureMs * 1000UL;
@@ -361,8 +374,9 @@ void doExposure(byte pinPattern, uint16_t exposureMs, byte constIllum, uint16_t 
       setPortJ(constIllum);
    }
 
-   // Wait remainder of interval (µs-timed from frameStartUs), checking serial while spinning.
-   while ((unsigned long)(micros() - frameStartUs) < intervalUs) {
+   // Wait remainder of interval (ms-timed from frameStartMs), checking serial while spinning.
+   // millis() granularity gives ±1 ms natural dither — intentional, see NOTE above.
+   while ((unsigned long)(millis() - frameStartMs) < (unsigned long)intervalMs) {
       checkSerial_acq(running, switchReq);
       if (!running) { setPortJ(0); return; }
    }

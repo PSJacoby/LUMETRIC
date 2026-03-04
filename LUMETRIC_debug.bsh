@@ -1,0 +1,280 @@
+
+// =============================================================================
+// LUMETRIC_debug.bsh
+// =============================================================================
+// Minimal acquisition script that replicates the EXACT camera / serial / buffer
+// sequence of Paulis_AACon3.0.bsh — stripped of all GUI complexity.
+//
+// What this script does (in order):
+//   1.  Simple GenericDialog for acquisition parameters
+//   2.  Send Arduino stop (byte 66) to clear any stray pulses
+//   3.  setConfig → TriggerConfig   (single call, no snap-config toggle before it)
+//   4.  startSequenceAcquisition(500000, 0, true)   (exactly like old script)
+//   5.  Build + send case-60 table  (1 row, user params)
+//   6.  Send case-61 start
+//   7.  Acquisition loop — popNextTaggedImage, measure full-frame mean, store
+//   8.  On user STOP: stopSequenceAcquisition + byte 66
+//   9.  setConfig → SnapConfig   (restore, no extra calls)
+//  10.  Save CSV to Desktop
+//
+// NO setAutoShutter() calls anywhere.
+// NO pre-arm snap-config toggle.
+// =============================================================================
+
+import mmcorej.CharVector;
+import mmcorej.TaggedImage;
+import org.micromanager.data.Coords;
+import org.micromanager.data.Datastore;
+import org.micromanager.data.Image;
+import ij.process.ImageProcessor;
+import ij.process.ImageStatistics;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.util.ArrayList;
+import javax.swing.*;
+import java.awt.GridLayout;
+
+// ============================================================
+// CONFIG — must match your MM config group / serial port names
+// ============================================================
+String CAM_GROUP   = "Hamamatsu";
+String TRIG_CONFIG = "TTL";
+String SNAP_CONFIG = "Snapping_and_Live";
+String SERIAL_PORT = "COM3";
+
+// ============================================================
+// PARAMETER DIALOG
+// ============================================================
+ij.gui.GenericDialog gd = new ij.gui.GenericDialog("LUMETRIC Debug — Parameters");
+gd.addNumericField("Pin pattern (decimal, 5 = TTL+CFP)", 5, 0);
+gd.addNumericField("Exposure [ms]", 100, 0);
+gd.addNumericField("Interval [ms]", 1000, 0);
+gd.addNumericField("Frames (0 = run until Stop button)", 0, 0);
+gd.addNumericField("startSequenceAcquisition numFrames (500000 = original old script value)", 500000, 0);
+gd.addMessage("If no bright frames now, the cause was AutoShutter bytes corrupting the serial stream.");
+gd.showDialog();
+if (gd.wasCanceled()) { print("Cancelled."); return; }
+
+int pinPattern = (int) gd.getNextNumber();
+int exposureMs = (int) gd.getNextNumber();
+int intervalMs = (int) gd.getNextNumber();
+int reqFrames  = (int) gd.getNextNumber();
+int seqNumFrames = (int) gd.getNextNumber();
+
+print("=== LUMETRIC_debug: params  pinPattern=" + pinPattern
+    + "  exp=" + exposureMs + " ms  interval=" + intervalMs
+    + " ms  frames=" + reqFrames + " ===");
+
+// ============================================================
+// STOP BUTTON
+// ============================================================
+boolean[] stopFlag = new boolean[]{ false };   // array so the inner class can write it
+
+JFrame stopFrame = new JFrame("LUMETRIC Debug — Running");
+stopFrame.setLayout(new GridLayout(1, 1));
+JButton stopBtn = new JButton("STOP Acquisition");
+stopBtn.setFont(stopBtn.getFont().deriveFont(16.0f));
+stopBtn.addActionListener(new java.awt.event.ActionListener() {
+    public void actionPerformed(java.awt.event.ActionEvent evt) {
+        stopFlag[0] = true;
+        stopFrame.setVisible(false);
+        stopFrame.dispose();
+    }
+});
+stopFrame.add(stopBtn);
+stopFrame.pack();
+stopFrame.setVisible(true);
+
+// ============================================================
+// DATA STORE + DISPLAY
+// ============================================================
+Datastore store = mm.data().createRAMDatastore();
+Coords.CoordsBuilder cb = mm.data().getCoordsBuilder().z(0).c(0).p(0).t(0);
+mm.displays().createDisplay(store);
+
+// ============================================================
+// HELPER: encode one uint16 field into CharVector
+//   Avoids sending byte 40 (MM keep-alive) or 251 on the wire.
+//   Matches the encodeU16 logic in LUMETRIC.bsh exactly.
+// ============================================================
+encodeU16(CharVector cv, int val) {
+    int hi = (val >> 8) & 0xFF;
+    int lo =  val       & 0xFF;
+    if      (hi != 40 && lo != 40 && lo != 251) { cv.add((char)hi);  cv.add((char)lo); }
+    else if (hi == 40 && lo != 40 && lo != 251) { cv.add((char)235); cv.add((char)lo); }
+    else if (hi != 40 && lo == 40)               { cv.add((char)236); cv.add((char)hi); }
+    else if (hi != 40 && lo == 251)              { cv.add((char)237); cv.add((char)hi); }
+    else if (hi == 40 && lo == 40)               { cv.add((char)238); cv.add((char)0);  }
+    else                                          { cv.add((char)239); cv.add((char)0);  }
+}
+
+// ============================================================
+// STEP 1 — send Arduino stop to clear any stray TTL pulses
+// ============================================================
+try {
+    CharVector cv66pre = new CharVector();
+    cv66pre.add((char)66);
+    mmc.writeToSerialPort(SERIAL_PORT, cv66pre);
+    Thread.sleep(100);
+    print("Pre-arm: byte 66 sent to Arduino (stop any ongoing run).");
+} catch (Exception e) {
+    print("Pre-arm byte-66 warning: " + e.getMessage());
+}
+
+// ============================================================
+// STEP 2 — set trigger config (ONE call, no pre-toggle)
+//   This is exactly what Paulis_AACon does:
+//     mmc.setConfig("Hamamatsu","GlobalResetLevelTriggerArduinoMode");
+// ============================================================
+print("Camera config BEFORE arm: " + mmc.getCurrentConfig(CAM_GROUP));
+mmc.setConfig(CAM_GROUP, TRIG_CONFIG);
+Thread.sleep(300);
+print("Camera config AFTER setConfig: " + mmc.getCurrentConfig(CAM_GROUP));
+
+// ============================================================
+// STEP 3 — ARM camera
+//   Paulis_AACon: mmc.startSequenceAcquisition(500000, 0, true)
+//   No setAutoShutter. No config touch after this line.
+// ============================================================
+String camLabel = mmc.getCameraDevice();
+print("Camera device label: " + camLabel);
+
+// CRITICAL: disable auto-shutter BEFORE startSequenceAcquisition.
+// MM's AutoShutter=1 (set at startup from config file) causes the core to
+// automatically send Arduino-Shutter "Request 1" bytes to COM3 the instant
+// startSequenceAcquisition() is called, and "Request 0" on stop.
+// Those bytes arrive at LUMETRIC firmware and corrupt the case-60 table parse.
+// Confirmed in CoreLog: "Arduino-Shutter Request 1" fires at 21:30:19.629,
+// immediately inside startSequenceAcquisition(), before case-60/61 are sent.
+mmc.setAutoShutter(false);
+print("Auto-shutter disabled.");
+
+// numFrames value controls which DCAM internal API is called:
+//   small n  → dcam_sequence(n) → idles between triggers → no bright frames
+//   large n  → dcam_capture()  → free-runs between triggers → bright frames
+// Use the dialog to test: 100, 1000, 500000
+print("Calling startSequenceAcquisition(" + seqNumFrames + ", 0, true)...");
+mmc.startSequenceAcquisition(seqNumFrames, 0, true);
+print("startSequenceAcquisition(" + seqNumFrames + ", 0, true) called — camera armed.");
+
+// Verify trigger survived the arm (DCAM sometimes reverts to INTERNAL here)
+try {
+    String trigSrc  = mmc.getProperty(mmc.getCameraDevice(), "TRIGGER SOURCE");
+    String outputTrigSrc = "";
+    try { outputTrigSrc = mmc.getProperty(mmc.getCameraDevice(), "OUTPUT TRIGGER SOURCE[0]"); } catch (Exception ee) {}
+    print("Post-arm  TRIGGER SOURCE       = " + trigSrc);
+    print("Post-arm  OUTPUT TRIGGER SOURCE= " + outputTrigSrc);
+} catch (Exception e) { print("Post-arm property read: " + e.getMessage()); }
+
+// ============================================================
+// STEP 4 — build and send case-60 acquisition table (1 row)
+// ============================================================
+CharVector cv60 = new CharVector();
+cv60.add((char)60);   // command byte
+cv60.add((char)1);    // 1 row
+
+//  Fields per row (all uint16 encoded):
+//    pinPattern, exposureMs, intervalMs, frames,
+//    loopGoto, loopTimes, constIllum, loopSwitchGoto
+encodeU16(cv60, pinPattern);
+encodeU16(cv60, exposureMs);
+encodeU16(cv60, intervalMs);
+encodeU16(cv60, reqFrames);   // 0 = run until kill
+encodeU16(cv60, 0);            // loopGoto
+encodeU16(cv60, 0);            // loopTimes
+encodeU16(cv60, 0);            // constIllum
+encodeU16(cv60, 0);            // loopSwitchGoto
+
+mmc.writeToSerialPort(SERIAL_PORT, cv60);
+print("Case 60 (table) sent — " + cv60.size() + " bytes.");
+
+// ============================================================
+// STEP 5 — send case-61 (start trigger)
+// ============================================================
+CharVector cv61 = new CharVector();
+cv61.add((char)61);
+mmc.writeToSerialPort(SERIAL_PORT, cv61);
+long acqStartNs = System.nanoTime();
+print("Case 61 (start) sent. Acquisition running... Press STOP to end.");
+
+// ============================================================
+// STEP 6 — ACQUISITION LOOP
+//   Modelled on Paulis_AACon's while loop:
+//     while (mmc.getRemainingImageCount() > 0
+//            || mmc.isSequenceRunning(mmc.getCameraDevice())) { ... }
+// ============================================================
+int curFrame = 0;
+ArrayList listTs    = new ArrayList();
+ArrayList listMeans = new ArrayList();
+
+while (mmc.getRemainingImageCount() > 0
+       || mmc.isSequenceRunning(mmc.getCameraDevice())) {
+
+    // User pressed STOP
+    if (stopFlag[0]) {
+        mmc.stopSequenceAcquisition();
+        CharVector cv66 = new CharVector();
+        cv66.add((char)66);
+        mmc.writeToSerialPort(SERIAL_PORT, cv66);
+        stopFlag[0] = false;
+        print("STOP requested — stopSequenceAcquisition() + byte 66 sent.");
+    }
+
+    if (mmc.getRemainingImageCount() > 0) {
+        TaggedImage tagged = mmc.popNextTaggedImage();
+        double ts = 0.0;
+        try { ts = tagged.tags.getDouble("ElapsedTime-ms"); } catch (Exception e) {}
+        listTs.add(ts);
+
+        Image image = mm.data().convertTaggedImage(tagged, cb.time(curFrame).build(), null);
+        store.putImage(image);
+
+        ImageProcessor ip = mm.data().ij().createProcessor(image);
+        double meanVal = ip.getStatistics().mean;
+        listMeans.add(meanVal);
+
+        if (curFrame % 5 == 0) {
+            print("  frame=" + curFrame + "  ts=" + (long)ts
+                  + " ms  mean=" + (long)meanVal);
+        }
+        curFrame++;
+    }
+}
+
+print("Loop ended. Total frames acquired: " + curFrame);
+
+// ============================================================
+// STEP 7 — RESTORE CAMERA CONFIG
+//   Paulis_AACon: mmc.setConfig("Hamamatsu","Snapping_and_Live")
+//   Nothing else. No stopSequenceAcquisition here. No setAutoShutter.
+// ============================================================
+mmc.setConfig(CAM_GROUP, SNAP_CONFIG);
+print("Camera config restored: " + mmc.getCurrentConfig(CAM_GROUP));
+
+// ============================================================
+// STEP 8 — SAVE CSV to Desktop
+// ============================================================
+String saveDir = System.getProperty("user.home") + "\\Desktop";
+File csvFile = new File(saveDir + "\\LUMETRIC_debug.csv");
+int fn = 1;
+while (csvFile.exists()) {
+    csvFile = new File(saveDir + "\\LUMETRIC_debug_" + fn + ".csv");
+    fn++;
+}
+FileWriter fw = new FileWriter(csvFile);
+BufferedWriter bw = new BufferedWriter(fw);
+bw.write("frame;timestamp_ms;mean_intensity");
+bw.newLine();
+for (int i = 0; i < listTs.size(); i++) {
+    bw.write(i + ";" + listTs.get(i).toString() + ";" + listMeans.get(i).toString());
+    bw.newLine();
+}
+bw.close();
+fw.close();
+print("CSV saved → " + csvFile.getAbsolutePath());
+
+// Close the stop button if still open
+try { stopFrame.setVisible(false); stopFrame.dispose(); } catch (Exception e) {}
+
+print("=== LUMETRIC_debug: DONE ===");

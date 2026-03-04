@@ -3824,7 +3824,6 @@ void createInlineAcquisitionWindow() {
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 // Send kill command (byte 66) to Arduino to stop hardware acquisition
                 try {
                     mmcorej.CharVector cv66 = new mmcorej.CharVector();
@@ -3834,13 +3833,17 @@ void createInlineAcquisitionWindow() {
                     // print("Arduino kill error: " + ardEx.getMessage());
                 }
                 acquisitionRunning[0] = false;
-                
-                // Export data to CSV - pass visualization rows for naming
+
+                // Hide the frame immediately so the user gets instant visual feedback.
+                // The background acquisition thread will call dispose() once its
+                // cleanup (config restore, stopSequenceAcquisition) is done.
+                // Hiding first vs waiting for dispose avoids a visible 1-3 s lag
+                // caused by USB property writes in the cleanup sequence.
+                acqFrame.setVisible(false);
+
+                // Export data to CSV on the EDT while cleanup runs in the background.
                 exportGraphDataToCSV(allDataRows, numActiveGraphs, config.acqSettings.visualizationRows);
                 exportEventTimesToCSV(eventTimes);
-                
-                // DON'T dispose frame here - let acquisition thread show popup first
-                // Frame will be disposed after statistics popup in acquisition thread
             }
         }
     });
@@ -4570,39 +4573,19 @@ void setupCircularBuffer() {
 // ==================== Save Image as TIFF ====================
 void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
     try {
-        // Handle both TaggedImage and MM Image types
+        // Convert to ImageProcessor via MM data layer — same method as Paulis_AACon.
+        // mm.data().convertTaggedImage() handles format, bit-depth, and calibration
+        // correctly without reflection on TaggedImage internals.
         ImageProcessor ip = null;
-        
-        if (img instanceof org.micromanager.data.Image) {
-            // MM2.0 Image
-            ip = mm.data().ij().createProcessor((org.micromanager.data.Image) img);
-        } else if (img != null) {
-            // Try to extract pixel data directly from TaggedImage
-            try {
-                // Get image dimensions
-                int width = (int) mmc.getImageWidth();
-                int height = (int) mmc.getImageHeight();
-                int bytesPerPixel = (int) mmc.getBytesPerPixel();
-                
-                // Extract pixel array
-                Object pixels = null;
-                if (img.getClass().getName().contains("TaggedImage")) {
-                    // Use reflection to get pix field
-                    java.lang.reflect.Field pixField = img.getClass().getField("pix");
-                    pixels = pixField.get(img);
-                }
-                
-                // Create appropriate processor based on bit depth
-                if (bytesPerPixel == 1 && pixels instanceof byte[]) {
-                    ip = new ByteProcessor(width, height);
-                    ip.setPixels((byte[]) pixels);
-                } else if (bytesPerPixel == 2 && pixels instanceof short[]) {
-                    ip = new ShortProcessor(width, height);
-                    ip.setPixels((short[]) pixels);
-                }
-            } catch (Exception e) {
-                // print("WARNING: Could not extract pixels from TaggedImage: " + e.getMessage());
+        try {
+            if (img instanceof org.micromanager.data.Image) {
+                ip = mm.data().ij().createProcessor((org.micromanager.data.Image) img);
+            } else if (img != null) {
+                org.micromanager.data.Image mmImage = mm.data().convertTaggedImage(img);
+                ip = mm.data().ij().createProcessor(mmImage);
             }
+        } catch (Exception e) {
+            // print("WARNING: Could not convert image: " + e.getMessage());
         }
         
         if (ip == null) {
@@ -4866,18 +4849,70 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     int approxCapacity = (int)(bufferMem / bytesPerImage);
     
     // PRE-ARM CLEANUP:
-    // IMPORTANT: stopSequenceAcquisition() blocks for ~30s if the camera is in external-trigger
-    // mode (Hamamatsu waits for the current trigger cycle to complete / timeout → DCAMERR_BUSY).
-    // Fix: switch to snap config FIRST (breaks trigger-wait), then stop, then arm.
-    print("Pre-arm: restoring snap mode to clear any stale trigger-wait state...");
-    try { mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig); } catch (Exception e) {}
-    Thread.sleep(300);
-    try { mmc.stopSequenceAcquisition(); } catch (Exception e) {}
-    Thread.sleep(200);
+    // Order matters carefully here — each step prevents a specific contamination path.
+
+    // Step 1: Stop Arduino immediately so no TTL pulses arrive while the camera
+    //         is in an undefined transition state.  Sending 66 is idempotent.
+    print("Pre-arm: sending Arduino stop (byte 66) to ensure no stray TTL pulses...");
+    try {
+        mmcorej.CharVector cv66pre = new mmcorej.CharVector();
+        cv66pre.add((char)66);
+        mmc.writeToSerialPort(config.serialPort, cv66pre);
+        print("  Arduino stop sent.");
+    } catch (Exception e) { print("  NOTE: Could not send stop byte: " + e.getMessage()); }
+
+    // Step 2: Stop MM live mode if it is running.
+    //         mm.live() uses the same sequence-acquisition engine as
+    //         startSequenceAcquisition(); calling both simultaneously leaves
+    //         the Hamamatsu adapter in an undefined state.
+    try {
+        if (mm.live().isLiveModeOn()) {
+            print("  Live mode was ON — stopping it before arming.");
+            mm.live().setLiveMode(false);
+            Thread.sleep(400); // wait for live thread to exit
+        }
+    } catch (Exception e) { print("  NOTE: Live mode stop: " + e.getMessage()); }
+
+    // Step 3: Disable auto-shutter NOW, before touching any trigger config.
+    //         If auto-shutter is on while the camera transitions into Level trigger
+    //         mode it can fire one "free" global-reset cycle, leaving residual
+    //         charge in the sensor that adds to frame 0 → double-bright first frame.
+    try { mmc.setAutoShutter(false); } catch (Exception e) {}
+    try { mmc.setShutterOpen(false); } catch (Exception e) {}
+
+    // Step 4: Only switch to snap config if the sequence is actually running.
+    //         This is needed to break an external-trigger-wait (which would cause
+    //         stopSequenceAcquisition() to block for ~30 s), but we must NOT write
+    //         TRIGGER SOURCE=INTERNAL unnecessarily: doing so on every pre-arm
+    //         (even when already stopped) means the camera goes INTERNAL → EXTERNAL
+    //         on every run. On the second run the Hamamatsu DCAM driver sometimes
+    //         fails to fully accept the EXTERNAL re-write, leaving it free-running.
+    //         The original Paulis_AACon script never toggled snap/trigger mid-session.
+    if (mmc.isSequenceRunning()) {
+        print("Pre-arm: sequence still running — switching to snap config to release trigger-wait lock...");
+        try { mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig); } catch (Exception e) {}
+        Thread.sleep(300);
+        try { mmc.stopSequenceAcquisition(); } catch (Exception e) {}
+        Thread.sleep(200);
+    } else {
+        print("Pre-arm: sequence already stopped — skipping snap-config toggle.");
+        try { mmc.stopSequenceAcquisition(); } catch (Exception e) {} // idempotent safety call
+    }
+
+    // Step 5: Confirm sequence is actually stopped.
+    if (mmc.isSequenceRunning()) {
+        print("WARNING: Sequence still running after stopSequenceAcquisition — retrying.");
+        try { mmc.stopSequenceAcquisition(); Thread.sleep(300); } catch (Exception e) {}
+    }
+
+    // Step 6: Flush any frames that arrived during cleanup.
+    try { mmc.clearCircularBuffer(); } catch (Exception e) {}
+
     print("Pre-arm cleanup done.");
 
     // Set camera to triggered mode.
-    // The Hamamatsu needs up to ~1.5 s to fully commit to LEVEL trigger mode.
+    // Auto-shutter is already OFF (done in pre-arm step 3) so the camera
+    // cannot self-expose during the 1.5 s transition into Level trigger mode.
     // If byte 61 fires too soon, early frames still use EDGE + internal exposure
     // → integration ≠ J0 HIGH duration → wrong brightness for those frames.
     try {
@@ -4889,20 +4924,24 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 
         // Dump every property defined in the config preset so we can verify
         // TriggerSource, TriggerActive, GlobalExposure etc. are all applied.
-        try {
-            mmcorej.Configuration cfgData = mmc.getConfigData(config.cameraConfigGroup, config.cameraTriggerConfig);
-            print("  Properties in preset '" + config.cameraTriggerConfig + "' (" + cfgData.size() + " total):");
-            for (int pi = 0; pi < (int)cfgData.size(); pi++) {
-                mmcorej.PropertySetting ps = cfgData.getSetting(pi);
-                // Also read back the live value from the device to catch any mismatch
-                String liveVal = "";
-                try { liveVal = mmc.getProperty(ps.getDeviceLabel(), ps.getPropertyName()); } catch (Exception re) { liveVal = "?"; }
-                print("    [" + ps.getDeviceLabel() + "] " + ps.getPropertyName()
-                      + " = " + ps.getPropertyValue()
-                      + "  (live: " + liveVal + ")");
+        // NOTE: each getProperty() is a synchronous serial round-trip to the camera
+        // (~100-500 ms on a slow USB adapter). Keep behind DEBUG_VERBOSE to avoid
+        // adding 1-5 seconds of startup latency during normal operation.
+        if (DEBUG_VERBOSE) {
+            try {
+                mmcorej.Configuration cfgData = mmc.getConfigData(config.cameraConfigGroup, config.cameraTriggerConfig);
+                print("  Properties in preset '" + config.cameraTriggerConfig + "' (" + cfgData.size() + " total):");
+                for (int pi = 0; pi < (int)cfgData.size(); pi++) {
+                    mmcorej.PropertySetting ps = cfgData.getSetting(pi);
+                    String liveVal = "";
+                    try { liveVal = mmc.getProperty(ps.getDeviceLabel(), ps.getPropertyName()); } catch (Exception re) { liveVal = "?"; }
+                    print("    [" + ps.getDeviceLabel() + "] " + ps.getPropertyName()
+                          + " = " + ps.getPropertyValue()
+                          + "  (live: " + liveVal + ")");
+                }
+            } catch (Exception dumpEx) {
+                print("  WARNING: Could not dump config preset: " + dumpEx.getMessage());
             }
-        } catch (Exception dumpEx) {
-            print("  WARNING: Could not dump config preset: " + dumpEx.getMessage());
         }
         print("=== END CAMERA CONFIG ===");
     } catch (Exception e) {
@@ -4910,48 +4949,84 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         return;
     }
     
-    // For demo camera, we'll use a large frame count
-    // In real usage, this would be set based on experiment duration
-    int numFrames = 10000; // Adjust as needed
-    boolean stopOnOverflow = false; // Continuous mode
+    // CRITICAL: numFrames must be SMALL (≤ ~1000) to keep DCAM in true sequence-capture mode.
+    // The Hamamatsu DCAM SDK uses numImages to switch between two internal modes:
+    //   - Sequence capture (small n):  sensor idles cleanly between external triggers
+    //   - Live capture    (large n):   sensor free-runs at maximum internal rate between
+    //                                  triggers, accumulating charge → bright frames.
+    // This is *not* about stopOnOverflow — it is a separate DCAM internal mode switch
+    // triggered purely by the numImages value. 500000, 1000000, Integer.MAX_VALUE all
+    // put DCAM in live-capture mode. Verified experimentally: changing numFrames changes
+    // the bright-frame frequency, which is impossible if only the interval mattered.
+    // 1000 frames @ 1 fps = 16 min — sufficient for any realistic experiment.
+    // If the experiment runs longer, the loop exits when the user presses Stop anyway.
+    int numFrames = 1000;
+    // IMPORTANT: stopOnOverflow must be TRUE.
+    // false → DCAM circular/ring buffer = "live capture" mode → camera's internal idle-reset
+    // cycles keep running between external J0 triggers → trigger arriving shortly after an idle
+    // reset causes the sensor to integrate charge from BOTH the idle cycle AND the J0-triggered
+    // exposure → double-bright frames.  It ALSO leaves the DCAM capture engine in live mode
+    // after stopSequenceAcquisition(), so the second acquisition run reverts to internal trigger.
+    // true → DCAM finite-sequence mode → camera idles cleanly between triggers, no idle resets.
+    // Matches the behaviour of the original working Paulis_AACon script (stopOnOverflow=true).
+    boolean stopOnOverflow = true;
     
     try {
-        // Disable auto-shutter and close Arduino-Shutter before arming camera.
+        // Auto-shutter is already disabled (pre-arm step 3); shutter is already closed.
+        // Confirm state just in case some other code re-enabled it.
         mmc.setAutoShutter(false);
         mmc.setShutterOpen(false);
         Thread.sleep(50);
         mmc.startSequenceAcquisition(numFrames, 0, stopOnOverflow);
-
-        // Some Hamamatsu adapter versions reset TRIGGER SOURCE to INTERNAL after startSequenceAcquisition.
-        // Force it back to EXTERNAL directly on the device as insurance.
-        try {
-            String camDev = mmc.getCameraDevice();
-            mmc.setProperty(camDev, "TRIGGER SOURCE", "EXTERNAL");
-            print("Forced TRIGGER SOURCE = EXTERNAL on " + camDev + " after arming.");
-        } catch (Exception trigEx) {
-            print("NOTE: Could not force TRIGGER SOURCE after arm: " + trigEx.getMessage());
-        }
+        // NOTE: do NOT call setConfig() or setProperty() on the camera here.
+        // The DCAM driver treats any property write while the sequence is running
+        // as a mode reconfiguration and resets the capture engine to free-running
+        // internal trigger → rolling shutter with no TTL synchronisation.
+        // Debug readback (DEBUG_VERBOSE) confirmed all preset properties survive
+        // startSequenceAcquisition() correctly without any post-arm correction.
 
         // DEBUG: read back all preset properties immediately after arming to detect
         // whether the adapter silently resets them (e.g. TRIGGER SOURCE → INTERNAL).
-        print("=== POST-ARM PROPERTY READBACK ===");
-        try {
-            mmcorej.Configuration cfgData = mmc.getConfigData(config.cameraConfigGroup, config.cameraTriggerConfig);
-            for (int pi = 0; pi < (int)cfgData.size(); pi++) {
-                mmcorej.PropertySetting ps = cfgData.getSetting(pi);
-                String live = "?";
-                try { live = mmc.getProperty(ps.getDeviceLabel(), ps.getPropertyName()); } catch (Exception re) {}
-                String status = live.equals(ps.getPropertyValue()) ? "OK" : "*** RESET ***";
-                print("  [" + status + "] " + ps.getPropertyName()
-                      + " : preset=" + ps.getPropertyValue() + "  live=" + live);
-            }
-        } catch (Exception dbg) { print("  readback failed: " + dbg.getMessage()); }
-        print("==================================");
+        // Each getProperty() is a synchronous serial round-trip; gated on DEBUG_VERBOSE
+        // to avoid adding ~1-4 s startup latency during normal operation.
+        if (DEBUG_VERBOSE) {
+            print("=== POST-ARM PROPERTY READBACK ===");
+            try {
+                mmcorej.Configuration cfgData = mmc.getConfigData(config.cameraConfigGroup, config.cameraTriggerConfig);
+                for (int pi = 0; pi < (int)cfgData.size(); pi++) {
+                    mmcorej.PropertySetting ps = cfgData.getSetting(pi);
+                    String live = "?";
+                    try { live = mmc.getProperty(ps.getDeviceLabel(), ps.getPropertyName()); } catch (Exception re) {}
+                    String status = live.equals(ps.getPropertyValue()) ? "OK" : "*** RESET ***";
+                    print("  [" + status + "] " + ps.getPropertyName()
+                          + " : preset=" + ps.getPropertyValue() + "  live=" + live);
+                }
+            } catch (Exception dbg) { print("  readback failed: " + dbg.getMessage()); }
+            print("==================================");
+        }
 
         // Give the camera time to finish its internal arming sequence before
         // the first Arduino trigger pulse arrives.
         Thread.sleep(500);
-        // Camera is armed — send byte 61 to start Arduino trigger loop.
+
+        // CRITICAL: flush the circular buffer right before releasing Arduino.
+        // Any frames that crept in during mode-switch or arming (spurious free
+        // cycles, live-mode remnants, etc.) must be discarded here.  If we do
+        // not flush, frame 0 in the buffer will be garbage and, when popped,
+        // its pixel values add on top of the real first-frame readout in the
+        // next pop → one double-bright frame at the start of every acquisition.
+        try {
+            int staleFrames = (int) mmc.getRemainingImageCount();
+            if (staleFrames > 0) {
+                print("WARNING: " + staleFrames + " stale frame(s) in buffer before byte 61 — flushing.");
+            }
+            mmc.clearCircularBuffer();
+            print("Circular buffer flushed — camera ready for first Arduino trigger.");
+        } catch (Exception flushEx) {
+            print("NOTE: Buffer flush: " + flushEx.getMessage());
+        }
+
+        // Camera is armed and buffer is clean — send byte 61 to start Arduino trigger loop.
         if (config.useCircularBuffer && !config.useSimpleSnapMode) {
             try {
                 mmcorej.CharVector cv61 = new mmcorej.CharVector();
@@ -4972,10 +5047,16 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
             print("Camera restored to snap config after arm failure.");
         } catch (Exception ce) { print("WARNING: Could not restore snap config: " + ce.getMessage()); }
         try { mmc.stopSequenceAcquisition(); } catch (Exception ce) {}
-        try { mmc.setAutoShutter(true); } catch (Exception ce) {}
+        // Do NOT call setAutoShutter(true) here — see teardown section for rationale.
         return;
     }
-    
+
+    // Timing reference anchored to the moment byte 61 fires (Arduino starts), not GUI creation.
+    // startTime passed in was set several seconds earlier at GUI init — that offset would make
+    // all timestamps in the CSV/graphs appear shifted by the full pre-arm duration.
+    // (Same approach as Paulis_AACon: `long start = System.nanoTime()` after serial write.)
+    long acqLoopStart = System.currentTimeMillis();
+
     // Monitoring variables
     int maxBufferDepth = 0;
     long lastWarningTime = 0;
@@ -5035,34 +5116,20 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                 
                 if (taggedImg != null) {
                     framesProcessed++;
-                    long currentTime = System.currentTimeMillis() - startTime;
+                    long currentTime = System.currentTimeMillis() - acqLoopStart;
                     boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                     
                     // Reset frame timeout
                     lastFrameTime = System.currentTimeMillis();
                     noFrameWarningShown = false;
                     
-                    // Convert TaggedImage to ImageProcessor
+                    // Convert TaggedImage to ImageProcessor via MM data layer.
+                    // Matches Paulis_AACon: mm.data().ij().createProcessor(image)
+                    // — avoids reflection on TaggedImage.pix, uses MM's own format/calibration pipeline.
                     ImageProcessor ip = null;
                     try {
-                        // Extract pixel data
-                        int width = (int) mmc.getImageWidth();
-                        int height = (int) mmc.getImageHeight();
-                        int bpp = (int) mmc.getBytesPerPixel();
-                        
-                        Object pixels = null;
-                        if (taggedImg.getClass().getName().contains("TaggedImage")) {
-                            java.lang.reflect.Field pixField = taggedImg.getClass().getField("pix");
-                            pixels = pixField.get(taggedImg);
-                        }
-                        
-                        if (bpp == 1 && pixels instanceof byte[]) {
-                            ip = new ij.process.ByteProcessor(width, height);
-                            ip.setPixels((byte[]) pixels);
-                        } else if (bpp == 2 && pixels instanceof short[]) {
-                            ip = new ij.process.ShortProcessor(width, height);
-                            ip.setPixels((short[]) pixels);
-                        }
+                        org.micromanager.data.Image mmImage = mm.data().convertTaggedImage(taggedImg);
+                        ip = mm.data().ij().createProcessor(mmImage);
                     } catch (Exception e) {
                         // print("WARNING: Could not convert image: " + e.getMessage());
                     }
@@ -5135,9 +5202,9 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         }
     }
     
-    // CLEANUP — order matters for Hamamatsu:
-    // stopSequenceAcquisition() blocks ~30s if camera is still in external-trigger-wait.
-    // Fix: switch to snap config FIRST, then stop.
+    // CLEANUP — REVISED ORDER to prevent camera state corruption:
+    // Stop sequence WHILE STILL IN TRIGGER MODE, then switch config.
+    // Switching config during active sequence can leave DCAM in confused state.
 
     // 1. Stop Arduino triggers
     try {
@@ -5147,18 +5214,56 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         print("Byte 66 sent — Arduino triggers stopped.");
     } catch (Exception e) { print("WARNING: Could not send stop byte: " + e.getMessage()); }
 
-    // 2. Switch camera to snap mode (breaks external-trigger-wait, stop returns instantly)
+    // 2. Send one final trigger pulse to break trigger-wait if camera is stuck waiting
+    //    This ensures stopSequenceAcquisition() won't block for 30s timeout
+    try {
+        mmcorej.CharVector cvKick = new mmcorej.CharVector();
+        cvKick.add((char)1);  // Case 1: set digital output
+        cvKick.add((char)1);  // Pattern = 0x01 (J0 HIGH - trigger pulse)
+        mmc.writeToSerialPort(config.serialPort, cvKick);
+        Thread.sleep(10);     // 10ms pulse
+        cvKick = new mmcorej.CharVector();
+        cvKick.add((char)1);
+        cvKick.add((char)0);  // J0 LOW
+        mmc.writeToSerialPort(config.serialPort, cvKick);
+        print("Sent final trigger pulse to release camera.");
+    } catch (Exception e) {}
+
+    // 3. Stop sequence WHILE STILL IN TRIGGER MODE (camera state stays clean)
+    try { 
+        mmc.stopSequenceAcquisition();
+        print("Sequence acquisition stopped (in trigger mode).");
+    } catch (Exception e) {
+        print("WARNING: stopSequenceAcquisition failed: " + e.getMessage());
+    }
+
+    // 4. NOW switch camera to snap mode (after acquisition fully stopped)
     try {
         mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
-        Thread.sleep(200);
+        Thread.sleep(50);
         print("Camera switched to snap mode.");
     } catch (Exception e) { print("WARNING: Could not restore snap config: " + e.getMessage()); }
 
-    // 3. Now stop the sequence — safe, won't block
-    try { mmc.stopSequenceAcquisition(); } catch (Exception e) {}
+    // 3b. Clear circular buffer to prevent old frames from contaminating next run
+    try { 
+        mmc.clearCircularBuffer();
+        print("Circular buffer cleared.");
+    } catch (Exception e) {}
 
-    // 4. Restore auto-shutter
-    try { mmc.setAutoShutter(true); } catch (Exception e) {}
+    // 3c. Reset Arduino Port J pins to LOW (all off) for clean next-run start
+    try {
+        mmcorej.CharVector cvReset = new mmcorej.CharVector();
+        cvReset.add((char)1);  // Case 1: set digital output
+        cvReset.add((char)0);  // Pattern = 0 (all pins LOW)
+        mmc.writeToSerialPort(config.serialPort, cvReset);
+        print("Arduino Port J reset to LOW.");
+    } catch (Exception e) {}
+
+    // 4. Leave auto-shutter OFF — intentionally NOT restoring setAutoShutter(true) here.
+    //    The original working Paulis_AACon script never called setAutoShutter at all.
+    //    Re-enabling it causes MM to actively manage the shutter device (Arduino-Shutter)
+    //    and send [1][pattern] serial bytes at unpredictable moments, including during the
+    //    next run's pre-arm config switch, which can corrupt trigger state.
     
     // Final report
     // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
@@ -5178,7 +5283,10 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         convertTiffsToStack(config.experimentFolder);
     }
     
-    // Dispose the acquisition frame after acquisition completes
+    // Dispose the acquisition frame after acquisition completes.
+    // The frame may already be invisible (hidden immediately by the Quit handler
+    // for instant user feedback), but dispose() must still be called to release
+    // native window resources.
     if (acqFrame != null) {
         try {
             SwingUtilities.invokeAndWait(new Runnable() {
@@ -5187,8 +5295,8 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                 }
             });
         } catch (Exception ex) {
-            System.err.println("ERROR disposing acquisition frame (Circular Buffer Mode):");
-            ex.printStackTrace();
+            // If the EDT is gone (e.g. MM shutting down), just dispose directly.
+            try { acqFrame.dispose(); } catch (Exception ex2) {}
         }
     }
 }
@@ -5248,7 +5356,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         // print("\nReading Frame Interval from table (other settings from GUI):");
         // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
         int frameIntervalMs = 1000; // Default
-        int maxFrames = 10000; // Default to large number for continuous acquisition
+        int maxFrames = Integer.MAX_VALUE; // No hard frame limit – run until user stops
         
         try {
             frameIntervalMs = Integer.parseInt(intervalStr.trim());
@@ -5283,6 +5391,16 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         final int finalFrameIntervalMs = frameIntervalMs;
         final int finalMaxFrames = maxFrames;
         
+        // Apply snap config once before the loop (no need to repeat on every frame).
+        // Calling setConfig inside the loop rewrites all camera properties each frame,
+        // which is slow and could confuse the camera or interfere with any TTL state.
+        mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+        
+        // Re-enable auto-shutter for snap() mode (no Arduino TTL control).
+        // If circular buffer mode ran previously, it left setAutoShutter(false) active,
+        // which prevents the camera from opening its shutter during snap().
+        try { mmc.setAutoShutter(true); } catch (Exception e) {}
+        
         // Simple continuous snapping loop
         while (running[0] && globalFrameNumber < maxFrames) {
             try {
@@ -5305,12 +5423,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                     // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
                 }
                 
-                // Set camera configuration and snap image
-                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                }
-                mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
-                
+                // Camera config was already applied once before this loop.
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
                     // print("  About to call mm.live().snap()");
                 }
@@ -5593,8 +5706,8 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                     for (int i = 0; i < 8; i++) {
                         String specName = (String) config.acqSettings.spectralRows.get(i).get(0);
                         if (specName.equals(channelName)) {
-                            // Set camera config
-                            mmc.setConfig(config.cameraConfigGroup, config.cameraSnappingConfig);
+                            // Set camera config (was erroneously using undefined cameraSnappingConfig)
+                            mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
                             Thread.sleep(50);
                             
                             // Set exposure
