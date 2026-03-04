@@ -743,7 +743,7 @@ class ChannelRenderer extends DefaultTableCellRenderer {
     }
 }
 
-// Custom cell renderer for Loop Times - shows infinity symbol when empty
+// Custom cell renderer for Loop Times - shows "0" for empty or zero (infinite loops)
 class LoopTimesRenderer extends DefaultTableCellRenderer {
     public Component getTableCellRendererComponent(JTable table, Object value,
             boolean isSelected, boolean hasFocus,
@@ -751,8 +751,8 @@ class LoopTimesRenderer extends DefaultTableCellRenderer {
         super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
         String val = value != null ? value.toString() : "";
-        if (val.isEmpty() || val.equals("0")) {
-            setText("∞");
+        if (val.isEmpty()) {
+            setText("0");
             setForeground(Color.GRAY);
             setHorizontalAlignment(SwingConstants.CENTER);
         } else {
