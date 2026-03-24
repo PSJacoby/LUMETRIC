@@ -3204,6 +3204,13 @@ void createInlineAcquisitionWindow() {
     topPanel.add(leftButtonPanel, BorderLayout.WEST);
     topPanel.add(rightButtonPanel, BorderLayout.EAST);
     
+    // Frame counter (center)
+    final JLabel frameCounterLabel = new JLabel("Frames: 0");
+    frameCounterLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
+    JPanel centerButtonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
+    centerButtonPanel.add(frameCounterLabel);
+    topPanel.add(centerButtonPanel, BorderLayout.CENTER);
+    
     // ===== MAIN CONTENT: ADAPTIVE LAYOUT =====
     JPanel mainPanel = new JPanel();
     
@@ -3865,9 +3872,9 @@ void createInlineAcquisitionWindow() {
                 print("================================");
 
                 if (useCircularBuffer) {
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
                 } else {
-                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame);
+                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
                 }
             } catch (Exception ex) {
                 print("ERROR in acquisition thread: " + ex.getMessage());
@@ -4325,6 +4332,16 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             // Need both frames to calculate ratio
             if (evenFrame == null || oddFrame == null) {
                 continue;
+            }
+            
+            // Only calculate ratio from a consecutive pair (frames N and N+1).
+            // The cache always holds the most recent even and odd frame, but they
+            // may not be adjacent (e.g. even=2, odd=5 after some missed frames).
+            // Mixing non-adjacent frames produces scientifically invalid ratios.
+            int evenFrameNum = ((Integer) evenFrame.get(0)).intValue();
+            int oddFrameNum  = ((Integer) oddFrame.get(0)).intValue();
+            if ((evenFrameNum - oddFrameNum) != 1) {
+                continue; // Not a valid pair (odd must be immediately followed by even)
             }
             
             // Extract ROI values from cached frames
@@ -4810,7 +4827,7 @@ void convertTiffsToStack(String experimentFolder) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
     // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -5125,6 +5142,12 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                 
                 if (taggedImg != null) {
                     framesProcessed++;
+                    final int currentFrameCount = framesProcessed;
+                    SwingUtilities.invokeLater(new Runnable() {
+                        public void run() {
+                            frameCounterLabel.setText("Frames: " + currentFrameCount);
+                        }
+                    });
                     long systemTime = System.currentTimeMillis();
                     long currentTime = systemTime - acqLoopStart;
                     boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
@@ -5316,7 +5339,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame) {
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
     // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -5422,6 +5445,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         while (running[0] && globalFrameNumber < maxFrames) {
             try {
                 globalFrameNumber++;
+                final int currentFrameCount = globalFrameNumber;
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        frameCounterLabel.setText("Frames: " + currentFrameCount);
+                    }
+                });
                 long frameStartTime = System.currentTimeMillis();
                 
                 // Track actual frame interval for warning
@@ -5743,6 +5772,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
             // Capture frames for this step
             for (int frameInStep = 0; frameInStep < framesInStep && running[0]; frameInStep++) {
                 globalFrameNumber++;
+                final int currentFrameCount = globalFrameNumber;
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        frameCounterLabel.setText("Frames: " + currentFrameCount);
+                    }
+                });
                 long frameStartTime = System.currentTimeMillis();
                 
                 // Snap image
@@ -5915,9 +5950,9 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
             // Handle Frame Ratio graphs differently
             if (graphType.startsWith("Frame ratio")) {
                 // Header for ratio data
-                writer.print("Frame Pair,Timestamp [ms]");
+                writer.print("Frame Pair;Timestamp [ms]");
                 for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                    writer.print(",ROI" + (roiIdx + 1) + "_Ratio");
+                    writer.print(";ROI" + (roiIdx + 1) + "_Ratio");
                 }
                 writer.println();
                 
@@ -5972,13 +6007,13 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
                             if (ratios != null && !ratios.isEmpty()) {
                                 // Write pair identifier (e.g., "0-1" for frames 0 and 1)
                                 writer.print(frameNum + "-" + (frameNum + 1));
-                                writer.print(",");
+                                writer.print(";");
                                 // Use timestamp from the second frame (odd frame)
                                 writer.print(oddRow.get(1));
                                 
                                 // Write ratio values
                                 for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
-                                    writer.print(",");
+                                    writer.print(";");
                                     Object ratioVal = ratios.get(roiIdx);
                                     if (ratioVal != null) {
                                         double ratio = ((Double) ratioVal).doubleValue();
@@ -6000,9 +6035,9 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
             else if (graphType.startsWith("Split ratio")) {
                 // Header for ratio data - spatial mode has N ratios (N = actualNumROIs / 2)
                 int numRatios = actualNumROIs / 2;
-                writer.print("Frame,Timestamp [ms]");
+                writer.print("Frame;Timestamp [ms]");
                 for (int roiIdx = 0; roiIdx < numRatios; roiIdx++) {
-                    writer.print(",Ratio" + (roiIdx + 1));
+                    writer.print(";Ratio" + (roiIdx + 1));
                 }
                 writer.println();
                 
@@ -6016,7 +6051,7 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
                     // Check if this frame passes the graph's filter
                     if (shouldProcessFrame(frameNum, vizRow)) {
                         writer.print(row.get(0)); // Frame
-                        writer.print(",");
+                        writer.print(";");
                         writer.print(row.get(1)); // Timestamp
                         
                         // Extract all ROI values from row (actualNumROIs)
@@ -6030,7 +6065,7 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
                         
                         // Write ratio values (should be 4 ratios)
                         for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
-                            writer.print(",");
+                            writer.print(";");
                             Object ratioVal = ratios.get(roiIdx);
                             if (ratioVal != null) {
                                 double ratio = ((Double) ratioVal).doubleValue();
@@ -6057,9 +6092,9 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
                 }
                 
                 // Header with ROI columns
-                writer.print("Frame,Timestamp [ms]");
+                writer.print("Frame;Timestamp [ms]");
                 for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
-                    writer.print(",ROI" + (roiIdx + 1));
+                    writer.print(";ROI" + (roiIdx + 1));
                 }
                 writer.println();
                 
@@ -6073,12 +6108,12 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
                     // Check if this frame passes the graph's filter
                     if (shouldProcessFrame(frameNum, vizRow)) {
                         writer.print(row.get(0)); // Frame
-                        writer.print(",");
+                        writer.print(";");
                         writer.print(row.get(1)); // Timestamp
                         
                         // Write ROI values (only source ROIs in spatial mode)
                         for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
-                            writer.print(",");
+                            writer.print(";");
                             Object roiValue = row.get(2 + roiIdx);
                             if (roiValue != null) {
                                 writer.print(roiValue);
@@ -6118,12 +6153,12 @@ void exportEventTimesToCSV(ArrayList eventTimes) {
         PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
         
         // Header
-        writer.println("Event,Time [ms]");
+        writer.println("Event;Time [ms]");
         
         // Write each event
         for (int i = 0; i < eventTimes.size(); i++) {
             writer.print("Event " + (i + 1));
-            writer.print(",");
+            writer.print(";");
             writer.println(eventTimes.get(i));
         }
         
