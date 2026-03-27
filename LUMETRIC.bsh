@@ -1312,6 +1312,7 @@ okButton.addActionListener(new ActionListener() {
                             }
                         });
                     } catch (Exception threadEx) {
+                        // print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
                         // Show user-friendly error dialog on EDT
                         // Capture error message for inner class (BeanShell compatibility)
@@ -1677,6 +1678,7 @@ vizStartButton.addActionListener(new ActionListener() {
                             }
                         });
                     } catch (Exception threadEx) {
+                        // print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
                         // Show user-friendly error dialog on EDT
                         // Capture error message for inner class (BeanShell compatibility)
@@ -1971,6 +1973,15 @@ frame.setVisible(true);
     void printSequenceData() {
         for (int i = 0; i < config.acqSettings.sequenceRows.size(); i++) {
             ArrayList row = config.acqSettings.sequenceRows.get(i);
+            // print("Step " + (i + 1) + ":");
+            // print("  Channel: " + row.get(1));
+            // print("  Exposure: " + row.get(2) + " ms");
+            // print("  Frame Interval: " + row.get(3) + " ms");
+            // print("  Frames: " + row.get(4));
+            // print("  Loop Goto: " + row.get(5));
+            // print("  Loop Times: " + row.get(6));
+            // print("  Constant Illum: " + row.get(7));
+            // print("  Loop Switch Goto: " + row.get(8));
         }
     }
 
@@ -2060,6 +2071,7 @@ boolean writeCSV(File csvFile, Object headers, Object data, Object comments) {
         return true;
         
     } catch (IOException e) {
+        // print("ERROR: Failed to write CSV file: " + e.getMessage());
         e.printStackTrace();
         return false;
     }
@@ -2108,15 +2120,15 @@ void createExperimentFolder() {
     String saveDir = config.acqSettings.saveDirectory;
     
     if (saveDir == null || saveDir.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
     // Check if parent directory is writable
     File saveDirFile = new File(saveDir);
     if (!saveDirFile.canWrite()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        
         throw new IOException("No write permission for save directory");
     }
     
@@ -2124,20 +2136,25 @@ void createExperimentFolder() {
     boolean created = experimentFolder.mkdir();
     
     if (!created) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // print("ERROR: Failed to create experiment folder: " + experimentFolder.getAbsolutePath());
+        
         throw new IOException("Failed to create experiment folder");
     }
     
+    // print("Created experiment folder: " + experimentFolder.getAbsolutePath());
+    
     // Store experiment folder path in config
     config.experimentFolder = experimentFolder.getAbsolutePath();
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Create images subfolder for TIFF files
     File imagesFolder = new File(experimentFolder, "images");
     boolean imagesFolderCreated = imagesFolder.mkdir();
     if (!imagesFolderCreated) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         throw new IOException("Failed to create images subfolder");
     }
+    
+    // print("Created images subfolder: " + imagesFolder.getAbsolutePath());
     
     // Store images folder path in config
     config.imagesFolder = imagesFolder.getAbsolutePath();
@@ -2146,26 +2163,26 @@ void createExperimentFolder() {
 // ==================== Setup Visualization ROIs ====================
 // Setup ROIs for visualization - returns true if successful, false if cancelled
 boolean setupVisualizationROIs() {
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Note: Main GUI is already disposed at this point
     
     import ij.plugin.frame.RoiManager;
     
     // Snap an image
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
     List images = mm.live().snap(false);
     org.micromanager.data.Image image = images.get(0);
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     if (images == null || images.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return false;
     }
     
     // Get full sensor dimensions
     int fullWidth = (int) mmc.getImageWidth();
     int fullHeight = (int) mmc.getImageHeight();
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Create ImageJ processor from snapped image
     ImageProcessor fullIP = mm.data().ij().createProcessor(image);
     
@@ -2179,7 +2196,7 @@ boolean setupVisualizationROIs() {
     final String roiRegion = isSpatialMode ? config.acqSettings.spatialConfig.roiSourceRegion : "";
     
     if (isSpatialMode) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         if (splitAxis.equals("Horizontal")) {
             // Split horizontally (top/bottom)
             int halfHeight = fullHeight / 2;
@@ -2218,12 +2235,12 @@ boolean setupVisualizationROIs() {
     // Create and show ImageJ display
     ImagePlus imp = new ImagePlus(displayTitle, displayIP);
     imp.show();
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Open ROI Manager
     IJ.run("ROI Manager...", "");
     ij.plugin.frame.RoiManager rm = ij.plugin.frame.RoiManager.getInstance();
     rm.runCommand(imp, "Show All");
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Create control window on EDT and use proper synchronization
     final boolean[] done = {false};
     final boolean[] cancelled = {false};
@@ -2252,7 +2269,7 @@ boolean setupVisualizationROIs() {
             
             doneButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                     synchronized(lock) {
                         done[0] = true;
                         lock.notifyAll();  // Wake up waiting thread
@@ -2263,7 +2280,7 @@ boolean setupVisualizationROIs() {
             
             cancelButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                     synchronized(lock) {
                         cancelled[0] = true;
                         lock.notifyAll();  // Wake up waiting thread
@@ -2284,33 +2301,36 @@ boolean setupVisualizationROIs() {
     });
     
     // Wait for user action using proper wait/notify instead of busy polling
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     synchronized(lock) {
         while (done[0] == false && cancelled[0] == false) {
             try {
                 lock.wait();  // Efficiently wait for notification, no CPU polling
             } catch (InterruptedException e) {
+                // print("Wait interrupted: " + e.getMessage());
                 break;
             }
         }
     }
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     if (cancelled[0]) {
         // Clean up ImageJ window
         if (imp.getWindow() != null) {
             imp.getWindow().close();
         }
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return false;
     }
+    
+    // print("ROI count = " + rm.getCount());
     
     // Rename ROIs in the ROI Manager immediately
     for (int i = 0; i < rm.getCount(); i++) {
         rm.select(i);
         rm.runCommand("Rename", "ROI" + (i + 1));
     }
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Clean up ImageJ window
     if (imp.getWindow() != null) {
         imp.getWindow().close();
@@ -2329,13 +2349,13 @@ boolean setupVisualizationROIs() {
         sourceRegion = roiRegion;
     }
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
+    
     int originalRoiCount = rm.getCount();
     
     // First, adjust original ROIs in ROI Manager to full image coordinates (for spatial mode)
     if (isSpatialMode) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         for (int i = 0; i < originalRoiCount; i++) {
             ij.gui.Roi roi = rm.getRoi(i);
             java.awt.Rectangle bounds = roi.getBounds();
@@ -2354,7 +2374,7 @@ boolean setupVisualizationROIs() {
     
     // For spatial mode: duplicate ROIs to the other half
     if (isSpatialMode) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         for (int i = 0; i < originalRoiCount; i++) {
             ij.gui.Roi roi = rm.getRoi(i);
             ij.gui.Roi mirroredRoi = (ij.gui.Roi) roi.clone();
@@ -2408,10 +2428,10 @@ boolean setupVisualizationROIs() {
             rm.select(i);
             rm.runCommand("Rename", "ROI" + (i + 1));
         }
-    } else {
+     } else {
     }
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Save ROI set with renamed ROIs
     if (rm.getCount() > 0) {
         // Use experiment folder if it exists, otherwise use data directory
@@ -2423,12 +2443,10 @@ boolean setupVisualizationROIs() {
                 
                 // Check write permission BEFORE attempting to save
                 if (!saveDir.canWrite()) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                } else {
+                 } else {
                     File roiFile = config.experimentFolder.isEmpty() ? 
                         getNextAvailableFile(saveDir, "RoiSet", ".zip") : 
                         new File(saveDir, "RoiSet.zip");
-                    
                     // Use a timeout thread to prevent indefinite blocking
                     final boolean[] saveComplete = {false};
                     final String roiPath = roiFile.getAbsolutePath();
@@ -2445,23 +2463,26 @@ boolean setupVisualizationROIs() {
                     saveThread.join(5000); // Wait max 5 seconds
                     
                     if (saveComplete[0] && roiFile.exists()) {
+                        // print("SUCCESS: ROI set saved (" + roiFile.length() + " bytes)");
                     } else {
+                        // print("WARNING: ROI save timed out or failed (ROIs still in memory)");
                         if (saveThread.isAlive()) {
                             saveThread.interrupt();
                         }
                     }
                 }
             } catch (Exception e) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                // print("WARNING: ROI save failed: " + e.getMessage());
+                
             }
         }
     }
     
     // Close ROI Manager - we have the ROIs stored
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     rm.close();
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     return true;
 }
 
@@ -2471,7 +2492,7 @@ boolean exportTableToCSV() {
     String saveDir = config.acqSettings.saveDirectory;
     
     if (saveDir.isEmpty() || !new File(saveDir).exists()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return false;
     }
     
@@ -2481,7 +2502,8 @@ boolean exportTableToCSV() {
     
     // Check write permission before attempting to create files
     if (!saveDirFile.canWrite()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        // print("ERROR: No write permission for directory: " + saveDirFile.getAbsolutePath());
+        
         return false;
     }
     
@@ -2641,10 +2663,13 @@ boolean exportTableToCSV() {
         writerArduino.println("# Live Pictures: " + config.acqSettings.livePics);
         writerArduino.close();
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        // print("  Readable: " + csvFileReadable.getAbsolutePath());
+        // print("  Arduino:  " + csvFileArduino.getAbsolutePath());
         return true;
         
     } catch (IOException e) {
+        // print("ERROR: Failed to export CSV files: " + e.getMessage());
         e.printStackTrace();
         return false;
     }
@@ -2691,6 +2716,8 @@ void loadSettingsFromCSV() {
         while (tableModel.getRowCount() > 0) {
             tableModel.removeRow(0);
         }
+        
+        // print("Loading settings from: " + csvFile.getAbsolutePath());
         
         while ((line = reader.readLine()) != null) {
             lineNum++;
@@ -2760,29 +2787,29 @@ void loadSettingsFromCSV() {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     boolean livePicsValue = value.equalsIgnoreCase("true");
                     livePics.setSelected(livePicsValue);
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 } else if (line.contains("Convert to Stack:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     boolean convertToStackValue = value.equalsIgnoreCase("true");
                     convertToStack.setSelected(convertToStackValue);
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 } else if (line.contains("Stack per Row:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     boolean stackPerRowValue = value.equalsIgnoreCase("true");
                     stackPerRow.setSelected(stackPerRowValue);
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 } else if (line.contains("Processing Mode:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     loadedMode = value;
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 } else if (line.contains("Split Axis:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     loadedSplitAxis = value;
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 } else if (line.contains("ROI Region:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     loadedROIRegion = value;
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 continue;
             }
@@ -2795,7 +2822,7 @@ void loadSettingsFromCSV() {
             // Parse CSV line
             String[] parts = parseCSVLine(line);
             if (parts.length < 8) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
                 continue;
             }
             
@@ -2823,8 +2850,10 @@ void loadSettingsFromCSV() {
         }
         
         reader.close();
+        
+        // print("Successfully loaded " + tableModel.getRowCount() + " sequence steps");
         if (vizRowIndex > 0) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
         }
         JOptionPane.showMessageDialog(frame, 
             "Loaded " + tableModel.getRowCount() + " sequence steps" + 
@@ -2833,6 +2862,7 @@ void loadSettingsFromCSV() {
             "Settings Loaded", JOptionPane.INFORMATION_MESSAGE);
         
     } catch (Exception e) {
+        // print("ERROR: Failed to load settings from CSV: " + e.getMessage());
         e.printStackTrace();
         JOptionPane.showMessageDialog(frame, 
             "Failed to load settings:\\n" + e.getMessage(),
@@ -2988,11 +3018,14 @@ void saveSettingsToCSV() {
         }
         
         writer.close();
+        
+        // print("Settings saved to: " + csvFile.getAbsolutePath());
         JOptionPane.showMessageDialog(frame,
             "Settings saved successfully to:\\n" + csvFile.getName(),
             "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
         
     } catch (Exception e) {
+        // print("ERROR: Failed to save settings to CSV: " + e.getMessage());
         e.printStackTrace();
         JOptionPane.showMessageDialog(frame,
             "Failed to save settings:\\n" + e.getMessage(),
@@ -3004,10 +3037,11 @@ void saveSettingsToCSV() {
 
 // Create acquisition control window inline (called from EDT)
 void createInlineAcquisitionWindow() {
+    // print("DEBUG: createInlineAcquisitionWindow() called");
     // All imports moved to top of file to avoid BeanShell loading issues
     
     JFrame acqFrame = new JFrame("LUMETRIC - Acquisition Control");
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
     
     // Adaptive sizing: use 80% of screen width and 70% of screen height
@@ -3036,7 +3070,7 @@ void createInlineAcquisitionWindow() {
     }
     boolean hasLiveView = config.acqSettings.livePics;
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // ===== TOP BUTTON PANEL =====
     JPanel topPanel = new JPanel(new BorderLayout());
     topPanel.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
@@ -3061,6 +3095,7 @@ void createInlineAcquisitionWindow() {
                 cv67.add((char)67);
                 mmc.writeToSerialPort(config.serialPort, cv67);
             } catch (Exception ardEx) {
+                // print("Arduino loop-switch error: " + ardEx.getMessage());
             }
         }
     });
@@ -3077,7 +3112,7 @@ void createInlineAcquisitionWindow() {
                     panel.restoreAutoBounds();
                 }
             }
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
         }
     });
     
@@ -3093,7 +3128,7 @@ void createInlineAcquisitionWindow() {
                     panel.restoreAutoDomainBounds();
                 }
             }
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
         }
     });
     
@@ -3121,7 +3156,7 @@ void createInlineAcquisitionWindow() {
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
                 acqFrame.dispose();
                 // TODO: Clean up acquisition resources
             }
@@ -3257,7 +3292,7 @@ void createInlineAcquisitionWindow() {
         rangeAxis.setAutoRange(true);
         rangeAxis.setAutoRangeMinimumSize(0.1);  // Minimum range for Y axis
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         // Configure renderer - enable lines and make them thicker
         org.jfree.chart.renderer.xy.XYItemRenderer renderer = plot.getRenderer();
         
@@ -3274,12 +3309,13 @@ void createInlineAcquisitionWindow() {
             }
         } else {
             // Fallback: just set stroke width on base renderer
+            // print("WARNING: Renderer is " + renderer.getClass().getName() + ", not XYLineAndShapeRenderer");
             for (int seriesIdx = 0; seriesIdx < numSeries; seriesIdx++) {
                 renderer.setSeriesStroke(seriesIdx, new BasicStroke(2.0f));
             }
         }
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         // Create chart panel and store it
         ChartPanel chartPanel = new ChartPanel(chart);
         chartPanel.setMouseWheelEnabled(true);
@@ -3287,20 +3323,20 @@ void createInlineAcquisitionWindow() {
         chartPanel.setOpaque(true);
         chartPanel.setRefreshBuffer(true);
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         charts.add(chart);
         chartPlots.add(plot);
         chartPanels.add(chartPanel); // Store for repaint access
     }
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Event button - adds vertical line markers to all active graphs
     eventButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             long systemTime = System.currentTimeMillis();
             long currentTime = systemTime - acquisitionStartTime[0];
             print("EVENT PRESSED: systemTime=" + systemTime + ", acquisitionStartTime[0]=" + acquisitionStartTime[0] + ", offset=" + currentTime + " ms");
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
             // Store event time
             eventTimes.add(new Long(currentTime));
             
@@ -3699,13 +3735,18 @@ void createInlineAcquisitionWindow() {
         // NOTE: case 61 (start) is sent later, after mmc.startSequenceAcquisition(),
         // so that Arduino only begins firing triggers once the camera is armed.
     } catch (Exception ardEx) {
+        // print("Arduino serial send error: " + ardEx.getMessage());
     }
     } // end if (useCircularBufferMode)
     
     acqFrame.setVisible(true);
+    
+    // print("DEBUG: Frame visible=" + acqFrame.isVisible() + ", frame size=" + acqFrame.getSize());
+    // print("DEBUG: Chart panels count=" + chartPanels.size());
     for (int i = 0; i < chartPanels.size(); i++) {
         if (chartPanels.get(i) != null) {
             ChartPanel cp = (ChartPanel) chartPanels.get(i);
+            // print("  ChartPanel " + i + ": visible=" + cp.isVisible() + ", size=" + cp.getSize());
         }
     }
     
@@ -3724,11 +3765,11 @@ void createInlineAcquisitionWindow() {
             }
             acqFrame.revalidate();
             acqFrame.repaint();
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
         }
     });
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // ===== START ACQUISITION THREAD =====
     final boolean[] acquisitionRunning = {true};
     final ArrayList allDataRows = new ArrayList(); // Store rows [timestamp, roi0, roi1, roi2, roi3] for CSV export
@@ -3761,6 +3802,7 @@ void createInlineAcquisitionWindow() {
                     cv66.add((char)66);
                     mmc.writeToSerialPort(config.serialPort, cv66);
                 } catch (Exception ardEx) {
+                    // print("Arduino kill error: " + ardEx.getMessage());
                 }
                 acquisitionRunning[0] = false;
 
@@ -3877,7 +3919,7 @@ boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
                     
                     return ((frameNumber - 1) % interval == offset);
                 } catch (NumberFormatException e) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
             }
         }
@@ -4015,11 +4057,13 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
         return;
     }
     
+    // print("DEBUG: updateLiveView called, panel=" + (liveViewPanel != null) + ", ip=" + (ip != null));
+    
     final ImageProcessor ipCopy = ip.duplicate();
     SwingUtilities.invokeLater(new Runnable() {
         public void run() {
             try {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
                 ImagePlus imp = new ImagePlus("Live", ipCopy);
                 
                 // Scale and display - calculate scale first
@@ -4090,9 +4134,10 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
                     liveViewPanel.add(centerPanel, BorderLayout.CENTER);
                     liveViewPanel.revalidate();
                     liveViewPanel.repaint();
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
             } catch (Exception e) {
+                // print("ERROR updating live view: " + e.getMessage());
                 e.printStackTrace();
             }
         }
@@ -4129,6 +4174,7 @@ ArrayList buildDataRow(int frameNumber, long timestamp, ArrayList roiValues) {
 // Update all graphs with new data
 void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues, ArrayList chartPanels, ArrayList charts) {
     if (frameNumber <= 3) {
+        // print("DEBUG updateGraphs: frame=" + frameNumber + ", time=" + currentTime + ", roiValues.size=" + roiValues.size());
     }
     
     for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
@@ -4137,24 +4183,30 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
         
         if (graphType.equals("none") || datasets.get(graphIdx) == null) {
             if (frameNumber <= 3) {
+                // print("  Graph " + (graphIdx + 1) + ": skipped (none or null dataset)");
             }
             continue;
         }
         
         if (!shouldProcessFrame(frameNumber, vizRow)) {
             if (frameNumber <= 3) {
+                // print("  Graph " + (graphIdx + 1) + ": filtered out by shouldProcessFrame");
             }
             continue;
         }
         
         if (frameNumber <= 3) {
+            // print("  Graph " + (graphIdx + 1) + " (" + graphType + "): processing...");
         }
         
         // Handle Intensity graphs
         if (graphType.equals("Intensity") || graphType.startsWith("Intensity ")) {
             if (frameNumber <= 3) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
+                
+                // print("    chartPanels=" + (chartPanels != null ? "not null" : "NULL"));
+                // print("    charts=" + (charts != null ? "not null" : "NULL"));
+                // print("    datasets=" + (datasets != null ? "not null" : "NULL"));
             }
             
             final int gIdx = graphIdx;
@@ -4163,7 +4215,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             final ArrayList chartsCopy = charts;
             
             if (frameNumber <= 3) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
             }
             
             // Determine how many series to update based on mode
@@ -4171,18 +4223,19 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             ArrayList valuesToPlot = new ArrayList();
             
             if (frameNumber <= 3) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
             }
             
             boolean isSpatialMode = config.acqSettings.processingMode.equals("Spatial");
             if (frameNumber <= 3) {
+                // print("    isSpatialMode=" + isSpatialMode + ", roiValues.size=" + roiValues.size());
             }
             
             if (isSpatialMode) {
                 // Spatial mode: only plot source ROIs (first half)
                 numSeriesToUpdate = roiValues.size() / 2;
                 if (frameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 for (int i = 0; i < numSeriesToUpdate; i++) {
                     valuesToPlot.add(roiValues.get(i));
@@ -4191,7 +4244,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                 // Temporal mode: plot all ROIs
                 numSeriesToUpdate = roiValues.size();
                 if (frameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 valuesToPlot.addAll(roiValues);
             }
@@ -4200,26 +4253,30 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             final ArrayList valuesToPlotFinal = valuesToPlot;
             
             if (frameNumber <= 3) {
+                // print("    Intensity: numSeriesToUpdate=" + numSeriesToUpdateFinal + ", valuesToPlot.size=" + valuesToPlotFinal.size());
             }
             
             SwingUtilities.invokeLater(new Runnable() {
                 public void run() {
                     try {
                         if (frameNumber <= 3) {
-                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                            
                         }
                         XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
                         if (frameNumber <= 3) {
+                            // print("    Dataset has " + dataset.getSeriesCount() + " series");
                         }
                         for (int roiIdx = 0; roiIdx < numSeriesToUpdateFinal; roiIdx++) {
                             XYSeries series = dataset.getSeries(roiIdx);
                             double value = ((Double) valuesToPlotFinal.get(roiIdx)).doubleValue();
                             series.add(time / 1000.0, value, true);  // Notify on each add
                             if (frameNumber <= 3 && roiIdx == 0) {
+                                // print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
+                                // print("      Series now has " + series.getItemCount() + " points");
                             }
                         }
                         if (frameNumber <= 3) {
-                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                            
                         }
                         if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
                             ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
@@ -4229,6 +4286,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                             if (frameNumber <= 3) {
                                 XYPlot plot = (XYPlot) chart.getPlot();
                                 XYSeriesCollection ds = (XYSeriesCollection) plot.getDataset();
+                                // print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
                             }
                             
                             // Force complete chart refresh
@@ -4240,11 +4298,13 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                             cp.validate();
                             cp.repaint();
                             if (frameNumber <= 3) {
-                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                                
                             }
                         } else if (frameNumber <= 3) {
+                            // print("      WARNING: ChartPanel is null for Intensity graph " + (gIdx + 1));
                         }
                     } catch (Exception e) {
+                        // print("ERROR updating Intensity graph " + (gIdx + 1) + ": " + e.getClass().getName() + ": " + e.getMessage());
                         e.printStackTrace();
                     }
                 }
@@ -4323,28 +4383,31 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
         // Handle Split Ratio graphs (Spatial mode)
         else if (graphType.startsWith("Split ratio")) {
             if (frameNumber <= 3) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
+                // print("    roiValues.size=" + roiValues.size());
             }
             
             // Calculate spatial ratios directly from current frame's ROI values
             ArrayList ratioValues = calculateSpatialRatio(roiValues, graphType);
             
             if (frameNumber <= 3) {
+                // print("    calculateSpatialRatio returned, ratioValues=" + (ratioValues != null ? ratioValues.size() + " values" : "NULL"));
             }
             
             if (ratioValues == null || ratioValues.isEmpty()) {
                 if (frameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 continue;
             }
             
             // Debug output periodically
             if (frameNumber % 10 == 1) {
+                // print("Frame " + frameNumber + " - " + graphType + " calculated for Graph " + (graphIdx + 1) + ": " + ratioValues);
             }
             
             if (frameNumber <= 3) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
             }
             
             final int gIdx = graphIdx;
@@ -4354,7 +4417,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             final ArrayList chartsCopy = charts;
             
             if (frameNumber <= 3) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
             }
             
             SwingUtilities.invokeLater(new Runnable() {
@@ -4362,6 +4425,8 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                     try {
                         XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
                         if (frameNumber <= 3) {
+                            // print("    SwingUtilities running for Split ratio, dataset has " + dataset.getSeriesCount() + " series");
+                            // print("    ratioValsCopy.size=" + ratioValsCopy.size() + ", time=" + (time/1000.0));
                         }
                         for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
                             XYSeries series = dataset.getSeries(roiIdx);
@@ -4371,16 +4436,18 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                                 if (!Double.isNaN(value) && !Double.isInfinite(value)) {
                                     series.add(time / 1000.0, value, true);  // Notify on each add
                                     if (frameNumber <= 3 && roiIdx == 0) {
+                                        // print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
+                                        // print("      Series now has " + series.getItemCount() + " points");
                                     }
                                 } else if (frameNumber <= 3) {
-                                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                                    
                                 }
                             } else if (frameNumber <= 3) {
-                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                                
                             }
                         }
                         if (frameNumber <= 3) {
-                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                            
                         }
                         if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
                             ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
@@ -4388,18 +4455,25 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                             if (frameNumber <= 3) {
                                 JFreeChart chart = cp.getChart();
                                 if (chart == null) {
+                                    // print("      ERROR: ChartPanel.getChart() returned null!");
                                 } else {
                                     XYPlot plot = (XYPlot) chart.getPlot();
                                     XYSeriesCollection ds = (XYSeriesCollection) plot.getDataset();
+                                    // print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
+                                    // print("      Chart visible=" + chart.isNotify() + ", Panel visible=" + cp.isVisible() + ", Panel size=" + cp.getSize());
                                     
                                     // Verify data is actually in the series
                                     XYSeries series0 = ds.getSeries(0);
                                     if (series0.getItemCount() > 0) {
                                         org.jfree.data.xy.XYDataItem item = series0.getDataItem(0);
+                                        // print("      First data point: X=" + item.getX() + ", Y=" + item.getY());
                                     }
                                     
                                     // Check renderer configuration
                                     org.jfree.chart.renderer.xy.XYItemRenderer renderer = plot.getRenderer();
+                                    // print("      Renderer type: " + renderer.getClass().getName());
+                                    // print("      Series 0 visible: " + renderer.getItemVisible(0, 0));
+                                    // print("      Series 0 lines visible: " + renderer.getSeriesLinesVisible(0));
                                     
                                     // Force axis range recalculation
                                     org.jfree.chart.axis.ValueAxis domainAxis = plot.getDomainAxis();
@@ -4408,6 +4482,8 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                                     rangeAxis.configure();
                                     
                                     // Print axis ranges for debugging
+                                    // print("      Domain axis range: " + domainAxis.getLowerBound() + " to " + domainAxis.getUpperBound());
+                                    // print("      Range axis range: " + rangeAxis.getLowerBound() + " to " + rangeAxis.getUpperBound());
                                     
                                     // Force complete chart refresh
                                     chart.fireChartChanged();
@@ -4419,12 +4495,14 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                             cp.validate();
                             cp.repaint();
                             if (frameNumber <= 3) {
-                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                                
+                                
                             }
                         } else if (frameNumber <= 3) {
+                            // print("      WARNING: ChartPanel is null for Split ratio graph " + (gIdx + 1));
                         }
                     } catch (Exception e) {
+                        // print("ERROR updating Split ratio graph " + (gIdx + 1) + ": " + e.getMessage());
                         e.printStackTrace();
                     }
                 }
@@ -4456,13 +4534,14 @@ ImageProcessor taggedImageToProcessor(Object taggedImg) {
             return ip;
         }
     } catch (Exception e) {
+        // print("WARNING: Could not convert image: " + e.getMessage());
     }
     return null;
 }
 
 // ==================== Circular Buffer Setup ====================
 void setupCircularBuffer() {
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Calculate memory allocation
     long maxMem = Runtime.getRuntime().maxMemory();
     long bufferMem = (long)(maxMem * 0.75);
@@ -4478,12 +4557,13 @@ void setupCircularBuffer() {
         long bytesPerImage = imageWidth * imageHeight * bytesPerPixel;
         int approxCapacity = (int)(bufferMem / bytesPerImage);
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        
+        
+        
+        
     } catch (Exception e) {
+        // print("ERROR: Failed to setup circular buffer: " + e.getMessage());
         e.printStackTrace();
     }
 }
@@ -4503,10 +4583,11 @@ void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
                 ip = mm.data().ij().createProcessor(mmImage);
             }
         } catch (Exception e) {
+            // print("WARNING: Could not convert image: " + e.getMessage());
         }
         
         if (ip == null) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
             return;
         }
         
@@ -4528,15 +4609,16 @@ void saveImageAsTiff(Object img, int frameNumber, String experimentFolder) {
         ij.io.FileSaver fs = new ij.io.FileSaver(imp);
         boolean success = fs.saveAsTiff(filepath);
         if (!success) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
         }
         
         // Log every 100 frames
         if (frameNumber % 100 == 0) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
         }
         
     } catch (Exception e) {
+        // print("ERROR saving frame " + frameNumber + ": " + e.getClass().getName() + ": " + e.getMessage());
         e.printStackTrace();
     }
 }
@@ -4546,17 +4628,19 @@ void convertTiffsToStack(String experimentFolder) {
     import ij.ImageStack;
     import ij.io.FileSaver;
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     try {
         File expFolder = new File(experimentFolder);
         if (!expFolder.exists() || !expFolder.isDirectory()) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
             return;
         }
         
         // Check for images subfolder first
         File imagesFolder = new File(expFolder, "images");
         File searchFolder = imagesFolder.exists() ? imagesFolder : expFolder;
+        
+        // print("Searching for TIFF files in: " + searchFolder.getAbsolutePath());
         
         // Find all Frame_*.tif files
         File[] tiffFiles = searchFolder.listFiles(new java.io.FilenameFilter() {
@@ -4566,7 +4650,7 @@ void convertTiffsToStack(String experimentFolder) {
         });
         
         if (tiffFiles == null || tiffFiles.length == 0) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
             return;
         }
         
@@ -4574,18 +4658,18 @@ void convertTiffsToStack(String experimentFolder) {
         java.util.Arrays.sort(tiffFiles);
         
         int numFrames = tiffFiles.length;
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         // Calculate actual total file size
         long totalFileSize = 0;
         for (int i = 0; i < tiffFiles.length; i++) {
             totalFileSize += tiffFiles[i].length();
         }
         long totalFileSizeMB = totalFileSize / (1024 * 1024);
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         // Load first image to get dimensions (for logging)
         ImagePlus firstImp = IJ.openImage(tiffFiles[0].getAbsolutePath());
         if (firstImp == null) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
             return;
         }
         
@@ -4593,11 +4677,12 @@ void convertTiffsToStack(String experimentFolder) {
         int height = firstImp.getHeight();
         int bitDepth = firstImp.getBitDepth();
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         // Estimate memory requirement based on actual file size
         // Add 20% overhead for ImageStack structure and temporary objects during loading
         long requiredMemoryBytes = (long)(totalFileSize * 1.2);
         long requiredMemoryMB = requiredMemoryBytes / (1024 * 1024);
+        // print("Estimated memory required: " + requiredMemoryMB + " MB (file size + 20% overhead)");
         
         // Check available memory
         Runtime runtime = Runtime.getRuntime();
@@ -4611,19 +4696,22 @@ void convertTiffsToStack(String experimentFolder) {
         long availableMB = availableMemory / (1024 * 1024);
         long maxMB = maxMemory / (1024 * 1024);
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        
+        
         // Use 60% of available memory as safety margin
         // (need extra space for overhead, intermediate objects, etc.)
         long safeAvailableBytes = (long)(availableMemory * 0.6);
         long safeAvailableMB = safeAvailableBytes / (1024 * 1024);
         
+        // print("  Safe usable memory (60%): " + safeAvailableMB + " MB");
+        
         // Check if we have enough memory
         if (requiredMemoryBytes > safeAvailableBytes) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
+            
+            // print("  Available (safe): " + safeAvailableMB + " MB");
+            
             // Show error popup on EDT
             final long reqMB = requiredMemoryMB;
             final long safeMB = safeAvailableMB;
@@ -4641,20 +4729,22 @@ void convertTiffsToStack(String experimentFolder) {
             return;
         }
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         // Create stack
         ImageStack stack = new ImageStack(width, height);
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         for (int i = 0; i < tiffFiles.length; i++) {
             ImagePlus imp = IJ.openImage(tiffFiles[i].getAbsolutePath());
             if (imp == null) {
+                // print("WARNING: Could not load frame " + (i+1) + ", skipping");
                 continue;
             }
             stack.addSlice("Frame_" + (i+1), imp.getProcessor());
             
             // Progress update every 100 frames
             if ((i+1) % 100 == 0 || i == tiffFiles.length - 1) {
+                // print("Loaded " + (i+1) + "/" + numFrames + " frames");
             }
         }
         
@@ -4663,45 +4753,47 @@ void convertTiffsToStack(String experimentFolder) {
         
         // Save stack to experiment folder (not images subfolder)
         String stackPath = experimentFolder + File.separator + "Image_Stack.tif";
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         FileSaver fs = new FileSaver(stackImp);
         boolean success = fs.saveAsTiffStack(stackPath);
         
         if (!success) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
+            
             return;
         }
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         // Delete individual TIFF files
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         int deletedCount = 0;
         for (int i = 0; i < tiffFiles.length; i++) {
             if (tiffFiles[i].delete()) {
                 deletedCount++;
             } else {
+                // print("WARNING: Could not delete " + tiffFiles[i].getName());
             }
         }
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         // Remove images subfolder if it's empty
         File imagesFolder = new File(expFolder, "images");
         if (imagesFolder.exists() && imagesFolder.isDirectory()) {
             File[] remainingFiles = imagesFolder.listFiles();
             if (remainingFiles == null || remainingFiles.length == 0) {
                 if (imagesFolder.delete()) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 } else {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
             }
         }
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
     } catch (Exception e) {
+        // print("ERROR during stack conversion: " + e.getClass().getName() + ": " + e.getMessage());
         e.printStackTrace();
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         SwingUtilities.invokeLater(new Runnable() {
             public void run() {
                 JOptionPane.showMessageDialog(null,
@@ -4716,30 +4808,31 @@ void convertTiffsToStack(String experimentFolder) {
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
 void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
     File expFolder = new File(config.experimentFolder);
     if (!expFolder.exists()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
     if (!expFolder.canWrite()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Get stored ROIs from config
     if (config.storedROIs == null || config.storedROIs.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
+    // print("Using " + config.storedROIs.size() + " stored ROIs");
     
     // Setup circular buffer
     setupCircularBuffer();
@@ -5000,12 +5093,14 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
             if (bufferUsage > 0.90) {
                 long currentTime = System.currentTimeMillis();
                 if (currentTime - lastWarningTime > 5000) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    // print("CRITICAL: Buffer at " + (int)(bufferUsage * 100) + "% (" + remaining + "/" + approxCapacity + " frames)");
+                    
                     lastWarningTime = currentTime;
                 }
             } else if (bufferUsage > 0.75) {
                 long currentTime = System.currentTimeMillis();
                 if (currentTime - lastWarningTime > 10000) {
+                    // print("WARNING: Buffer at " + (int)(bufferUsage * 100) + "% (" + remaining + "/" + approxCapacity + " frames)");
                     lastWarningTime = currentTime;
                 }
             }
@@ -5013,9 +5108,9 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
             // Check for overflow
             if (mmc.isBufferOverflowed()) {
                 if (!overflowDetected) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
+                    
+                    
                     overflowDetected = true;
                 }
             }
@@ -5053,6 +5148,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         org.micromanager.data.Image mmImage = mm.data().convertTaggedImage(taggedImg);
                         ip = mm.data().ij().createProcessor(mmImage);
                     } catch (Exception e) {
+                        // print("WARNING: Could not convert image: " + e.getMessage());
                     }
                     
                     if (ip != null) {
@@ -5070,6 +5166,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         // Only print every 10th frame to reduce output
                         if (framesProcessed % 10 == 0) {
                             for (int roiIdx = 0; roiIdx < roiValues.size(); roiIdx++) {
+                                // print("ROI" + (roiIdx + 1) + " [Frame " + framesProcessed + "]: " + roiValues.get(roiIdx));
                             }
                         }
                         
@@ -5085,7 +5182,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         
                         // Progress update
                         if (framesProcessed % 100 == 0) {
-                            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                            
                         }
                     }
                 }
@@ -5098,12 +5195,13 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                     currentTime - noFrameWarningTime > NO_FRAME_WARNING_INTERVAL) {
                     
                     if (!noFrameWarningShown) {
-                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                        // print("\n!!! WARNING: No frames received for " + (timeSinceLastFrame / 1000) + " seconds !!!");
+                        
+                        
+                        
+                        
+                        
+                        
                         noFrameWarningShown = true;
                     }
                     noFrameWarningTime = currentTime;
@@ -5113,9 +5211,10 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
             }
             
         } catch (InterruptedException ie) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
             break;
         } catch (Exception e) {
+            // print("ERROR in acquisition loop: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -5184,17 +5283,18 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     try { mmc.setAutoShutter(true); } catch (Exception e) {}
     
     // Final report
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
+    
+    
     if (approxCapacity > 0) {
+        // print("Peak buffer usage: " + (int)((double)maxBufferDepth / approxCapacity * 100) + "%");
     }
     if (overflowDetected) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
     } else {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
     }
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Convert to stack if requested
     if (config.acqSettings.convertToStack) {
         convertTiffsToStack(config.experimentFolder);
@@ -5220,60 +5320,74 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
 void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
     // Get stored ROIs from config (no need for visible ROI Manager)
     if (config.storedROIs == null || config.storedROIs.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
+    // print("Using " + config.storedROIs.size() + " stored ROIs");
     
     // Parse acquisition settings from table
     ArrayList sequence = config.acqSettings.sequenceRows;
     if (sequence == null || sequence.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
+    // print("Executing " + sequence.size() + " step sequence");
+    
     // Debug: Show configuration state
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
+    // print("config.useCircularBuffer (from file): " + config.useCircularBuffer);
+    // print("config.useSimpleSnapMode (from checkbox): " + config.useSimpleSnapMode);
+    // print("Actual mode being used: " + (config.useSimpleSnapMode ? "Simple Snap Mode" : "Full Sequence Mode"));
+    
     // Check if Simple Snap Mode is enabled
     if (config.useSimpleSnapMode) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        
+        
+        
         // Get timing parameters from first row only
         ArrayList firstRow = (ArrayList) sequence.get(0);
         
         // Debug: print what we have
+        // print("\nDEBUG: First row size = " + firstRow.size());
         for (int i = 0; i < firstRow.size(); i++) {
             Object val = firstRow.get(i);
+            // print("  Column " + i + ": '" + val + "' (type: " + (val != null ? val.getClass().getName() : "null") + ")");
         }
         
         // Note: Column 0 is row number, actual data starts at column 1
         // Column 1 = Channel, Column 2 = Exposure, Column 3 = Interval, Column 4 = Frames
         // In Simple Snap Mode: ONLY use Frame Interval from table, ignore all other settings
         String intervalStr = (String) firstRow.get(3);
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        // print("\nReading Frame Interval from table (other settings from GUI):");
+        
         int frameIntervalMs = 1000; // Default
         int maxFrames = Integer.MAX_VALUE; // No hard frame limit – run until user stops
         
         try {
             frameIntervalMs = Integer.parseInt(intervalStr.trim());
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
         } catch (Exception e) {
+            // print("  ERROR parsing interval: " + e.getMessage() + ", using default " + frameIntervalMs + "ms");
         }
         
         // Get current exposure from GUI (don't override it)
         double currentExposure = mmc.getExposure();
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        // print("  Exposure: " + currentExposure + "ms (from GUI)");
+        // print("  Channel/Camera: Current GUI configuration (not switching)");
+        // print("  Max Frames: " + maxFrames + " (continuous until stopped)");
         
         int globalFrameNumber = 0;
         long lastGuiUpdateTime = 0;
@@ -5285,8 +5399,10 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         int frameIntervalCount = 0;
         long lastFrameTime = 0;
         
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        // print("  Frame interval: " + frameIntervalMs + "ms (from table)");
+        
+        // print("  Mode: Timed acquisition (NOT rolling mode - will wait between frames)");
         
         // Make copies as final for use in popup messages  
         final int finalFrameIntervalMs = frameIntervalMs;
@@ -5330,11 +5446,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 
                 // Debug: Log first few frames
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 
                 // Camera config was already applied once before this loop.
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // print("  About to call mm.live().snap()");
                 }
                 
                 // WARNING: This is a BLOCKING call with NO TIMEOUT
@@ -5353,42 +5470,44 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 }
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // print("  Snap completed, got " + (images != null ? images.size() : "null") + " images");
                 }
                 
                 if (images == null || images.isEmpty()) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                     Thread.sleep(1000);
                     continue;
                 }
                 
                 org.micromanager.data.Image image = images.get(0);
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 ImageProcessor ip = mm.data().ij().createProcessor(image);
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 
                 // Save image to disk (always)
                 saveImageAsTiff(image, globalFrameNumber, config.experimentFolder);
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 
                 // Progress indicator every 25 frames (reduced from every 10)
                 if (globalFrameNumber % 25 == 0) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 
                 long currentTime = System.currentTimeMillis() - startTime[0];
                 boolean shouldUpdateGui = (currentTime - lastGuiUpdateTime) >= GUI_UPDATE_INTERVAL_MS;
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
+                    
+                    // print("  Will update live view: " + ((shouldUpdateGui || globalFrameNumber <= 3) && config.acqSettings.livePics));
                 }
                 
                 // Update live view if enabled (always update first few frames for debugging)
@@ -5397,20 +5516,21 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 }
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 
                 // Measure ALL ROIs and build data row
                 ArrayList roiValues = measureROIs(ip);
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
+                    // print("  ROIs measured, roiValues.size=" + roiValues.size());
                 }
                 
                 ArrayList dataRow = buildDataRow(globalFrameNumber, currentTime, roiValues);
                 dataRows.add(dataRow);
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 
                 // Update graphs (throttled, but always update first few frames)
@@ -5421,7 +5541,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 
                 // Debug: Log first few frames
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                 }
                 
                 // Timing logic for frame interval:
@@ -5433,8 +5553,9 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 long waitTime = frameIntervalMs - frameElapsed;
                 
                 if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
+                    
+                    // print("  Waiting: " + (waitTime > 0 ? waitTime : 0) + "ms before next frame");
                 }
                 
                 if (waitTime > 0) {
@@ -5445,17 +5566,20 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 }
                 
             } catch (InterruptedException ie) {
+                // print("Acquisition interrupted (InterruptedException)");
                 break;
             } catch (Exception e) {
+                // print("ERROR in simple snap loop at frame " + globalFrameNumber + ": " + e.getClass().getName() + ": " + e.getMessage());
                 e.printStackTrace();
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
                 // Don't break - try to continue
             }
         }
         
 
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
+        
+        // print("Total data rows: " + dataRows.size());
         
         // Wrap statistics display and frame disposal in try-finally to guarantee cleanup
         try {
@@ -5547,14 +5671,15 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
     }
     
     // ========== ADVANCED MODE: Full Sequence Logic ==========
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
+    // print("Executing " + sequence.size() + " step sequence");
     
     int globalFrameNumber = 0; // Total frame counter across all steps
     int currentStepIndex = 0;  // Current step in sequence (0-based)
     long lastGuiUpdateTime = 0;
     final long GUI_UPDATE_INTERVAL_MS = 250;
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
     // Main acquisition loop with sequence logic
     while (running[0]) {
         try {
@@ -5562,7 +5687,9 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
             ArrayList stepRow = (ArrayList) sequence.get(currentStepIndex);
             
             // Debug: print what we got
+            // print("\nDEBUG: Step row size = " + stepRow.size());
             for (int i = 0; i < stepRow.size(); i++) {
+                // print("  Column " + i + ": '" + stepRow.get(i) + "'");
             }
             
             // Note: Column 0 is row number, actual data starts at column 1
@@ -5581,21 +5708,23 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
             try {
                 exposureMs = Integer.parseInt(exposureStr.trim());
             } catch (Exception e) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
             }
             
             try {
                 frameIntervalMs = Integer.parseInt(intervalStr.trim());
             } catch (Exception e) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
             }
             
             try {
                 framesInStep = Integer.parseInt(framesStr.trim());
             } catch (Exception e) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
             }
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
+            // print("\n--- Step " + (currentStepIndex + 1) + ": " + channelName + " ---");
+            
             // Set channel configuration
             if (!channelName.isEmpty()) {
                 try {
@@ -5611,10 +5740,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                             mmc.setExposure(exposureMs);
                             
                             // Additional channel-specific settings could go here
+                            // print("Configured for channel: " + channelName + " (" + exposureMs + "ms exposure)");
                             break;
                         }
                     }
                 } catch (Exception e) {
+                    // print("WARNING: Failed to set channel config: " + e.getMessage());
                 }
             }
             
@@ -5632,7 +5763,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 // Snap image
                 List images = mm.live().snap(false);
                 if (images == null || images.isEmpty()) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                     Thread.sleep(1000);
                     continue;
                 }
@@ -5654,6 +5785,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                 // Measure ALL ROIs and log them
                 ArrayList roiValues = measureROIs(ip);
                 for (int roiIdx = 0; roiIdx < roiValues.size(); roiIdx++) {
+                    // print("ROI" + (roiIdx + 1) + " [Frame " + globalFrameNumber + "]: " + roiValues.get(roiIdx));
                 }
                 
                 // Build data row and store for CSV export
@@ -5681,13 +5813,13 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
                     int nextStep = Integer.parseInt(loopGotoStr);
                     if (nextStep >= 1 && nextStep <= sequence.size()) {
                         currentStepIndex = nextStep - 1; // Convert to 0-based index
-                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                        
                     } else {
-                        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                        
                         currentStepIndex++;
                     }
                 } catch (NumberFormatException e) {
-                    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                    
                     currentStepIndex++;
                 }
             } else {
@@ -5697,21 +5829,23 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
             
             // If we've gone past the last step and no loop, exit
             if (currentStepIndex >= sequence.size()) {
-                // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+                
                 break;
             }
             
         } catch (InterruptedException ie) {
-            // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+            
             break;
         } catch (Exception e) {
+            // print("ERROR in acquisition loop: " + e.getMessage());
             e.printStackTrace();
             break;
         }
     }
     
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
-    // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+    
+    
+    // print("Total data rows: " + dataRows.size());
     
     // Convert to stack if requested
     if (config.acqSettings.convertToStack) {
@@ -5736,14 +5870,14 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
 // ==================== CSV Export for Graph Data ====================
 void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList visualizationRows) {
     if (dataRows.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
     // Use experiment folder instead of root data directory
     File experimentFolder = new File(config.experimentFolder);
     if (!experimentFolder.exists()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
@@ -5970,8 +6104,10 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
             }
             
             writer.close();
+            // print("Graph " + (graphIdx + 1) + " data exported to: " + csvFile.getName());
             
         } catch (IOException e) {
+            // print("ERROR: Failed to export graph " + (graphIdx + 1) + " data: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -5980,13 +6116,13 @@ void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList vis
 // Export event times to CSV
 void exportEventTimesToCSV(ArrayList eventTimes) {
     if (eventTimes.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
     String experimentFolder = config.experimentFolder;
     if (experimentFolder.isEmpty()) {
-        // // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
+        
         return;
     }
     
@@ -6006,10 +6142,11 @@ void exportEventTimesToCSV(ArrayList eventTimes) {
         }
         
         writer.close();
+        // print("Event data exported to: " + csvFile.getName());
         
     } catch (IOException e) {
+        // print("ERROR: Failed to export event data: " + e.getMessage());
         e.printStackTrace();
     }
 }
 
-// // print(...); // REMOVED TO PREVENT CONSOLE DEADLOCK
