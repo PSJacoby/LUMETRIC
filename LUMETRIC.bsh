@@ -1867,6 +1867,12 @@ frame.setVisible(true);
                 editor.stopCellEditing();
             }
         }
+        if (vizTable.isEditing()) {
+            javax.swing.table.TableCellEditor editor = vizTable.getCellEditor();
+            if (editor != null) {
+                editor.stopCellEditing();
+            }
+        }
         
         int rowCount = tableModel.getRowCount();
         StringBuilder errors = new StringBuilder();
@@ -2900,6 +2906,20 @@ String[] parseCSVLine(String line) {
 
 // Save current settings to CSV file
 void saveSettingsToCSV() {
+    // Commit any active cell edit before reading from the model
+    if (table.isEditing()) {
+        javax.swing.table.TableCellEditor editor = table.getCellEditor();
+        if (editor != null) {
+            editor.stopCellEditing();
+        }
+    }
+    if (vizTable.isEditing()) {
+        javax.swing.table.TableCellEditor editor = vizTable.getCellEditor();
+        if (editor != null) {
+            editor.stopCellEditing();
+        }
+    }
+
     JFileChooser fileChooser = new JFileChooser();
     fileChooser.setDialogTitle("Save Acquisition Settings to CSV");
     fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
