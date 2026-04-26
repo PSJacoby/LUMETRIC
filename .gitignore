@@ -6,3 +6,4 @@
 Data/
 .venv
 site/
+tmp/
