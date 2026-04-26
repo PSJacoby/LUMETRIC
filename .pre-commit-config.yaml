@@ -31,20 +31,6 @@ repos:
         args: ["-d", "{extends: relaxed, rules: {line-length: {max: 120}}}"]
         files: \.(yaml|yml)$
 
-  # Java / BeanShell formatting
-  - repo: https://github.com/pre-commit/mirrors-google-java-format
-    rev: v1.25.2
-    hooks:
-      - id: google-java-format
-        files: \.bsh$
-
-  # Arduino / C++ formatting
-  - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v19.1.7
-    hooks:
-      - id: clang-format
-        files: \.ino$
-
   # Secrets / credential scanning
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.24.3

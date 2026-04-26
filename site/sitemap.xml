@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url>
+        <loc>http://127.0.0.1:8000/</loc>
+      </url>
+      <url>
+        <loc>http://127.0.0.1:8000/Configuration/Install/</loc>
+      </url>
+      <url>
+        <loc>http://127.0.0.1:8000/Configuration/Micromanager-Configuration/</loc>
+      </url>
+      <url>
+        <loc>http://127.0.0.1:8000/Architecture/Diagrams/</loc>
+      </url>
+      <url>
+        <loc>http://127.0.0.1:8000/LUMETRIC%20GUI/Singlechannel/</loc>
+      </url>
+      <url>
+        <loc>http://127.0.0.1:8000/LUMETRIC%20GUI/Multichannel/</loc>
+      </url>
+      <url>
+        <loc>http://127.0.0.1:8000/FAQ/</loc>
+      </url>
+</urlset>

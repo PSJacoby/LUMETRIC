@@ -5,7 +5,6 @@
 *.ino.cpp
 Data/
 .venv
-site/
 tmp/
 config-files/
 *.code-workspace
