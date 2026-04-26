@@ -1,0 +1,565 @@
+import ij.IJ;
+import ij.ImagePlus;
+import ij.WindowManager;
+import ij.plugin.frame.RoiManager;
+import ij.process.*;
+import ij.gui.*;
+import java.time.*;
+import org.jfree.chart.plot.PlotOrientation;
+import org.jfree.chart.plot.XYPlot;
+import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
+import org.jfree.chart.JFreeChart;
+import org.jfree.chart.ChartFactory;
+import org.jfree.chart.ChartFrame;
+import org.jfree.data.xy.XYSeries;
+import org.jfree.data.xy.XYSeriesCollection;
+import org.jfree.data.time.*;
+import javafx.util.Pair;
+import java.util.ArrayList;
+import java.util.Arrays;  
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+import java.io.File;
+import java.util.List;
+import java.lang.System;
+import org.micromanager.data.Coords;
+import org.micromanager.data.Datastore;
+import org.micromanager.data.Image;
+import mmcorej.CharVector;
+import java.awt.Color;
+import javax.swing.*;
+import java.nio.ByteBuffer;
+
+
+
+
+ImageProcessor ip;
+
+store = mm.data().createRAMDatastore();
+List images = mm.live().snap(false); //Snap to draw DonorROIs
+image = images.get(0);
+Coords.CoordsBuilder builder = mm.data().getCoordsBuilder();
+builder = builder.time(0).channel(0); 
+image = image.copyAtCoords(builder.build());
+store.putImage(image);
+ip = mm.data().ij().createProcessor(image);// Make image accessible to IJ processing layer
+imp = new ImagePlus("MMAcq", ip);
+imc = new ImageCanvas(imp);
+imw = new ImageWindow(imp, imc);
+IJ.run("ROI Manager...", "");
+rm = RoiManager.getInstance();
+boolean ROIsDone = false;
+//Creating and displaying the button
+JFrame f2=new JFrame("FRET Live"); 
+JButton acquireButton = new JButton();
+acquireButton.text = "ROIs Done";
+f2.setSize(100,100);
+f2.add(acquireButton);
+f2.setVisible(true);    
+//Action Listener for the Button
+acquireButton.addActionListener(new java.awt.event.ActionListener() {
+        public void actionPerformed(java.awt.event.ActionEvent evt) {   
+				ROIsDone = true;
+            f2.setVisible(false); //Removes button once it is clicked
+            f2.dispose();
+            return;
+        }
+});
+savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack";//check if folders already exist, first time on this computer: create them 
+file = new File(savePath);
+if (!file.exists()) {
+		file.mkdir();		
+     }
+while(ROIsDone == false) {
+          Thread.sleep(1000);  //Wait for the User to finish the ROIs 
+     };
+     
+filenumber = 1; // see if there are still old ROIsets in the Stack folder, if yes, give upcounting names 
+savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\RoiSet"+filenumber.toString()+".zip";
+file = new File(savePath);
+while (file.exists()) {
+				filenumber++;
+            savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\RoiSet"+filenumber.toString()+".zip";  
+     			file = new File(savePath);
+     }
+rm.runCommand("Save", savePath); // Saving the measurement ROIs for later use 
+numberROIs = rm.getCount();       
+rm.runCommand("UseNames", "true");
+
+XYSeriesCollection dataset2 = new XYSeriesCollection(); // initalizing the data collection for the live graph
+
+JFrame ChannelChoice = new JFrame();//Letting the user choose the illumination 
+ChannelChoice.setTitle("Please choose the Spectral Output:");
+ChannelChoice.setSize(510,100);
+JPanel Channellist = new JPanel();
+Channellist.setBackground(Color.DARK_GRAY);
+JRadioButton CFP = new JRadioButton ("CFP (390/22)", false);
+Channellist.add(CFP);
+JRadioButton GFP = new JRadioButton ("GFP (475/28)", false);
+Channellist.add(GFP);
+JRadioButton YFP = new JRadioButton ("YFP (510/25)", false);
+Channellist.add(YFP);
+JRadioButton Cy3 = new JRadioButton ("Cy3 (555/28)", false);
+Channellist.add(Cy3);
+JRadioButton Cy5 = new JRadioButton ("Cy5 (635/22)", false);
+Channellist.add(Cy5);
+JCheckBox FRET = new JCheckBox("FRET-Experiment?", false);
+Channellist.add(FRET);
+JButton IllDone = new JButton();
+IllDone.text = "I am done choosing the Spectral Output";
+Channellist.add(IllDone);
+ChannelChoice.add(Channellist);
+ChannelChoice.setVisible(true);
+
+boolean userInputDone = false;
+
+IllDone.addActionListener(new java.awt.event.ActionListener() {
+        public void actionPerformed(java.awt.event.ActionEvent evt) {   
+				userInputDone = true;
+            ChannelChoice.setVisible(false); 
+            ChannelChoice.dispose();
+            return;
+        }
+});
+
+while(userInputDone == false) {
+          Thread.sleep(500);  //Wait for the User to finish the Illu Settings 
+     };
+//translating the user Input to the correct Int to be send as serial to Ardu Firmware 
+int PinPattern = 1; // because one is the camera TTL, this people should generally want 
+if (CFP.isSelected() == true){			//if reconnecting TTL, be sure this logic is still correct! 
+	PinPattern = PinPattern + 2;
+	}
+if (GFP.isSelected() == true){			
+	PinPattern = PinPattern + 4;
+	}
+if (YFP.isSelected() == true){			
+	PinPattern = PinPattern + 8;
+	}
+if (Cy3.isSelected() == true){			
+	PinPattern = PinPattern + 16;
+	}
+if (Cy5.isSelected() == true){			
+	PinPattern = PinPattern + 32;
+	}
+print(PinPattern);
+userInputDone = false;//let the user set the imaging parameters 
+while (userInputDone == false){
+	gd = new ij.gui.GenericDialog("Set Imaging Parameters");
+	gd.addNumericField("Frame Rate [ms]", 60000, 0);  // IF HIGHER VALUES ARE NEEDED I NEED TO POINT AT MORE BYTES IN ARDUINO FIRMWARE!SO DO NOT SIMPLY INCREASE HERE!
+	gd.addNumericField("Exposure [ms]", 250, 0); 
+	gd.showDialog();
+	if (gd.wasCanceled()){
+		return;
+		}
+	F = (int)gd.getNextNumber();
+	E = (int)gd.getNextNumber();
+	if (F <= 60000 && E <= 250  ){
+		userInputDone = true;
+		}
+	else{
+		print("Invalid input. Choose unsigned Integers smaller or equal to the given max.");
+		}
+	}
+if (F == 40){ //I can not send a 40 over serial as this is used as keep alive by MM so --> use 60001
+	F = 60001; 
+}
+if (E == 40){ //I can not send a 40 over serial as this is used as keep alive by MM so --> use 251
+	E = 251; 
+}	
+EventValue = 0;
+int FLow = 0xff & F;
+F2 = F >> 8;
+int FHigh = 0xff & F2;
+IJ.run("Close All");
+
+boolean UserBoared = false;
+//Creating and displaying the button
+JFrame frame = new JFrame ("Aquisition Control");
+frame.getContentPane().setLayout(new GridLayout(1, 3));
+JButton acquireButton = new JButton();
+acquireButton.text = "Stop Experiment";
+JButton RescaleXButton = new JButton();
+RescaleXButton.text = "Rescale X-Axis";
+JButton EventButton = new JButton();
+EventButton.text = "Event";
+frame.add(acquireButton);
+frame.add(RescaleXButton);
+frame.add(EventButton);
+frame.pack();
+frame.setVisible(true);  
+
+//Second File for Event Log
+filenumber = 1;
+savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\Event-Data"+filenumber.toString()+".csv";
+filecsvE = new File(savePath);
+while (filecsvE.exists()) {
+				filenumber++;
+            savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\Event-Data"+filenumber.toString()+".csv";
+     			filecsvE = new File(savePath);
+     };
+FileWriter fwE = new FileWriter(filecsvE);
+BufferedWriter bwE = new BufferedWriter(fwE);
+
+//Action Listener for the Button
+acquireButton.addActionListener(new java.awt.event.ActionListener() {
+        public void actionPerformed(java.awt.event.ActionEvent evt) {   
+				UserBoared = true;
+            frame.setVisible(false); //Removes button once it is clicked
+            frame.dispose();
+            return;
+        }
+});
+RescaleXButton.addActionListener(new java.awt.event.ActionListener() {
+        public void actionPerformed(java.awt.event.ActionEvent evt) {  
+            plot = chart.getXYPlot();
+        		axis = plot.getDomainAxis(0);
+        		axis.setAutoRange(true);
+            return;
+        }
+});
+
+EventButton.addActionListener(new java.awt.event.ActionListener() {
+        public void actionPerformed(java.awt.event.ActionEvent evt) {   
+            long finish = System.nanoTime();
+   			long timeElapsed = finish - start;
+   			timems = timeElapsed / 1000000;
+   			EventValue = 2;
+				bwE.write( "Addition at time [ms];" + timems + ";");
+				bwE.newLine();
+            return;
+        }
+});
+
+if (FRET.isSelected() == false){
+	for (int ROI = 0; ROI < numberROIs; ROI++) {  // goes through all ROIS and adds the needed number of elements to the chart
+		name = "ROI"+ROI.toString();
+		rm.select(ROI);
+		rm.runCommand("Rename", "rightChannel_"+name);
+		XYSeries WTF = new XYSeries("rightChannel_"+name); // adding the ROI names to the data to be plotted
+		dataset2.addSeries(WTF);  
+		DonorRoi = rm.getRoi(ROI);
+		AcceptorRoi =  DonorRoi.clone();
+		AcceptorRoi = AcceptorRoi.getPolygon(); // get the corresponding left ROI
+		AcceptorRoi.translate( -288, 0);
+		AcceptorRoi = new PolygonRoi(AcceptorRoi , 2);
+		AcceptorRoi.setName("leftChannel_"+name);
+		rm.addRoi(AcceptorRoi);
+		XYSeries WTF2 = new XYSeries("leftChannel_"+name); // adding the ROI names to the data to be plotted
+		dataset2.addSeries(WTF2);  
+		};
+	};
+
+if (FRET.isSelected() == true){
+	for (int ROI = 0; ROI < numberROIs; ROI++) {  // goes through all ROIS and adds the needed number of elements to the chart
+		name = "ROI"+ROI.toString();
+		rm.select(ROI);
+		rm.runCommand("Rename", "Donor_"+name);
+		XYSeries WTF = new XYSeries("Ratio_"+name); // adding the ROI names to the data to be plotted
+		dataset2.addSeries(WTF);  
+		DonorRoi = rm.getRoi(ROI);
+		AcceptorRoi =  DonorRoi.clone();
+		AcceptorRoi = AcceptorRoi.getPolygon(); // get the corresponding Acceptor ROI
+		AcceptorRoi.translate( -288, 0);
+		AcceptorRoi = new PolygonRoi(AcceptorRoi , 2);
+		AcceptorRoi.setName("Acceptor_"+name);
+		rm.addRoi(AcceptorRoi);
+		};
+	};	
+
+
+EventLine = "EventLine";
+XYSeries WTF = new XYSeries(EventLine); 
+dataset2.addSeries(WTF);  
+// initialize Live Plot
+
+
+if (FRET.isSelected() == true){
+	print("envoced fret true");
+	GraphTitle = "non-corr. Acc/Don Ratios";
+	YLabel = "Don/Acc Ratio";
+	RLabel = "Donor";
+	LLabel = "Acceptor";
+	}
+if (FRET.isSelected() == false){
+	print("envoced fret false");
+	GraphTitle = "Intensities";
+	YLabel = "Intensity [A.U.]";
+	RLabel = "rightChannel";
+	LLabel = "leftChannel";
+	}
+
+JFreeChart chart = ChartFactory.createXYLineChart(GraphTitle, // Title
+                "Time (ms)", // x-axis Label
+                YLabel, // y-axis Label
+                dataset2, // Dataset
+                PlotOrientation.VERTICAL, // Plot Orientation
+                true, // Show Legend
+                true, // Use tooltips
+                false // Configure chart to generate URLs?
+                );
+                         
+ChartFrame graphFrame = new ChartFrame("Live Ratio", chart);
+graphFrame.getChartPanel().setMouseWheelEnabled(true);
+graphFrame.pack();
+graphFrame.setVisible(true);
+        
+cb = mm.data().getCoordsBuilder().z(0).c(0).p(0).t(0); //c=channel, z=zpos, p=xypos, t=time 
+//Metadata.MetadataBuilder mb = mm.data().getMetadataBuilder();
+display = mm.displays().createDisplay(store);  //initialize live view
+store = mm.data().createRAMDatastore();
+//TODO START ACQU IN CAMERA IN WAITING FOR EXTERNAL TRIGGER MODE --> CHECK AT SETUP
+mmc.startSequenceAcquisition(500000, 0, true); //(long numImages, double intervalMs, bool stopOnOverflow) 
+CharVector messageArdu = new CharVector();
+messageArdu.add((char) 45); //Case in Firmware in Arduino
+messageArdu.add((char) PinPattern); //PinPattern
+messageArdu.add((char) FHigh);
+messageArdu.add((char) FLow);
+messageArdu.add((char) E);
+mmc.writeToSerialPort("COM10",messageArdu);
+
+long start = System.nanoTime();
+int curFrame = 0;
+ArrayList listIntensities = new ArrayList(); //List initialize for data collection
+ArrayList listTimeStamps = new ArrayList(); //List initialize for time data collection
+while (mmc.getRemainingImageCount() > 0 || mmc.isSequenceRunning(mmc.getCameraDevice())) {
+	if (UserBoared == true) {
+		mmc.stopSequenceAcquisition();
+		CharVector KillIt = new CharVector();
+		KillIt.add((char) 66);
+		mmc.writeToSerialPort("COM10",KillIt);
+		UserBoared = false;
+		};
+   if (mmc.getRemainingImageCount() > 0) {
+      tagged = mmc.popNextTaggedImage();
+      timeStamp = tagged.tags.getDouble("ElapsedTime-ms");
+      listTimeStamps.add(timeStamp);
+      image = mm.data().convertTaggedImage(tagged, cb.time(curFrame).build(), null);
+      store.putImage(image);
+      ip = mm.data().ij().createProcessor(image);
+      if (FRET.isSelected() == false){
+			for (int ROI = 0; ROI < 2*numberROIs; ROI++) {  // goes through all ROIS and adds the needed number of elements to the chart
+				CurRoi = rm.getRoi(ROI);
+				ip.setRoi(CurRoi);
+				MI = ip.getStatistics().mean;
+				if (ROI < numberROIs){
+					name = "LCh_Intensity_ROI"+ROI.toString();
+				}
+				else {
+				name = "RCh_Intensity_ROI"+ROI.toString();
+				};
+				//name = "platzhalter";
+				Pair pairedValues = new Pair(name , MI);
+  				listIntensities.add(pairedValues);
+				dataset2.getSeries(ROI).add( timeStamp , MI);
+			};
+			dataset2.getSeries(2*numberROIs).add( timeStamp , 10000*EventValue);  
+      	EventValue = 0;
+      };
+      if (FRET.isSelected() == true){
+			for (int ROI = 0; ROI < 2*numberROIs; ROI++) {  // goes through all ROIS and adds the needed number of elements to the chart
+				CurRoi = rm.getRoi(ROI);
+				ip.setRoi(CurRoi);
+				MI = ip.getStatistics().mean;
+				name = "SortOut";
+				if (ROI < numberROIs){
+					name = "Acceptor"+ROI.toString();
+					}
+				else {
+					ROIname = ROI-numberROIs;
+					name = "Donor"+ROIname.toString();
+					};
+				Pair pairedValues = new Pair(name , MI);
+   			listIntensities.add(pairedValues);
+				};
+				for(int i=0;i<(numberROIs);i++){ // calculates and Adds the Ratio for all
+            	Acc = listIntensities.get(i);
+            	Don = listIntensities.get(i + numberROIs);
+            	DonInt = Don.getValue();
+					AccInt = Acc.getValue();
+					AoDR = AccInt / DonInt;
+					name = "Ratio"+ i.toString();
+					Pair pairedValues = new Pair(name , AoDR);
+   				listIntensities.add(pairedValues);
+   				dataset2.getSeries(i).add( timeStamp , AoDR);
+        			};
+        		dataset2.getSeries(numberROIs).add( timeStamp , EventValue);  
+      		EventValue = 0;
+				};
+   			};
+   curFrame = curFrame + 1;   
+};
+
+
+filenumber = 1;
+savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\Raw-Data"+filenumber.toString()+".csv";
+filecsv = new File(savePath);
+while (filecsv.exists()) {
+				filenumber++;
+            savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\Raw-Data"+filenumber.toString()+".csv";
+     			filecsv = new File(savePath);
+     };
+
+FileWriter fw = new FileWriter(filecsv);
+BufferedWriter bw = new BufferedWriter(fw);
+bw.write("timestamp [ms];");
+if (FRET.isSelected() == true){
+	for (int ROI = 0; ROI < 3*numberROIs; ROI++) {
+		if (ROI < numberROIs){
+			bw.write("Donor"+ROI.toString()+";");
+			}
+		else if (ROI < 2*numberROIs){
+			bw.write("Acceptor"+(ROI/2).toString()+";");
+			}
+		else {
+			bw.write("Ratio"+(ROI/3).toString()+";");
+			}
+	}
+	bw.newLine();
+	int CountPrintInLine = 0;
+	int CountTimeStamps = 0;
+	bw.write((listTimeStamps.get(CountTimeStamps)).toString()+";");
+	CountTimeStamps = CountTimeStamps + 1;
+	for (int i=0;i<listIntensities.size(); i++){
+		bw.write((listIntensities.get(i).getValue()).toString()+";");
+		CountPrintInLine = CountPrintInLine +1;
+		if (CountPrintInLine == 3*numberROIs){
+			CountPrintInLine = 0;
+			bw.newLine();	
+			if (CountTimeStamps<listTimeStamps.size()){
+				bw.write((listTimeStamps.get(CountTimeStamps)).toString()+";");
+				CountTimeStamps = CountTimeStamps + 1;
+			};
+		};
+	};
+};
+if (FRET.isSelected() == false){
+	for (int ROI = 0; ROI < numberROIs; ROI++) {
+		bw.write("ROI"+ROI.toString()+";");
+	};
+	bw.newLine();
+	int CountPrintInLine = 0;
+	int CountTimeStamps = 0;
+	bw.write((listTimeStamps.get(CountTimeStamps)).toString()+";");
+	CountTimeStamps = CountTimeStamps + 1;
+	for (int i=0;i<listIntensities.size(); i++){
+		bw.write((listIntensities.get(i).getValue()).toString()+";");
+		CountPrintInLine = CountPrintInLine +1;
+		if (CountPrintInLine == numberROIs){
+			CountPrintInLine = 0;
+			bw.newLine();	
+			if (CountTimeStamps<listTimeStamps.size()){
+				bw.write((listTimeStamps.get(CountTimeStamps)).toString()+";");
+				CountTimeStamps = CountTimeStamps + 1;
+			};
+		};
+	};
+};
+
+//Add line with ROI names
+for (int Row = 0; Row < curFrame; ++Row) {
+        Rowtext = "";
+        //for (int Col = 0; Col < RawData[Row].length; ++Col) {
+        //    Rowtext = Rowtext + RawData[Row][Col].toString() + ";" ; 
+        //}
+      //bw.write(Rowtext.toString());
+		//bw.newLine();
+		};
+bw.close();
+fw.close();	
+
+bwE.close();
+fwE.close();	
+
+// Save the datastore.
+filenumber = 1;
+savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\TimeSeries"+filenumber.toString();
+file = new File(savePath);
+while (file.exists()) {
+				filenumber++;
+            savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\TimeSeries"+filenumber.toString();   
+     			file = new File(savePath);
+     };
+     
+store.save(Datastore.SaveMode.MULTIPAGE_TIFF, savePath);
+
+if (FRET.isSelected() == true){
+	Accdir = 1;
+	if (CFP.isSelected() == true){			
+		Accdir = Accdir + 8;
+		};
+	if (GFP.isSelected() == true){			
+		Accdir = Accdir + 16;
+		};
+	if (Cy3.isSelected() == true){			
+		Accdir = Accdir + 32;
+		};
+	cb = mm.data().getCoordsBuilder().z(0).c(0).p(0).t(0);
+	//display = mm.displays().createDisplay(store);  //initialize live view
+	store2 = mm.data().createRAMDatastore();
+	//TODO START ACQU IN CAMERA IN WAITING FOR EXTERNAL TRIGGER MODE --> CHECK AT SETUP
+	mmc.startSequenceAcquisition(500000, 0, true); //(long numImages, double intervalMs, bool stopOnOverflow) 
+	CharVector messageArdu = new CharVector();
+	messageArdu.add((char) 45); //Case in Firmware in Arduino
+	messageArdu.add((char) Accdir); //PinPattern
+	messageArdu.add((char) FHigh);
+	messageArdu.add((char) FLow);
+	messageArdu.add((char) E);
+	mmc.writeToSerialPort("COM10",messageArdu);
+	long start = System.nanoTime();
+	int curFrame = 0;
+	ArrayList listIntensities = new ArrayList(); //List initialize for data collection
+	ArrayList listTimeStamps = new ArrayList(); //List initialize for time data collection
+	while (mmc.getRemainingImageCount() > 0 || mmc.isSequenceRunning(mmc.getCameraDevice())) {
+		if ( curFrame > 3 ) {
+			mmc.stopSequenceAcquisition();
+			CharVector KillIt = new CharVector();
+			KillIt.add((char) 66);
+			mmc.writeToSerialPort("COM10",KillIt);
+			};
+   	if (mmc.getRemainingImageCount() > 0) {
+      	tagged = mmc.popNextTaggedImage();
+      	timeStamp = tagged.tags.getDouble("ElapsedTime-ms");
+      	print(timeStamp);
+      	image = mm.data().convertTaggedImage(tagged, cb.time(curFrame).build(), null);
+      	store2.putImage(image);
+      	ip = mm.data().ij().createProcessor(image);
+			for (int ROI = 0; ROI < 2*numberROIs; ROI++) {  // goes through all ROIS and adds the needed number of elements to the chart
+				CurRoi = rm.getRoi(ROI);
+				ip.setRoi(CurRoi);
+				MI = ip.getStatistics().mean;
+				name = "SortOut";
+				if (ROI < numberROIs){
+					name = "Acceptor"+ROI.toString();
+					}
+				else {
+					ROIname = ROI-numberROIs;
+					name = "Donor"+ROIname.toString();
+					};
+				Pair pairedValues = new Pair(name , MI);
+  				listIntensities.add(pairedValues);
+				};
+			for(int i=0;i<(numberROIs);i++){ // calculates and Adds the Ratio for all
+        	   Acc = listIntensities.get(i);
+        	   Don = listIntensities.get(i + numberROIs);
+        	   DonInt = Don.getValue();
+				AccInt = Acc.getValue();
+           	AoDR = AccInt / DonInt;
+				name = "Ratio"+ i.toString();
+				Pair pairedValues = new Pair(name , AoDR);
+  				listIntensities.add(AoDR);
+  				dataset2.getSeries(i).add( timeStamp , AoDR);
+  				};
+			};			
+   curFrame++;   
+	};
+filenumber = 1;
+savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\AccDir"+filenumber.toString(); 
+file = new File(savePath);
+while (file.exists()) {
+	filenumber++;
+   savePath = "C:\\Program Files\\Micro-Manager-2.0\\FRET\\Stack\\AccDir"+filenumber.toString();   
+   file = new File(savePath);
+   };
+store2.save(Datastore.SaveMode.MULTIPAGE_TIFF, savePath);
+};
