@@ -1,0 +1,52 @@
+repos:
+  # General file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^site/
+      - id: end-of-file-fixer
+        exclude: ^site/
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+        exclude: ^site/
+
+  # Markdown linting for docs
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.44.0
+    hooks:
+      - id: markdownlint
+        args: ["--disable", "MD013", "MD033", "--"]
+        files: \.(md)$
+        exclude: ^site/
+
+  # YAML validation (for this config file and any other YAML files)
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.0
+    hooks:
+      - id: yamllint
+        args: ["-d", "{extends: relaxed, rules: {line-length: {max: 120}}}"]
+        files: \.(yaml|yml)$
+
+  # Java / BeanShell formatting
+  - repo: https://github.com/pre-commit/mirrors-google-java-format
+    rev: v1.25.2
+    hooks:
+      - id: google-java-format
+        files: \.bsh$
+
+  # Arduino / C++ formatting
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v19.1.7
+    hooks:
+      - id: clang-format
+        files: \.ino$
+
+  # Secrets / credential scanning
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks
