@@ -1,0 +1,44 @@
+[project]
+site_name= "LUMETRIC"
+site_url = "http://127.0.0.1:8000/"
+nav = [
+    {"Home" = "index.md"},
+    {"Configuration" = [
+        "Configuration/Install.md",
+        "Configuration/Micromanager-Configuration.md"
+    ]},
+    {"Architecture" = [
+        "Architecture/Diagrams.md"
+    ]},
+    {"LUMETRIC GUI" = [
+        "LUMETRIC GUI/Singlechannel.md",
+        "LUMETRIC GUI/Multichannel.md"
+    ]},
+    {"FAQ" = "FAQ.md"}
+]
+[project.theme]
+features = [
+    "navigation.path",
+    "navigation.sections",
+    "navigation.tabs",
+    "navigation.footer",
+    "navigation.instant",
+    "toc.integrate",
+    "toc.follow",
+    "search.suggest",
+    "search.highlight"]
+font = false
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toogle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toogle.name = "Switch to light mode"
+
+[project.markdown_extensions.pymdownx.caret]
+[project.markdown_extensions.pymdownx.mark]
+[project.markdown_extensions.pymdownx.tilde]
