@@ -11,7 +11,7 @@
  *   All values are capped at 60000; max real hi byte = 234 (0xEA), leaving
  *   sentinel values 235-239 permanently free (none equal 40).
  *   Row layout (16 bytes per row):
- *     [pinPattern:2]     PORTJ bit pattern  (bit0=camera trig, bits1-5=LEDs; hi always 0)
+ *     [pinPattern:2]     PORTJ bit pattern  (bit0=camera trig, bits1-7=LEDs; hi always 0)
  *     [exposureMs:2]     exposure time ms, 0-60000
  *     [intervalMs:2]     frame interval ms, 0-60000 (must be >= exposure)
  *     [frames:2]         frames to capture, 0-60000 (0 = infinite until switch/quit)
@@ -75,7 +75,7 @@
   const uint8_t numDAChannels_ = 0;
   #endif
 
-  const uint8_t numDigitalPins_ = 6;
+  const uint8_t numDigitalPins_ = 8;  // PJ0-PJ7 (bit0=cam trig, bits1-7=LEDs)
 
    // pin on which to receive the trigger
    int inPin_ = 2;
@@ -115,7 +115,7 @@
 #define MAX_ACQ_ROWS 32
 
 struct AcqRow {
-    byte     pinPattern;     // PORTJ bit pattern (bit0=camera trig, bit1-5=LEDs)
+    byte     pinPattern;     // PORTJ bit pattern (bit0=camera trig, bit1-7=LEDs)
     uint16_t exposureMs;     // LED + trigger on-time (ms)
     uint16_t intervalMs;     // full frame period including exposure (ms)
     uint16_t frames;         // frames to capture (0 = infinite until switch/quit)
@@ -169,13 +169,15 @@ void setup() {
    // floating-LOW pin. Wire the camera's FIRE/TriggerOut to this pin.
    pinMode(CAM_FEEDBACK_PIN, INPUT_PULLDOWN);
 
-   // Arduino Giga R1 – Port J outputs (D25, D27, D29, D31, D33, D35 = PJ0-PJ5)
+   // Arduino Giga R1 – Port J outputs (D25,D27,D29,D31,D33,D35 = PJ0-PJ5; D37,D38 = PJ6,PJ7)
    pinMode(25, OUTPUT);
    pinMode(27, OUTPUT);
    pinMode(29, OUTPUT);
    pinMode(31, OUTPUT);
    pinMode(33, OUTPUT);
    pinMode(35, OUTPUT);
+   pinMode(37, OUTPUT);  // PJ6 — LED channel 6
+   pinMode(38, OUTPUT);  // PJ7 — LED channel 7
 
    // Initialize all Port J pins to LOW (off state)
    setPortJ(0);
@@ -198,13 +200,13 @@ void setup() {
 //  Port J helpers (Arduino Giga R1)
 // ============================================================
 
-// Write 6-bit pattern to GPIOJ (PJ0-PJ5 = D25,D27,D29,D31,D33,D35)
+// Write 8-bit pattern to GPIOJ (PJ0-PJ7 = D25,D27,D29,D31,D33,D35,D37,D38)
 void setPortJ(byte pattern) {
-   GPIOJ->ODR = (GPIOJ->ODR & ~0x3F) | (pattern & 0x3F);
+   GPIOJ->ODR = (GPIOJ->ODR & ~0xFF) | (pattern & 0xFF);
 }
 
 byte getPortJ() {
-   return (byte)(GPIOJ->ODR & 0x3F);
+   return (byte)(GPIOJ->ODR & 0xFF);
 }
 
 // Read digital state of analogue input pins A0-A5 as a 6-bit byte
@@ -395,7 +397,7 @@ void loop() {
        // Set digital output
        case 1:
           if (waitForSerial(timeOut_)) {
-            currentPattern_ = Serial.read() & B00111111;
+            currentPattern_ = Serial.read() & B11111111;
             if (!blanking_) setPortJ(currentPattern_);
             Serial.write(byte(1));
           }
@@ -431,7 +433,7 @@ void loop() {
             int patternNumber = Serial.read();
             if (patternNumber >= 0 && patternNumber < (int)SEQUENCELENGTH) {
               if (waitForSerial(timeOut_)) {
-                triggerPattern_[patternNumber] = Serial.read() & B00111111;
+                triggerPattern_[patternNumber] = Serial.read() & B11111111;
                 Serial.write(byte(5));
                 Serial.write(patternNumber);
                 Serial.write(triggerPattern_[patternNumber]);
@@ -573,7 +575,7 @@ void loop() {
                uint16_t expectedNum = (hi << 8) | lo;
                if (expectedNum < SEQUENCELENGTH) {
                  while (count < expectedNum && waitForSerial(timeOut_)) {
-                   triggerPattern_[count++] = Serial.read() & B00111111;
+                   triggerPattern_[count++] = Serial.read() & B11111111;
                  }
                }
              }
