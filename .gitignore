@@ -9,3 +9,5 @@ site/
 tmp/
 config-files/
 *.code-workspace
+platformio.ini
+*.log
