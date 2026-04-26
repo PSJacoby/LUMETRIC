@@ -8,3 +8,4 @@ Data/
 site/
 tmp/
 config-files/
+*.code-workspace
