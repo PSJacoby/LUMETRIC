@@ -30,6 +30,7 @@ The design is optimized for:
 The enclosure consists of:
 - **Bottom shell**
 - **Top cover**
+- **Plugs to seal unused BNC holes**
 
 Both parts are secured using screws in all four corners.
 
@@ -41,7 +42,7 @@ Each corner includes:
 
 #### Level Shifter Placement
 
-Inside the case, there is a dedicated rectangular area designed to accommodate a level shifter module. This space allows the level shifter to be mounted upside down, providing a convenient way to shift voltage levels from 5V to 3.3V. This feature is especially useful for driving cameras or other peripherals that require 5V logic, ensuring compatibility.
+Inside the case, there is a dedicated rectangular area designed to accommodate a level shifter module. This space allows the level shifter to be mounted upside down, providing a convenient way to shift voltage levels from 3.3V to 5V. This feature is especially useful for driving cameras or other peripherals that require 5V logic, ensuring compatibility.
 
 The level shifter area is positioned for easy access to both the Arduino and camera trigger lines, supporting flexible wiring and reliable operation in multi-voltage environments.
 
@@ -66,7 +67,7 @@ The front side of the enclosure contains:
 - **2 rows × 7 BNC connectors (14 total)**
 - Individually labeled:
   - `1–7` (top row)
-  - `1–7` (bottom row)
+  - `8–14` (bottom row)
 
 These outputs are intended for:
 - laser / light source control
@@ -102,9 +103,11 @@ This signal is:
 ## Materials & Assembly Notes
 
 ### Recommended Assembly Hardware
-- Heat-set threaded inserts (M3 recommended)
-- M3 screws for case closure
-- M3 screw for Arduino fixation
+- Heat-set threaded inserts (RUTHEX GE-M3X5X4-001 or similar.)
+- M3 screws (5mm) for case closure
+- M3 screw (5mm) for Arduino fixation
+- TTL Logic Level Converter, 3,3V / 5V (FREI ST1167 or similar)
+- Standard BNC connector
 
 ### 3D Printing Recommendations
 - Material: PETG or PLA+
