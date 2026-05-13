@@ -2,7 +2,7 @@
 
 This folder contains the mechanical design files for the **LUMETRIC microscopy control enclosure**, designed to house an **Arduino GIGA R1** used as a bridge between **µManager (Micro-Manager)**, custom microscopy control firmware, lasers/light sources, and camera trigger systems.
 
-The firmware and system-level control logic are documented separately in the firmware folder and accompanying documentation.
+The firmware and system-level control logic are documented separately in the LUMETRIC folder and accompanying documentation.
 
 This README describes only the **mechanical housing (case)**.
 
@@ -12,13 +12,12 @@ This README describes only the **mechanical housing (case)**.
 The enclosure is a two-part 3D-printable case (top and bottom shell) designed for laboratory use in a modular microscopy setup. It provides structured access to:
 
 - Laser/light source control outputs (BNC)
-- Camera trigger inputs/outputs (TTL, 3V, 5V)
+- Camera trigger inputs/outputs (TTL, 3V [3.3V], 5V)
 - Arduino GIGA R1 interface access
 - Secure mechanical mounting of electronics
 
 The design is optimized for:
 - modular optical setups
-- multi-camera environments
 - reproducible lab integration
 - robust cable management
 
@@ -42,7 +41,7 @@ Each corner includes:
 
 #### Level Shifter Placement
 
-Inside the case, there is a dedicated rectangular area designed to accommodate a level shifter module. This space allows the level shifter to be mounted upside down, providing a convenient way to shift voltage levels from 5V to 3.3V. This feature is especially useful for driving cameras or other peripherals that require 3.3V logic, ensuring compatibility with devices that cannot tolerate 5V signals.
+Inside the case, there is a dedicated rectangular area designed to accommodate a level shifter module. This space allows the level shifter to be mounted upside down, providing a convenient way to shift voltage levels from 5V to 3.3V. This feature is especially useful for driving cameras or other peripherals that require 5V logic, ensuring compatibility.
 
 The level shifter area is positioned for easy access to both the Arduino and camera trigger lines, supporting flexible wiring and reliable operation in multi-voltage environments.
 
@@ -70,14 +69,14 @@ The front side of the enclosure contains:
   - `1–7` (bottom row)
 
 These outputs are intended for:
-- laser control
-- illumination sources
+- laser / light source control
+- electrophysiology modules
 - external modulation signals
 
 
 ## Right Side Panel – Arduino & Camera Interface
 
-The right side provides access to Arduino and camera trigger signals.
+The right side provides access to Arduino and camera trigger-out  (LUMETRIC in) signals.
 
 ### Arduino I/O Access
 - Central cutout for Arduino GIGA R1 connectors
