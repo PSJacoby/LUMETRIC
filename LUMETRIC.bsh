@@ -4136,17 +4136,36 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
                     for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
                         ROIMetadata roiMeta = (ROIMetadata) config.storedROIs.get(roiIdx);
                         ij.gui.Roi roi = roiMeta.roi;
-                        ij.gui.Roi roiCopy = (ij.gui.Roi) roi.clone();
 
-                        // Scale ROI coordinates to match scaled display
-                        java.awt.Rectangle bounds = roiCopy.getBounds();
-                        int scaledX = (int)(bounds.x * scale);
-                        int scaledY = (int)(bounds.y * scale);
-                        int scaledW = (int)(bounds.width * scale);
-                        int scaledH = (int)(bounds.height * scale);
-
-                        // Create new ROI with scaled coordinates
-                        ij.gui.Roi scaledRoi = new ij.gui.Roi(scaledX, scaledY, scaledW, scaledH);
+                        // imp has no ImageWindow, so imp.getCanvas() == null, which means
+                        // Roi.draw() runs with ic=null, mag=1.0 — screen coords == stored pixel
+                        // coords. We must manually pre-scale to display coordinates.
+                        // For polygon/freehand types: scale each absolute vertex.
+                        // For oval/rectangle: scale the bounding box.
+                        int roiType = roi.getType();
+                        ij.gui.Roi scaledRoi;
+                        if (roiType == ij.gui.Roi.POLYGON || roiType == ij.gui.Roi.FREEROI ||
+                                roiType == ij.gui.Roi.POLYLINE || roiType == ij.gui.Roi.FREELINE) {
+                            ij.process.FloatPolygon fp = roi.getFloatPolygon(); // absolute image coords
+                            float[] sxp = new float[fp.npoints];
+                            float[] syp = new float[fp.npoints];
+                            for (int k = 0; k < fp.npoints; k++) {
+                                sxp[k] = (float)(fp.xpoints[k] * scale);
+                                syp[k] = (float)(fp.ypoints[k] * scale);
+                            }
+                            scaledRoi = new ij.gui.PolygonRoi(
+                                new ij.process.FloatPolygon(sxp, syp, fp.npoints), roiType);
+                        } else if (roiType == ij.gui.Roi.OVAL) {
+                            java.awt.Rectangle b = roi.getBounds();
+                            scaledRoi = new ij.gui.OvalRoi(
+                                (int)Math.round(b.x * scale), (int)Math.round(b.y * scale),
+                                (int)Math.round(b.width * scale), (int)Math.round(b.height * scale));
+                        } else {
+                            java.awt.Rectangle b = roi.getBounds();
+                            scaledRoi = new ij.gui.Roi(
+                                (int)Math.round(b.x * scale), (int)Math.round(b.y * scale),
+                                (int)Math.round(b.width * scale), (int)Math.round(b.height * scale));
+                        }
                         // Use color from chart renderer if available, otherwise use default
                         if (renderer != null) {
                             java.awt.Paint paint = renderer.getSeriesPaint(roiIdx);

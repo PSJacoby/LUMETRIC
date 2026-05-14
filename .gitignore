@@ -10,3 +10,4 @@ config-files/
 *.code-workspace
 platformio.ini
 *.log
+site/
