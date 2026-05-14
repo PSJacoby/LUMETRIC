@@ -162,7 +162,7 @@ class AcquisitionSettings {
         for (int i = 0; i < visualizationRows.size(); i++) {
             ArrayList row = visualizationRows.get(i);
             String type = (String) row.get(1);
-            if (type != null && !type.trim().isEmpty() && !type.equals("Off")) {
+            if (type != null && !type.trim().isEmpty() && !type.equals("none")) {
                 return true;
             }
         }
@@ -2175,8 +2175,10 @@ boolean setupVisualizationROIs() {
     import ij.plugin.frame.RoiManager;
 
     // Snap an image
-
-    mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+    // Only apply camera config if not in Simple Snap Mode
+    if (!config.useSimpleSnapMode) {
+        mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+    }
     List images = mm.live().snap(false);
     org.micromanager.data.Image image = images.get(0);
 
@@ -5419,27 +5421,24 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
 
         // Note: Column 0 is row number, actual data starts at column 1
         // Column 1 = Channel, Column 2 = Exposure, Column 3 = Interval, Column 4 = Frames
-        // In Simple Snap Mode: ONLY use Frame Interval from table, ignore all other settings
+        String exposureStr = (String) firstRow.get(2);
         String intervalStr = (String) firstRow.get(3);
 
-        // print("\nReading Frame Interval from table (other settings from GUI):");
-
         int frameIntervalMs = 1000; // Default
+        int exposureMs = 100;       // Default
         int maxFrames = Integer.MAX_VALUE; // No hard frame limit – run until user stops
 
         try {
             frameIntervalMs = Integer.parseInt(intervalStr.trim());
-
         } catch (Exception e) {
             // print("  ERROR parsing interval: " + e.getMessage() + ", using default " + frameIntervalMs + "ms");
         }
 
-        // Get current exposure from GUI (don't override it)
-        double currentExposure = mmc.getExposure();
-
-        // print("  Exposure: " + currentExposure + "ms (from GUI)");
-        // print("  Channel/Camera: Current GUI configuration (not switching)");
-        // print("  Max Frames: " + maxFrames + " (continuous until stopped)");
+        try {
+            exposureMs = Integer.parseInt(exposureStr.trim());
+        } catch (Exception e) {
+            // print("  ERROR parsing exposure: " + e.getMessage() + ", using default " + exposureMs + "ms");
+        }
 
         int globalFrameNumber = 0;
         long lastGuiUpdateTime = 0;
@@ -5460,15 +5459,22 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
         final int finalFrameIntervalMs = frameIntervalMs;
         final int finalMaxFrames = maxFrames;
 
-        // Apply snap config once before the loop (no need to repeat on every frame).
-        // Calling setConfig inside the loop rewrites all camera properties each frame,
-        // which is slow and could confuse the camera or interfere with any TTL state.
-        mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+        // Apply snap config once before the loop (only when a config file is loaded).
+        // In Simple Snap Mode without a config file the camera is already in the correct
+        // state — calling setConfig would throw "preset does not exist".
+        if (!config.useSimpleSnapMode) {
+            mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+        }
 
         // Re-enable auto-shutter for snap() mode (no Arduino TTL control).
         // If circular buffer mode ran previously, it left setAutoShutter(false) active,
         // which prevents the camera from opening its shutter during snap().
         try { mmc.setAutoShutter(true); } catch (Exception e) {}
+
+        // Apply exposure from table row 1
+        try { mmc.setExposure(exposureMs); } catch (Exception e) {
+            print("WARNING: Could not set exposure: " + e.getMessage());
+        }
 
         // Update timing reference to NOW (start of snap loop), so event timestamps match frame timestamps
         startTime[0] = System.currentTimeMillis();
