@@ -91,7 +91,7 @@ class SpatialConfig {
 
     String getRatioDirection1() {
         if (splitAxis.equals("Horizontal")) {
-            return roiSourceRegion.equals("Upper") ? "Up/Down" : "Down/Up";
+            return roiSourceRegion.equals("Upper") ? "Upper/Lower" : "Lower/Upper";
         } else {
             return roiSourceRegion.equals("Left") ? "Left/Right" : "Right/Left";
         }
@@ -99,7 +99,7 @@ class SpatialConfig {
 
     String getRatioDirection2() {
         if (splitAxis.equals("Horizontal")) {
-            return roiSourceRegion.equals("Upper") ? "Down/Up" : "Up/Down";
+            return roiSourceRegion.equals("Upper") ? "Lower/Upper" : "Upper/Lower";
         } else {
             return roiSourceRegion.equals("Left") ? "Right/Left" : "Left/Right";
         }
@@ -119,12 +119,39 @@ class AcquisitionSettings {
     String processingMode = "Temporal"; // "Temporal" or "Spatial"
     SpatialConfig spatialConfig = new SpatialConfig();
 
+    // Background correction
+    boolean bgCorrectionEnabled = false;
+    int bgROIIndex = 0; // Index into config.storedROIs
+
+    // Bleedthrough correction
+    boolean btCorrectionEnabled = false;
+    String  btDirection = "Upper -> Lower"; // human-readable label matching btDirectionCombo
+    double  btFactor    = 0.0;
+
     void captureFromGUI(DefaultTableModel tableModel, DefaultTableModel vizTableModel,
                        JCheckBox simpleSnapModeCheckbox, JCheckBox livePicsCheckbox,
                        JCheckBox convertToStackCheckbox, JCheckBox stackPerRowCheckbox, String savePath,
-                       JComboBox processingModeCombo, JComboBox splitAxisCombo, JComboBox roiSourceCombo) {
+                       JComboBox processingModeCombo, JComboBox splitAxisCombo, JComboBox roiSourceCombo,
+                       JCheckBox bgCorrectionCheckbox,
+                       JCheckBox btCorrectionCheckbox, JComboBox btDirectionCombo, JTextField btFactorField) {
         // Capture mode
         config.useSimpleSnapMode = simpleSnapModeCheckbox.isSelected();
+        bgCorrectionEnabled = bgCorrectionCheckbox.isSelected();
+
+        // BT correction — only valid when BG is also enabled and mode is Spatial
+        if (bgCorrectionEnabled && btCorrectionCheckbox.isSelected()
+                && processingModeCombo.getSelectedItem().equals("Spatial")) {
+            btCorrectionEnabled = true;
+            btDirection = (String) btDirectionCombo.getSelectedItem();
+            try {
+                btFactor = Double.parseDouble(btFactorField.getText().trim().replace(",", "."));
+            } catch (NumberFormatException nfe) {
+                btFactor = 0.0;
+            }
+        } else {
+            btCorrectionEnabled = false;
+        }
+
         livePics = livePicsCheckbox.isSelected();
         convertToStack = convertToStackCheckbox.isSelected();
         stackPerRow = stackPerRowCheckbox.isSelected();
@@ -971,8 +998,8 @@ class VisualizationTypeEditor extends DefaultCellEditor {
 
             // Add region-specific intensity options
             if (spatialConfig.splitAxis.equals("Horizontal")) {
-                combo.addItem("Intensity Up");
-                combo.addItem("Intensity Down");
+                combo.addItem("Intensity Upper");
+                combo.addItem("Intensity Lower");
             } else {
                 combo.addItem("Intensity Left");
                 combo.addItem("Intensity Right");
@@ -1062,6 +1089,11 @@ stackPerRow.setEnabled(false); // Disabled for now
 processingModeCombo = null;
 splitAxisCombo = null;
 roiSourceCombo = null;
+
+// Bleedthrough correction widgets (declared at script scope for save/load access)
+btCorrectionCheckbox = null;
+btDirectionCombo = null;
+btFactorField = null;
 
 // Make stack checkboxes mutually exclusive
 convertToStack.addActionListener(new ActionListener() {
@@ -1273,7 +1305,7 @@ okButton.addActionListener(new ActionListener() {
             }
 
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
 
             config.useTestTable = useTestTableCheckbox.isSelected();
             // Dispose GUI immediately - no more GUI dependencies
@@ -1455,8 +1487,40 @@ spatialConfigPanel.add(Box.createHorizontalStrut(15));
 spatialConfigPanel.add(roiSourceLabel);
 spatialConfigPanel.add(roiSourceCombo);
 
+// Background correction panel (always visible, mode-independent)
+bgCorrectionPanel = new JPanel();
+bgCorrectionPanel.setLayout(new javax.swing.BoxLayout(bgCorrectionPanel, javax.swing.BoxLayout.Y_AXIS));
+bgCorrectionPanel.setBorder(BorderFactory.createTitledBorder("Correction"));
+
+// BG row
+JPanel bgRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+bgCorrectionCheckbox = new JCheckBox("Enable Background Correction");
+bgCorrectionCheckbox.setToolTipText("Subtract a background ROI from all measured ROIs. Select the BG ROI after clicking OK.");
+bgRow.add(bgCorrectionCheckbox);
+bgCorrectionPanel.add(bgRow);
+
+// BT sub-panel (only shown in Spatial mode)
+btCorrectionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+btCorrectionPanel.setBorder(BorderFactory.createTitledBorder("Bleedthrough Correction (Spatial only)"));
+btCorrectionCheckbox = new JCheckBox("Enable Bleedthrough Correction");
+btCorrectionCheckbox.setToolTipText("Apply bleedthrough correction after background subtraction. Only valid with BG correction enabled.");
+btCorrectionCheckbox.setEnabled(false);
+btDirectionCombo = new JComboBox(new String[]{"Upper -> Lower", "Lower -> Upper"}); // default for Horizontal
+btDirectionCombo.setPreferredSize(new java.awt.Dimension(160, 25));
+btDirectionCombo.setToolTipText("Physical direction of bleedthrough (independent of ROI drawing region)");
+btFactorField = new JTextField("0.0", 6);
+btFactorField.setToolTipText("Bleedthrough correction factor (accepts , or . as decimal separator)");
+btCorrectionPanel.add(btCorrectionCheckbox);
+btCorrectionPanel.add(new JLabel("Direction:"));
+btCorrectionPanel.add(btDirectionCombo);
+btCorrectionPanel.add(new JLabel("Factor:"));
+btCorrectionPanel.add(btFactorField);
+btCorrectionPanel.setVisible(false); // shown only when Spatial mode selected
+bgCorrectionPanel.add(btCorrectionPanel);
+
 modePanelViz.add(modeSelectionPanel);
 modePanelViz.add(spatialConfigPanel);
+modePanelViz.add(bgCorrectionPanel);
 
 // Mode change listener - clear table and update options
 typeEditor = new VisualizationTypeEditor();
@@ -1464,8 +1528,15 @@ processingModeCombo.addActionListener(new ActionListener() {
     public void actionPerformed(ActionEvent e) {
         String mode = (String) processingModeCombo.getSelectedItem();
 
-        // Show/hide spatial config
+        // Show/hide spatial config and BT panel
         spatialConfigPanel.setVisible(mode.equals("Spatial"));
+        btCorrectionPanel.setVisible(mode.equals("Spatial"));
+        if (!mode.equals("Spatial")) {
+            btCorrectionCheckbox.setSelected(false);
+            btCorrectionCheckbox.setEnabled(false);
+        } else {
+            btCorrectionCheckbox.setEnabled(bgCorrectionCheckbox.isSelected());
+        }
 
         // Update table model mode (which rebuilds columns)
         vizTableModel.setProcessingMode(mode);
@@ -1524,6 +1595,20 @@ splitAxisCombo.addActionListener(new ActionListener() {
             roiSourceCombo.addActionListener(listener);
         }
 
+        // Rebuild btDirectionCombo to match new axis (physical direction labels)
+        String currentBtDir = btDirectionCombo != null ? (String) btDirectionCombo.getSelectedItem() : null;
+        if (btDirectionCombo != null) {
+            btDirectionCombo.removeAllItems();
+            if (axis.equals("Horizontal")) {
+                btDirectionCombo.addItem("Upper -> Lower");
+                btDirectionCombo.addItem("Lower -> Upper");
+            } else {
+                btDirectionCombo.addItem("Left -> Right");
+                btDirectionCombo.addItem("Right -> Left");
+            }
+            // Axis changed — reset to first item (old label is no longer valid)
+        }
+
         // Clear all visualization settings when split axis changes
         if (processingModeCombo.getSelectedItem().equals("Spatial")) {
             for (int row = 0; row < vizTableModel.getRowCount(); row++) {
@@ -1538,6 +1623,18 @@ splitAxisCombo.addActionListener(new ActionListener() {
             config.roiSourceRegion = (String) roiSourceCombo.getSelectedItem();
             typeEditor.setProcessingMode("Spatial", config);
             vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
+        }
+    }
+});
+
+// bgCorrectionCheckbox listener — enable/disable BT checkbox
+bgCorrectionCheckbox.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        boolean bgOn = bgCorrectionCheckbox.isSelected();
+        boolean isSpatial = processingModeCombo.getSelectedItem().equals("Spatial");
+        btCorrectionCheckbox.setEnabled(bgOn && isSpatial);
+        if (!bgOn) {
+            btCorrectionCheckbox.setSelected(false);
         }
     }
 });
@@ -1641,7 +1738,7 @@ vizStartButton.addActionListener(new ActionListener() {
             }
 
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
             // Dispose GUI immediately
             frame.dispose();
 
@@ -2486,10 +2583,48 @@ boolean setupVisualizationROIs() {
         }
     }
 
-    // Close ROI Manager - we have the ROIs stored
-
+    // Close ROI Manager - we have the ROIs stored in config.storedROIs.
+    // Delete all entries first so the manager has nothing to offer to save as overlay,
+    // which suppresses the "Save as Overlay?" confirmation dialog.
+    rm.runCommand("Deselect");
+    rm.runCommand("Delete");
     rm.close();
 
+    // If background correction is enabled, let the user pick the BG ROI now that we know them all
+    if (config.acqSettings.bgCorrectionEnabled && config.storedROIs.size() > 0) {
+        // Build ROI name list (only source ROIs shown for spatial; all ROIs for temporal)
+        boolean isSpatialBG = config.acqSettings.processingMode.equals("Spatial");
+        int numSourceROIs = isSpatialBG ? config.storedROIs.size() / 2 : config.storedROIs.size();
+        String[] roiNames = new String[numSourceROIs];
+        for (int i = 0; i < numSourceROIs; i++) {
+            roiNames[i] = "ROI" + (i + 1);
+        }
+        // Show dialog on EDT and block until answered
+        final Object[] selectedIdx = {new Integer(0)};
+        final Object bgLock = new Object();
+        final boolean[] bgDone = {false};
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() {
+                JComboBox bgCombo = new JComboBox(roiNames);
+                bgCombo.setSelectedIndex(config.acqSettings.bgROIIndex < numSourceROIs
+                    ? config.acqSettings.bgROIIndex : 0);
+                int res = JOptionPane.showConfirmDialog(null,
+                    new Object[]{"Select the Background ROI to subtract from all other ROIs:", bgCombo},
+                    "Background Correction - Select BG ROI",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+                if (res == JOptionPane.OK_OPTION) {
+                    selectedIdx[0] = new Integer(bgCombo.getSelectedIndex());
+                }
+                synchronized (bgLock) { bgDone[0] = true; bgLock.notifyAll(); }
+            }
+        });
+        synchronized (bgLock) {
+            while (!bgDone[0]) {
+                try { bgLock.wait(); } catch (InterruptedException ie) { break; }
+            }
+        }
+        config.acqSettings.bgROIIndex = ((Integer) selectedIdx[0]).intValue();
+    }
 
     return true;
 }
@@ -2719,6 +2854,9 @@ void loadSettingsFromCSV() {
         String loadedMode = "Temporal"; // Default
         String loadedSplitAxis = "Horizontal";
         String loadedROIRegion = "Upper";
+        boolean loadedBtEnabled = false;
+        String  loadedBtDirection = "";  // set after splitAxis is applied
+        String  loadedBtFactor = "0.0";
 
         // Clear existing table data
         while (tableModel.getRowCount() > 0) {
@@ -2740,8 +2878,15 @@ void loadSettingsFromCSV() {
                 // Apply mode settings NOW before loading visualization data
                 processingModeCombo.setSelectedItem(loadedMode);
                 if (loadedMode.equals("Spatial")) {
-                    splitAxisCombo.setSelectedItem(loadedSplitAxis);
+                    splitAxisCombo.setSelectedItem(loadedSplitAxis); // triggers btDirectionCombo rebuild
                     roiSourceCombo.setSelectedItem(loadedROIRegion);
+                    // Now btDirectionCombo has correct items — safe to set direction
+                    if (!loadedBtDirection.isEmpty()) {
+                        btDirectionCombo.setSelectedItem(loadedBtDirection);
+                    }
+                    btCorrectionCheckbox.setEnabled(bgCorrectionCheckbox.isSelected());
+                    btCorrectionCheckbox.setSelected(loadedBtEnabled && bgCorrectionCheckbox.isSelected());
+                    btFactorField.setText(loadedBtFactor);
                 }
 
                 continue;
@@ -2819,6 +2964,26 @@ void loadSettingsFromCSV() {
                 } else if (line.contains("ROI Region:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     loadedROIRegion = value;
+
+                } else if (line.contains("BG Correction Enabled:")) {
+                    String value = line.substring(line.indexOf(":") + 1).trim();
+                    bgCorrectionCheckbox.setSelected(value.equalsIgnoreCase("true"));
+
+                } else if (line.contains("BG ROI Index:")) {
+                    try {
+                        int idx = Integer.parseInt(line.substring(line.indexOf(":") + 1).trim());
+                        config.acqSettings.bgROIIndex = idx;
+                    } catch (Exception ex) {}
+
+                } else if (line.contains("BT Correction Enabled:")) {
+                    String value = line.substring(line.indexOf(":") + 1).trim();
+                    loadedBtEnabled = value.equalsIgnoreCase("true");
+
+                } else if (line.contains("BT Direction:")) {
+                    loadedBtDirection = line.substring(line.indexOf(":") + 1).trim();
+
+                } else if (line.contains("BT Factor:")) {
+                    loadedBtFactor = line.substring(line.indexOf(":") + 1).trim().replace(",", ".");
 
                 }
                 continue;
@@ -3054,6 +3219,14 @@ void saveSettingsToCSV() {
             }
         }
 
+        // Write background and bleedthrough correction settings
+        writer.println("");
+        writer.println("# BG Correction Enabled: " + bgCorrectionCheckbox.isSelected());
+        writer.println("# BG ROI Index: " + config.acqSettings.bgROIIndex);
+        writer.println("# BT Correction Enabled: " + btCorrectionCheckbox.isSelected());
+        writer.println("# BT Direction: " + btDirectionCombo.getSelectedItem());
+        writer.println("# BT Factor: " + btFactorField.getText().trim().replace(",", "."));
+
         writer.close();
 
         // print("Settings saved to: " + csvFile.getAbsolutePath());
@@ -3081,10 +3254,11 @@ void createInlineAcquisitionWindow() {
 
     acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
 
-    // Adaptive sizing: use 80% of screen width and 70% of screen height
+    // Adaptive sizing: use 90% of screen width and 65% of screen height (landscape ratio
+    // minimises gray letterbox bars in the live view for typical 16:9 / 4:3 cameras)
     java.awt.Dimension screenSize = java.awt.Toolkit.getDefaultToolkit().getScreenSize();
-    int width = (int)(screenSize.width * 0.8);
-    int height = (int)(screenSize.height * 0.7);
+    int width = (int)(screenSize.width * 0.90);
+    int height = (int)(screenSize.height * 0.65);
     acqFrame.setSize(width, height);
 
     // Center window on screen
@@ -3442,6 +3616,8 @@ void createInlineAcquisitionWindow() {
             graphsPanel = graphSplit;
         }
 
+        liveViewPanel.setMinimumSize(new java.awt.Dimension(0, 0));
+        graphsPanel.setMinimumSize(new java.awt.Dimension(0, 0));
         splitPane.setLeftComponent(liveViewPanel);
         splitPane.setRightComponent(graphsPanel);
         mainPanel.setLayout(new BorderLayout());
@@ -3474,6 +3650,10 @@ void createInlineAcquisitionWindow() {
             (ChartPanel) smallCharts.get(0),
             (ChartPanel) smallCharts.get(1));
         smallGraphsSplit.setResizeWeight(0.5);
+        firstChart.setMinimumSize(new java.awt.Dimension(0, 0));
+        smallGraphsSplit.setMinimumSize(new java.awt.Dimension(0, 0));
+        ((ChartPanel) smallCharts.get(0)).setMinimumSize(new java.awt.Dimension(0, 0));
+        ((ChartPanel) smallCharts.get(1)).setMinimumSize(new java.awt.Dimension(0, 0));
 
         splitPane.setLeftComponent(firstChart);
         splitPane.setRightComponent(smallGraphsSplit);
@@ -3557,6 +3737,8 @@ void createInlineAcquisitionWindow() {
         }
 
         if (hasLiveView) {
+            splitPane.getLeftComponent().setMinimumSize(new java.awt.Dimension(0, 0));
+            graphsPanel.setMinimumSize(new java.awt.Dimension(0, 0));
             splitPane.setRightComponent(graphsPanel);
         } else {
             splitPane.setLeftComponent(graphsPanel);
@@ -3809,7 +3991,9 @@ void createInlineAcquisitionWindow() {
 
     // ===== START ACQUISITION THREAD =====
     final boolean[] acquisitionRunning = {true};
-    final ArrayList allDataRows = new ArrayList(); // Store rows [timestamp, roi0, roi1, roi2, roi3] for CSV export
+    final ArrayList allDataRows = new ArrayList(); // Store RAW rows [frame, timestamp, roi0, roi1, ...]
+    final ArrayList allCorrectedDataRows = new ArrayList(); // Parallel BG-corrected rows (empty when BG disabled)
+    final ArrayList allBTCorrDataRows = new ArrayList(); // BT-corrected rows (empty when BT disabled)
     final ArrayList eventTimes = new ArrayList(); // Store event timestamps in ms
 
     // Count active graphs for data structure
@@ -3851,7 +4035,7 @@ void createInlineAcquisitionWindow() {
                 acqFrame.setVisible(false);
 
                 // Export data to CSV on the EDT while cleanup runs in the background.
-                exportGraphDataToCSV(allDataRows, numActiveGraphs, config.acqSettings.visualizationRows);
+                exportGraphDataToCSV(allDataRows, allCorrectedDataRows, allBTCorrDataRows, numActiveGraphs, config.acqSettings.visualizationRows);
                 exportEventTimesToCSV(eventTimes);
             }
         }
@@ -3873,9 +4057,9 @@ void createInlineAcquisitionWindow() {
                 print("================================");
 
                 if (useCircularBuffer) {
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
                 } else {
-                    runAcquisition(acquisitionRunning, allDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
+                    runAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
                 }
             } catch (Exception ex) {
                 print("ERROR in acquisition thread: " + ex.getMessage());
@@ -4057,7 +4241,7 @@ ArrayList calculateSpatialRatio(ArrayList roiValues, String graphType) {
     }
 
     // Determine numerator and denominator based on graph type relative to the source region.
-    // dir1 always equals source/mirrored (e.g. "Up/Down" when source is "Upper").
+    // dir1 always equals source/mirrored (e.g. "Upper/Lower" when source is "Upper").
     ArrayList numeratorROIs = null;
     ArrayList denominatorROIs = null;
 
@@ -4133,6 +4317,10 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
                         }
                     }
 
+                    int totalROIs = config.storedROIs.size();
+                    boolean isSpatialLV = config.acqSettings.processingMode.equals("Spatial");
+                    int halfLV = isSpatialLV ? totalROIs / 2 : totalROIs;
+
                     for (int roiIdx = 0; roiIdx < config.storedROIs.size(); roiIdx++) {
                         ROIMetadata roiMeta = (ROIMetadata) config.storedROIs.get(roiIdx);
                         ij.gui.Roi roi = roiMeta.roi;
@@ -4166,9 +4354,10 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
                                 (int)Math.round(b.x * scale), (int)Math.round(b.y * scale),
                                 (int)Math.round(b.width * scale), (int)Math.round(b.height * scale));
                         }
-                        // Use color from chart renderer if available, otherwise use default
+                        // Use color from chart renderer; mirror ROIs share the color of their
+                        // corresponding source ROI (roiIdx % halfLV maps mirror -> source index).
                         if (renderer != null) {
-                            java.awt.Paint paint = renderer.getSeriesPaint(roiIdx);
+                            java.awt.Paint paint = renderer.getSeriesPaint(roiIdx % halfLV);
                             if (paint instanceof java.awt.Color) {
                                 scaledRoi.setStrokeColor((java.awt.Color) paint);
                             }
@@ -4200,6 +4389,120 @@ void updateLiveView(JPanel liveViewPanel, ImageProcessor ip, ArrayList chartsLis
             }
         }
     });
+}
+
+// Apply background correction: subtract the BG ROI value from all entries.
+// In Temporal mode: subtract rawValues[bgROIIndex] from all entries.
+// In Spatial mode: first N/2 subtract rawValues[bgROIIndex],
+//                  second N/2 subtract rawValues[bgROIIndex + N/2] (paired BG).
+// Raw data is never modified; a new list is returned.
+ArrayList applyBGCorrection(ArrayList rawValues) {
+    ArrayList corrected = new ArrayList();
+    int n = rawValues.size();
+    boolean isSpatial = config.acqSettings.processingMode.equals("Spatial");
+    int bgIdx = config.acqSettings.bgROIIndex;
+
+    if (isSpatial && n >= 2) {
+        int half = n / 2;
+        // Guard: clamp bgIdx to valid source range
+        if (bgIdx >= half) bgIdx = 0;
+        double bgSource  = ((Double) rawValues.get(bgIdx)).doubleValue();
+        double bgMirror  = ((Double) rawValues.get(bgIdx + half)).doubleValue();
+        for (int i = 0; i < n; i++) {
+            double raw = ((Double) rawValues.get(i)).doubleValue();
+            corrected.add(new Double(raw - (i < half ? bgSource : bgMirror)));
+        }
+    } else {
+        // Temporal mode (or fallback)
+        if (bgIdx >= n) bgIdx = 0;
+        double bg = ((Double) rawValues.get(bgIdx)).doubleValue();
+        for (int i = 0; i < n; i++) {
+            double raw = ((Double) rawValues.get(i)).doubleValue();
+            corrected.add(new Double(raw - bg));
+        }
+    }
+    return corrected;
+}
+
+// Apply bleedthrough correction to BG-corrected values.
+// Must only be called in Spatial mode, after BG correction.
+// Direction is read from config.acqSettings.btDirection (e.g. "Upper -> Lower").
+// The "from" label is extracted (e.g. "Upper") and compared to
+// config.acqSettings.spatialConfig.roiSourceRegion to determine which half is source vs mirror.
+//   source indices:  0 .. half-1  (where user drew ROIs)
+//   mirror indices:  half .. n-1  (auto-mirrored)
+// If "from" = source region:  mirror[i] -= factor * source[i]   (light bleeds source -> mirror)
+// If "from" = mirror region:  source[i] -= factor * mirror[i]   (light bleeds mirror -> source)
+// Raw input is never modified; a new list is returned.
+ArrayList applyBTCorrection(ArrayList bgCorrValues) {
+    int n = bgCorrValues.size();
+    ArrayList corrected = new ArrayList();
+    for (int i = 0; i < n; i++) corrected.add(bgCorrValues.get(i));
+
+    if (!config.acqSettings.processingMode.equals("Spatial") || n < 2) return corrected;
+
+    int half = n / 2;
+    double factor = config.acqSettings.btFactor;
+    String direction = config.acqSettings.btDirection; // e.g. "Upper -> Lower"
+    String roiRegion = config.acqSettings.spatialConfig.roiSourceRegion; // e.g. "Upper"
+
+    // Parse the "from" label: everything before " -> "
+    String fromLabel = direction;
+    int arrowIdx = direction.indexOf(" -> ");
+    if (arrowIdx >= 0) {
+        fromLabel = direction.substring(0, arrowIdx).trim();
+    }
+
+    boolean fromIsSource = fromLabel.equalsIgnoreCase(roiRegion);
+
+    for (int i = 0; i < half; i++) {
+        double src    = ((Double) corrected.get(i)).doubleValue();
+        double mirror = ((Double) corrected.get(i + half)).doubleValue();
+        if (fromIsSource) {
+            // source bleeds into mirror: correct mirror, leave source unchanged
+            corrected.set(i + half, new Double(mirror - factor * src));
+        } else {
+            // mirror bleeds into source: correct source, leave mirror unchanged
+            corrected.set(i, new Double(src - factor * mirror));
+        }
+    }
+    return corrected;
+}
+
+// Central per-frame processing: measure ROIs, store RAW + corrected rows, update graphs.
+// Used by both acquisition loops (circular buffer and simple snap) to avoid duplication.
+void processFrameData(ImageProcessor ip, int frameNumber, long currentTime,
+                      ArrayList dataRows, ArrayList correctedDataRows,
+                      ArrayList btCorrDataRows,
+                      ArrayList datasets, ArrayList chartPanels, ArrayList chartsList,
+                      boolean shouldUpdateGui) {
+
+    ArrayList roiValues = measureROIs(ip);
+
+    // Always store the RAW row
+    ArrayList rawRow = buildDataRow(frameNumber, currentTime, roiValues);
+    dataRows.add(rawRow);
+
+    // Compute and store BG-corrected row if enabled
+    ArrayList valuesForGraphs = roiValues;
+    if (config.acqSettings.bgCorrectionEnabled) {
+        ArrayList bgCorrValues = applyBGCorrection(roiValues);
+        correctedDataRows.add(buildDataRow(frameNumber, currentTime, bgCorrValues));
+        valuesForGraphs = bgCorrValues;
+
+        // Compute and store BT-corrected row (only valid after BG, only in Spatial)
+        if (config.acqSettings.btCorrectionEnabled
+                && config.acqSettings.processingMode.equals("Spatial")) {
+            ArrayList btValues = applyBTCorrection(bgCorrValues);
+            btCorrDataRows.add(buildDataRow(frameNumber, currentTime, btValues));
+            valuesForGraphs = btValues; // graphs show highest active correction
+        }
+    }
+
+    // Update graphs (throttled by caller)
+    if (shouldUpdateGui) {
+        updateGraphs(datasets, frameNumber, currentTime, valuesForGraphs, chartPanels, chartsList);
+    }
 }
 
 // Measure all ROIs on an image
@@ -4298,16 +4601,9 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                 }
                 int roiOffset = 0;
                 if (graphType.startsWith("Intensity ")) {
-                    String graphRegion = graphType.substring("Intensity ".length()); // "Up", "Down", "Left", "Right"
+                    String graphRegion = graphType.substring("Intensity ".length()); // "Upper", "Lower", "Left", "Right"
                     String srcRegion = config.acqSettings.spatialConfig.roiSourceRegion; // "Upper", "Lower", "Left", "Right"
-                    boolean matchesSource;
-                    if (graphRegion.equals("Up")) {
-                        matchesSource = srcRegion.equals("Upper");
-                    } else if (graphRegion.equals("Down")) {
-                        matchesSource = srcRegion.equals("Lower");
-                    } else {
-                        matchesSource = srcRegion.equals(graphRegion);
-                    }
+                    boolean matchesSource = srcRegion.equals(graphRegion);
                     roiOffset = matchesSource ? 0 : numSeriesToUpdate;
                 }
                 for (int i = 0; i < numSeriesToUpdate; i++) {
@@ -4880,7 +5176,7 @@ void convertTiffsToStack(String experimentFolder) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
 
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -5233,29 +5529,13 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                             updateLiveView(liveViewPanel, ip, chartsList);
                         }
 
-                        // Measure ALL ROIs
-                        ArrayList roiValues = measureROIs(ip);
-
-                        // Only print every 10th frame to reduce output
-                        if (framesProcessed % 10 == 0) {
-                            for (int roiIdx = 0; roiIdx < roiValues.size(); roiIdx++) {
-                                // print("ROI" + (roiIdx + 1) + " [Frame " + framesProcessed + "]: " + roiValues.get(roiIdx));
-                            }
-                        }
-
-                        // Build data row and store for CSV export
-                        ArrayList dataRow = buildDataRow(framesProcessed, currentTime, roiValues);
-                        dataRows.add(dataRow);
-
-                        // Update graphs (throttled)
+                        // Measure ROIs, store RAW + corrected rows, update graphs
+                        processFrameData(ip, framesProcessed, currentTime,
+                            dataRows, correctedDataRows, btCorrDataRows,
+                            datasets, chartPanels, chartsList,
+                            shouldUpdateGui);
                         if (shouldUpdateGui) {
-                            updateGraphs(datasets, framesProcessed, currentTime, roiValues, chartPanels, chartsList);
                             lastGuiUpdateTime = currentTime;
-                        }
-
-                        // Progress update
-                        if (framesProcessed % 100 == 0) {
-
                         }
                     }
                 }
@@ -5392,7 +5672,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
 
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -5596,29 +5876,14 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
 
                 }
 
-                // Measure ALL ROIs and build data row
-                ArrayList roiValues = measureROIs(ip);
-
-                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-                    // print("  ROIs measured, roiValues.size=" + roiValues.size());
-                }
-
-                ArrayList dataRow = buildDataRow(globalFrameNumber, currentTime, roiValues);
-                dataRows.add(dataRow);
-
-                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-
-                }
-
-                // Update graphs (throttled, but always update first few frames)
-                if (shouldUpdateGui || (DEBUG_VERBOSE && globalFrameNumber <= 3)) {
-                    updateGraphs(datasets, globalFrameNumber, currentTime, roiValues, chartPanels, chartsList);
+                // Measure ROIs, store RAW + corrected rows, update graphs
+                boolean shouldUpdateGraphs = shouldUpdateGui || (DEBUG_VERBOSE && globalFrameNumber <= 3);
+                processFrameData(ip, globalFrameNumber, currentTime,
+                    dataRows, correctedDataRows, btCorrDataRows,
+                    datasets, chartPanels, chartsList,
+                    shouldUpdateGraphs);
+                if (shouldUpdateGraphs) {
                     lastGuiUpdateTime = currentTime;
-                }
-
-                // Debug: Log first few frames
-                if (DEBUG_VERBOSE && globalFrameNumber <= 3) {
-
                 }
 
                 // Timing logic for frame interval:
@@ -5945,247 +6210,204 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList datasets, l
 }
 
 // ==================== CSV Export for Graph Data ====================
-void exportGraphDataToCSV(ArrayList dataRows, int numActiveGraphs, ArrayList visualizationRows) {
-    if (dataRows.isEmpty()) {
+// Helper: compute the frame-selection label used in CSV filenames.
+String computeFrameLogicLabel(ArrayList vizRow, boolean isTemporal) {
+    if (!isTemporal) return "every";
+    Boolean everyFrame = (Boolean) vizRow.get(2);
+    Boolean everyOdd   = (Boolean) vizRow.get(3);
+    Boolean everyEven  = (Boolean) vizRow.get(4);
+    String  custom     = (String)  vizRow.get(5);
+    if (everyFrame != null && everyFrame.booleanValue()) return "every";
+    if (everyOdd   != null && everyOdd.booleanValue())   return "odd";
+    if (everyEven  != null && everyEven.booleanValue())  return "even";
+    if (custom != null && !custom.equals("Off"))          return custom.replace(" ", "_");
+    return "every";
+}
 
-        return;
-    }
+// Helper: write one CSV file for one graph using the given set of rows.
+// corrSuffix is appended to the filename (e.g. "RAW", "BGcorr", "BTcorr").
+// Column headers carry no suffix — the filename already identifies the correction level.
+void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
+                           int graphIdx, ArrayList vizRow, String graphType,
+                           String frameLogic, boolean isTemporal) {
+    if (rows == null || rows.isEmpty()) return;
 
-    // Use experiment folder instead of root data directory
-    File experimentFolder = new File(config.experimentFolder);
-    if (!experimentFolder.exists()) {
+    int actualNumROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+    String fileName = "Graph" + (graphIdx + 1) + "_"
+        + graphType.replace(" ", "_").replace("/", "-")
+        + "_" + frameLogic + "_" + corrSuffix + ".csv";
+    File csvFile = new File(expFolder, fileName);
 
-        return;
-    }
+    try {
+        PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
 
-    // Determine how many ROIs we have from the first data row
-    int numROIs = ((ArrayList) dataRows.get(0)).size() - 2; // Subtract frame and timestamp columns
+        // --- N-frame cycle ratio (e.g. "Ratio 1/2 (2 frames)") ---
+        if (graphType.startsWith("Ratio ") && graphType.contains("frames)")) {
+            int cycleLen = 2, posNum = 1, posDen = 2;
+            try {
+                int parenIdx = graphType.indexOf("(");
+                int spaceIdx = graphType.indexOf(" ", parenIdx + 1);
+                cycleLen = Integer.parseInt(graphType.substring(parenIdx + 1, spaceIdx));
+                String[] parts = graphType.split(" ");
+                String[] positions = parts[1].split("/");
+                posNum = Integer.parseInt(positions[0]);
+                posDen = Integer.parseInt(positions[1]);
+            } catch (Exception e) {}
+            final int cycleLenF = cycleLen;
+            final int posNumF = posNum, posDenF = posDen;
 
-    // Create one CSV file per active graph
-    for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
-        ArrayList vizRow = (ArrayList) visualizationRows.get(graphIdx);
-        String graphType = (String) vizRow.get(1);
-
-        if (graphType.equals("none")) {
-            continue;
-        }
-
-        // Build descriptive filename
-        String frameLogic = "";
-        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
-
-        if (isTemporal) {
-            // Temporal mode: read frame selection columns
-            Boolean everyFrame = (Boolean) vizRow.get(2);
-            Boolean everyOdd = (Boolean) vizRow.get(3);
-            Boolean everyEven = (Boolean) vizRow.get(4);
-            String custom = (String) vizRow.get(5);
-
-            if (everyFrame != null && everyFrame.booleanValue()) {
-                frameLogic = "every";
-            } else if (everyOdd != null && everyOdd.booleanValue()) {
-                frameLogic = "odd";
-            } else if (everyEven != null && everyEven.booleanValue()) {
-                frameLogic = "even";
-            } else if (custom != null && !custom.equals("Off")) {
-                frameLogic = custom.replace(" ", "_");
+            writer.print("Frame Pair;Timestamp [ms]");
+            for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                writer.print(";ROI" + (roiIdx + 1) + "_Ratio");
             }
-        } else {
-            // Spatial mode: always every frame
-            frameLogic = "every";
-        }
+            writer.println();
 
-        String fileName = "Graph" + (graphIdx + 1) + "_" + graphType.replace(" ", "_").replace("/", "-") + "_" + frameLogic + ".csv";
-        File csvFile = new File(experimentFolder, fileName);
-
-        try {
-            PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
-
-            // Determine actual number of ROIs from stored ROIs
-            int actualNumROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
-
-            // Handle N-frame cycle ratio graphs (e.g. "Ratio 1/2 (2 frames)")
-            if (graphType.startsWith("Ratio ") && graphType.contains("frames)")) {
-                int cycleLen = 2;
-                int posNum = 1, posDen = 2;
-                try {
-                    int parenIdx = graphType.indexOf("(");
-                    int spaceIdx = graphType.indexOf(" ", parenIdx + 1);
-                    cycleLen = Integer.parseInt(graphType.substring(parenIdx + 1, spaceIdx));
-                    String[] parts = graphType.split(" ");
-                    String[] positions = parts[1].split("/");
-                    posNum = Integer.parseInt(positions[0]);
-                    posDen = Integer.parseInt(positions[1]);
-                } catch (Exception e) {
-                    // skip on parse error
+            Map cycleFrames = new HashMap();
+            for (int i = 0; i < rows.size(); i++) {
+                ArrayList row = (ArrayList) rows.get(i);
+                int frameNum = ((Integer) row.get(0)).intValue();
+                if (shouldProcessFrame(frameNum, vizRow)) {
+                    int cycleIdx = (frameNum - 1) / cycleLenF;
+                    int framePos = ((frameNum - 1) % cycleLenF) + 1;
+                    if (framePos == posNumF || framePos == posDenF) {
+                        Map cycle = (Map) cycleFrames.get(cycleIdx);
+                        if (cycle == null) { cycle = new HashMap(); cycleFrames.put(cycleIdx, cycle); }
+                        cycle.put("p" + framePos, row);
+                    }
                 }
-                final int cycleLenF = cycleLen;
-                final int posNumF = posNum, posDenF = posDen;
+            }
 
-                // Header
-                writer.print("Frame Pair;Timestamp [ms]");
+            List cycleIndices = new ArrayList(cycleFrames.keySet());
+            Collections.sort(cycleIndices);
+            for (int c = 0; c < cycleIndices.size(); c++) {
+                int cycleIdx = ((Integer) cycleIndices.get(c)).intValue();
+                Map cycle = (Map) cycleFrames.get(cycleIdx);
+                ArrayList rowN = (ArrayList) cycle.get("p" + posNumF);
+                ArrayList rowD = (ArrayList) cycle.get("p" + posDenF);
+                if (rowN == null || rowD == null) continue;
+                int frameN = ((Integer) rowN.get(0)).intValue();
+                int frameD = ((Integer) rowD.get(0)).intValue();
+                ArrayList numerROIs = new ArrayList();
+                ArrayList denomROIs = new ArrayList();
                 for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                    writer.print(";ROI" + (roiIdx + 1) + "_Ratio");
+                    numerROIs.add(rowN.get(2 + roiIdx));
+                    denomROIs.add(rowD.get(2 + roiIdx));
+                }
+                ArrayList ratios = calculateFrameRatio(numerROIs, denomROIs);
+                if (ratios == null || ratios.isEmpty()) continue;
+                writer.print(frameN + "-" + frameD + ";");
+                ArrayList laterRow = (frameN > frameD) ? rowN : rowD;
+                writer.print(laterRow.get(1));
+                for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
+                    writer.print(";");
+                    Object val = ratios.get(roiIdx);
+                    if (val != null) {
+                        double v = ((Double) val).doubleValue();
+                        writer.print(!Double.isNaN(v) && !Double.isInfinite(v) ? v : "NaN");
+                    }
                 }
                 writer.println();
+            }
 
-                // Group frames by cycle
-                Map cycleFrames = new HashMap();
-                for (int i = 0; i < dataRows.size(); i++) {
-                    ArrayList row = (ArrayList) dataRows.get(i);
-                    int frameNum = ((Integer) row.get(0)).intValue();
-                    if (shouldProcessFrame(frameNum, vizRow)) {
-                        int cycleIdx = (frameNum - 1) / cycleLenF;
-                        int framePos = ((frameNum - 1) % cycleLenF) + 1;
-                        if (framePos == posNumF || framePos == posDenF) {
-                            Map cycle = (Map) cycleFrames.get(cycleIdx);
-                            if (cycle == null) { cycle = new HashMap(); cycleFrames.put(cycleIdx, cycle); }
-                            cycle.put("p" + framePos, row);
-                        }
-                    }
-                }
+        // --- Split Ratio (Spatial mode) ---
+        } else if (graphType.startsWith("Split ratio")) {
+            int numRatios = actualNumROIs / 2;
+            writer.print("Frame;Timestamp [ms]");
+            for (int roiIdx = 0; roiIdx < numRatios; roiIdx++) {
+                writer.print(";Ratio" + (roiIdx + 1));
+            }
+            writer.println();
 
-                // Sort by cycle index and write pairs
-                List cycleIndices = new ArrayList(cycleFrames.keySet());
-                Collections.sort(cycleIndices);
-                for (int c = 0; c < cycleIndices.size(); c++) {
-                    int cycleIdx = ((Integer) cycleIndices.get(c)).intValue();
-                    Map cycle = (Map) cycleFrames.get(cycleIdx);
-                    ArrayList rowN = (ArrayList) cycle.get("p" + posNumF);
-                    ArrayList rowD = (ArrayList) cycle.get("p" + posDenF);
-                    if (rowN == null || rowD == null) continue;
-
-                    int frameN = ((Integer) rowN.get(0)).intValue();
-                    int frameD = ((Integer) rowD.get(0)).intValue();
-
-                    ArrayList numerROIs = new ArrayList();
-                    ArrayList denomROIs = new ArrayList();
+            for (int i = 0; i < rows.size(); i++) {
+                ArrayList row = (ArrayList) rows.get(i);
+                int frameNum = ((Integer) row.get(0)).intValue();
+                if (shouldProcessFrame(frameNum, vizRow)) {
+                    writer.print(row.get(0) + ";");
+                    writer.print(row.get(1));
+                    ArrayList roiValues = new ArrayList();
                     for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                        numerROIs.add(rowN.get(2 + roiIdx));
-                        denomROIs.add(rowD.get(2 + roiIdx));
+                        roiValues.add(row.get(2 + roiIdx));
                     }
-
-                    ArrayList ratios = calculateFrameRatio(numerROIs, denomROIs);
-                    if (ratios == null || ratios.isEmpty()) continue;
-
-                    writer.print(frameN + "-" + frameD);
-                    writer.print(";");
-                    ArrayList laterRow = (frameN > frameD) ? rowN : rowD;
-                    writer.print(laterRow.get(1));
+                    ArrayList ratios = calculateSpatialRatio(roiValues, graphType);
                     for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
                         writer.print(";");
-                        Object ratioVal = ratios.get(roiIdx);
-                        if (ratioVal != null) {
-                            double ratio = ((Double) ratioVal).doubleValue();
-                            if (!Double.isNaN(ratio) && !Double.isInfinite(ratio)) {
-                                writer.print(ratio);
-                            } else {
-                                writer.print("NaN");
-                            }
+                        Object val = ratios.get(roiIdx);
+                        if (val != null) {
+                            double v = ((Double) val).doubleValue();
+                            writer.print(!Double.isNaN(v) && !Double.isInfinite(v) ? v : "NaN");
                         }
                     }
                     writer.println();
                 }
             }
-            // Handle Split Ratio graphs (Spatial mode)
-            else if (graphType.startsWith("Split ratio")) {
-                // Header for ratio data - spatial mode has N ratios (N = actualNumROIs / 2)
-                int numRatios = actualNumROIs / 2;
-                writer.print("Frame;Timestamp [ms]");
-                for (int roiIdx = 0; roiIdx < numRatios; roiIdx++) {
-                    writer.print(";Ratio" + (roiIdx + 1));
-                }
-                writer.println();
 
-                // Write data rows with calculated ratios
-                for (int i = 0; i < dataRows.size(); i++) {
-                    ArrayList row = (ArrayList) dataRows.get(i);
-
-                    // row structure: [frame, timestamp, roi0, roi1, ..., roi7]
-                    int frameNum = ((Integer) row.get(0)).intValue();
-
-                    // Check if this frame passes the graph's filter
-                    if (shouldProcessFrame(frameNum, vizRow)) {
-                        writer.print(row.get(0)); // Frame
-                        writer.print(";");
-                        writer.print(row.get(1)); // Timestamp
-
-                        // Extract all ROI values from row (actualNumROIs)
-                        ArrayList roiValues = new ArrayList();
-                        for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                            roiValues.add(row.get(2 + roiIdx));
-                        }
-
-                        // Calculate spatial ratios
-                        ArrayList ratios = calculateSpatialRatio(roiValues, graphType);
-
-                        // Write ratio values (should be 4 ratios)
-                        for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
-                            writer.print(";");
-                            Object ratioVal = ratios.get(roiIdx);
-                            if (ratioVal != null) {
-                                double ratio = ((Double) ratioVal).doubleValue();
-                                if (!Double.isNaN(ratio) && !Double.isInfinite(ratio)) {
-                                    writer.print(ratio);
-                                } else {
-                                    writer.print("NaN");
-                                }
-                            }
-                        }
-                        writer.println();
-                    }
-                }
-
+        // --- Standard Intensity ---
+        } else {
+            int numROIsToExport = actualNumROIs;
+            if (!isTemporal && graphType.startsWith("Intensity ")) {
+                numROIsToExport = actualNumROIs / 2; // Spatial: source ROIs only
             }
-            else {
-                // Standard intensity data export
-                // Determine how many ROIs to export based on mode and graph type
-                int numROIsToExport = actualNumROIs;
-                boolean isSpatialIntensity = !isTemporal && graphType.startsWith("Intensity ");
-                if (isSpatialIntensity) {
-                    // Spatial mode Intensity: only export source ROIs (first half)
-                    numROIsToExport = actualNumROIs / 2;
-                }
+            writer.print("Frame;Timestamp [ms]");
+            for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
+                writer.print(";ROI" + (roiIdx + 1));
+            }
+            writer.println();
 
-                // Header with ROI columns
-                writer.print("Frame;Timestamp [ms]");
-                for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
-                    writer.print(";ROI" + (roiIdx + 1));
-                }
-                writer.println();
-
-                // Write data rows - only include rows that pass this graph's frame filter
-                for (int i = 0; i < dataRows.size(); i++) {
-                    ArrayList row = (ArrayList) dataRows.get(i);
-
-                    // row structure: [frame, timestamp, roi0, roi1, roi2, roi3, ...]
-                    int frameNum = ((Integer) row.get(0)).intValue();
-
-                    // Check if this frame passes the graph's filter
-                    if (shouldProcessFrame(frameNum, vizRow)) {
-                        writer.print(row.get(0)); // Frame
+            for (int i = 0; i < rows.size(); i++) {
+                ArrayList row = (ArrayList) rows.get(i);
+                int frameNum = ((Integer) row.get(0)).intValue();
+                if (shouldProcessFrame(frameNum, vizRow)) {
+                    writer.print(row.get(0) + ";");
+                    writer.print(row.get(1));
+                    for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
                         writer.print(";");
-                        writer.print(row.get(1)); // Timestamp
-
-                        // Write ROI values (only source ROIs in spatial mode)
-                        for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
-                            writer.print(";");
-                            Object roiValue = row.get(2 + roiIdx);
-                            if (roiValue != null) {
-                                writer.print(roiValue);
-                            }
-                        }
-                        writer.println();
+                        Object val = row.get(2 + roiIdx);
+                        if (val != null) writer.print(val);
                     }
+                    writer.println();
                 }
             }
+        }
 
-            writer.close();
-            // print("Graph " + (graphIdx + 1) + " data exported to: " + csvFile.getName());
+        writer.close();
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+}
 
-        } catch (IOException e) {
-            // print("ERROR: Failed to export graph " + (graphIdx + 1) + " data: " + e.getMessage());
-            e.printStackTrace();
+// Orchestrator: calls exportSingleGraphCSV once per active correction level.
+// To add bleedthrough correction later, pass allBTCorrRows and call exportSingleGraphCSV
+// with corrSuffix "BTcorr" exactly as done for "BGcorr" below.
+void exportGraphDataToCSV(ArrayList dataRows, ArrayList correctedDataRows,
+                           ArrayList btCorrDataRows,
+                           int numActiveGraphs, ArrayList visualizationRows) {
+    if (dataRows.isEmpty()) return;
+
+    File experimentFolder = new File(config.experimentFolder);
+    if (!experimentFolder.exists()) return;
+
+    boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+    boolean bgEnabled  = config.acqSettings.bgCorrectionEnabled && !correctedDataRows.isEmpty();
+    boolean btEnabled  = config.acqSettings.btCorrectionEnabled && !btCorrDataRows.isEmpty();
+
+    for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
+        ArrayList vizRow  = (ArrayList) visualizationRows.get(graphIdx);
+        String graphType  = (String) vizRow.get(1);
+        if (graphType.equals("none")) continue;
+
+        String frameLogic = computeFrameLogicLabel(vizRow, isTemporal);
+
+        exportSingleGraphCSV(dataRows, "RAW", experimentFolder,
+            graphIdx, vizRow, graphType, frameLogic, isTemporal);
+
+        if (bgEnabled) {
+            exportSingleGraphCSV(correctedDataRows, "BGcorr", experimentFolder,
+                graphIdx, vizRow, graphType, frameLogic, isTemporal);
+        }
+
+        if (btEnabled) {
+            exportSingleGraphCSV(btCorrDataRows, "BTcorr", experimentFolder,
+                graphIdx, vizRow, graphType, frameLogic, isTemporal);
         }
     }
 }
