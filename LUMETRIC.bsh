@@ -998,8 +998,8 @@ class VisualizationTypeEditor extends DefaultCellEditor {
 
             // Add region-specific intensity options
             if (spatialConfig.splitAxis.equals("Horizontal")) {
-                combo.addItem("Intensity Up");
-                combo.addItem("Intensity Down");
+                combo.addItem("Intensity Upper");
+                combo.addItem("Intensity Lower");
             } else {
                 combo.addItem("Intensity Left");
                 combo.addItem("Intensity Right");
@@ -3254,10 +3254,11 @@ void createInlineAcquisitionWindow() {
 
     acqFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
 
-    // Adaptive sizing: use 80% of screen width and 70% of screen height
+    // Adaptive sizing: use 90% of screen width and 65% of screen height (landscape ratio
+    // minimises gray letterbox bars in the live view for typical 16:9 / 4:3 cameras)
     java.awt.Dimension screenSize = java.awt.Toolkit.getDefaultToolkit().getScreenSize();
-    int width = (int)(screenSize.width * 0.8);
-    int height = (int)(screenSize.height * 0.7);
+    int width = (int)(screenSize.width * 0.90);
+    int height = (int)(screenSize.height * 0.65);
     acqFrame.setSize(width, height);
 
     // Center window on screen
@@ -3615,6 +3616,8 @@ void createInlineAcquisitionWindow() {
             graphsPanel = graphSplit;
         }
 
+        liveViewPanel.setMinimumSize(new java.awt.Dimension(0, 0));
+        graphsPanel.setMinimumSize(new java.awt.Dimension(0, 0));
         splitPane.setLeftComponent(liveViewPanel);
         splitPane.setRightComponent(graphsPanel);
         mainPanel.setLayout(new BorderLayout());
@@ -3647,6 +3650,10 @@ void createInlineAcquisitionWindow() {
             (ChartPanel) smallCharts.get(0),
             (ChartPanel) smallCharts.get(1));
         smallGraphsSplit.setResizeWeight(0.5);
+        firstChart.setMinimumSize(new java.awt.Dimension(0, 0));
+        smallGraphsSplit.setMinimumSize(new java.awt.Dimension(0, 0));
+        ((ChartPanel) smallCharts.get(0)).setMinimumSize(new java.awt.Dimension(0, 0));
+        ((ChartPanel) smallCharts.get(1)).setMinimumSize(new java.awt.Dimension(0, 0));
 
         splitPane.setLeftComponent(firstChart);
         splitPane.setRightComponent(smallGraphsSplit);
@@ -3730,6 +3737,8 @@ void createInlineAcquisitionWindow() {
         }
 
         if (hasLiveView) {
+            splitPane.getLeftComponent().setMinimumSize(new java.awt.Dimension(0, 0));
+            graphsPanel.setMinimumSize(new java.awt.Dimension(0, 0));
             splitPane.setRightComponent(graphsPanel);
         } else {
             splitPane.setLeftComponent(graphsPanel);
@@ -4592,16 +4601,9 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                 }
                 int roiOffset = 0;
                 if (graphType.startsWith("Intensity ")) {
-                    String graphRegion = graphType.substring("Intensity ".length()); // "Up", "Down", "Left", "Right"
+                    String graphRegion = graphType.substring("Intensity ".length()); // "Upper", "Lower", "Left", "Right"
                     String srcRegion = config.acqSettings.spatialConfig.roiSourceRegion; // "Upper", "Lower", "Left", "Right"
-                    boolean matchesSource;
-                    if (graphRegion.equals("Up")) {
-                        matchesSource = srcRegion.equals("Upper");
-                    } else if (graphRegion.equals("Down")) {
-                        matchesSource = srcRegion.equals("Lower");
-                    } else {
-                        matchesSource = srcRegion.equals(graphRegion);
-                    }
+                    boolean matchesSource = srcRegion.equals(graphRegion);
                     roiOffset = matchesSource ? 0 : numSeriesToUpdate;
                 }
                 for (int i = 0; i < numSeriesToUpdate; i++) {
