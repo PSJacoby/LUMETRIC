@@ -768,6 +768,136 @@ class ChannelRenderer extends DefaultTableCellRenderer {
     }
 }
 
+// ============================================================
+//  RowTracker — shadow of the Arduino's acquisition-table state machine.
+//
+//  Mirrors the firmware logic in LUMETRIC_ArdFirmware.ino exactly:
+//    - Normal row transitions (frame-quota exhausted, loopGoto) are computed
+//      deterministically from the table, so no serial traffic is needed.
+//    - Switch-button events (row.loopSwitchGoto fired by byte 67 from the Arduino)
+//      cannot be predicted; when the Arduino's notification packet arrives the
+//      caller invokes patch() to retroactively correct any already-stored data rows
+//      and force-synchronise the tracker.
+//
+//  Column indices in sequenceRows rows (0-based):
+//    0 = display row#   1 = channel   2 = exposureMs   3 = intervalMs
+//    4 = frames (0=infinite)   5 = loopGoto (1-based, "" = none)
+//    6 = loopTimes (0/"" = infinite)   7 = constIllum   8 = loopSwitchGoto (1-based, "" = none)
+// ============================================================
+class RowTracker {
+    // --- state ---
+    int  currentRow;       // 0-based index into sequenceRows
+    int  framesDoneInRow;  // frames completed on currentRow so far
+    int[] loopCounters;    // per-row loop-iteration counter (0-based, mirrors firmware)
+
+    // --- table snapshot (read-only after construction) ---
+    ArrayList seqRows;
+    int nRows;
+
+    RowTracker(ArrayList sequenceRows) {
+        seqRows    = sequenceRows;
+        nRows      = sequenceRows.size();
+        currentRow = 0;
+        framesDoneInRow = 0;
+        loopCounters = new int[nRows > 0 ? nRows : 1];
+        for (int i = 0; i < loopCounters.length; i++) loopCounters[i] = 0;
+    }
+
+    // --- helpers to read the table ---
+    int getFrames(int r) {
+        try { return Integer.parseInt(((ArrayList)seqRows.get(r)).get(4).toString().trim()); }
+        catch (Exception e) { return 0; }
+    }
+    int getLoopGoto(int r) {
+        try {
+            String s = ((ArrayList)seqRows.get(r)).get(5).toString().trim();
+            return s.isEmpty() ? 0 : Integer.parseInt(s);
+        } catch (Exception e) { return 0; }
+    }
+    int getLoopTimes(int r) {
+        try {
+            String s = ((ArrayList)seqRows.get(r)).get(6).toString().trim();
+            return (s.isEmpty() || s.equals("0")) ? 0 : Integer.parseInt(s);
+        } catch (Exception e) { return 0; }
+    }
+
+    // Returns the 1-based sequence-row number for the CURRENT frame,
+    // then advances internal state to the next frame.
+    // Call once per frame, in the same order frames are processed.
+    int advanceFrame() {
+        if (nRows == 0) return 1;
+
+        int result = currentRow + 1;   // 1-based row for this frame
+
+        framesDoneInRow++;
+        int frames = getFrames(currentRow);
+
+        // Check if this row's frame quota is exhausted (0 = infinite — never exhausted by count)
+        if (frames > 0 && framesDoneInRow >= frames) {
+            framesDoneInRow = 0;
+            _advanceRow();
+        }
+
+        return result;
+    }
+
+    // Internal: advance currentRow exactly as the firmware does after a row's frame quota ends.
+    void _advanceRow() {
+        int lg    = getLoopGoto(currentRow);
+        int lt    = getLoopTimes(currentRow);
+
+        if (lg > 0 && lg <= nRows) {
+            loopCounters[currentRow]++;
+            boolean loopAgain = (lt == 0) || (loopCounters[currentRow] < lt);
+            if (loopAgain) {
+                currentRow = lg - 1;      // jump back (1-based → 0-based)
+            } else {
+                loopCounters[currentRow] = 0;
+                currentRow++;
+            }
+        } else {
+            currentRow++;
+        }
+
+        // Clamp to last row if we run off the end (infinite last row)
+        if (currentRow >= nRows) currentRow = nRows - 1;
+    }
+
+    // Called when a switch-button notification arrives from the Arduino.
+    //
+    // evArdFr   : totalFrames value in the packet  (= last frame on old row, 1-based)
+    // evDestRow : 1-based destination row (from packet byte 1)
+    // dataRows, correctedDataRows, btCorrDataRows : all three parallel data lists.
+    //   Each entry is ArrayList [frameNum, ts, seqRow, ...]; seqRow at index 2 is patched.
+    //
+    // The patch walks backward through each list to find entries with frameNum >= evArdFr+1
+    // and overwrites their seqRow to evDestRow.
+    void patch(int evArdFr, int evDestRow, ArrayList dataRows,
+               ArrayList correctedDataRows, ArrayList btCorrDataRows) {
+        int firstFrameNewRow = evArdFr + 1;
+        _patchList(dataRows,          firstFrameNewRow, evDestRow);
+        _patchList(correctedDataRows, firstFrameNewRow, evDestRow);
+        _patchList(btCorrDataRows,    firstFrameNewRow, evDestRow);
+
+        // Force-sync tracker to new row
+        currentRow      = evDestRow - 1;
+        framesDoneInRow = 0;
+        loopCounters[currentRow] = 0;  // firmware resets loop counter on switch
+    }
+
+    void _patchList(ArrayList list, int firstFrameNewRow, int evDestRow) {
+        if (list == null) return;
+        for (int i = list.size() - 1; i >= 0; i--) {
+            ArrayList dr = (ArrayList) list.get(i);
+            int fn = ((Integer) dr.get(0)).intValue();
+            if (fn < firstFrameNewRow) break;  // list is in frame order — safe to stop
+            if (dr.size() > 2) {
+                dr.set(2, new Integer(evDestRow));
+            }
+        }
+    }
+}
+
 // Custom cell renderer for Loop Times - shows "0" for empty or zero (infinite loops)
 class LoopTimesRenderer extends DefaultTableCellRenderer {
     public Component getTableCellRendererComponent(JTable table, Object value,
@@ -3995,6 +4125,7 @@ void createInlineAcquisitionWindow() {
     final ArrayList allCorrectedDataRows = new ArrayList(); // Parallel BG-corrected rows (empty when BG disabled)
     final ArrayList allBTCorrDataRows = new ArrayList(); // BT-corrected rows (empty when BT disabled)
     final ArrayList eventTimes = new ArrayList(); // Store event timestamps in ms
+    final ArrayList allSwitchEvents = new ArrayList(); // Switch-notification packets: int[]{ lumetricFrame, destRow, ardTotalFrames }
 
     // Count active graphs for data structure
     int activeGraphCount = 0;
@@ -4057,7 +4188,7 @@ void createInlineAcquisitionWindow() {
                 print("================================");
 
                 if (useCircularBuffer) {
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, allSwitchEvents);
                 } else {
                     runAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
                 }
@@ -4471,7 +4602,7 @@ ArrayList applyBTCorrection(ArrayList bgCorrValues) {
 
 // Central per-frame processing: measure ROIs, store RAW + corrected rows, update graphs.
 // Used by both acquisition loops (circular buffer and simple snap) to avoid duplication.
-void processFrameData(ImageProcessor ip, int frameNumber, long currentTime,
+void processFrameData(ImageProcessor ip, int frameNumber, long currentTime, int seqRow,
                       ArrayList dataRows, ArrayList correctedDataRows,
                       ArrayList btCorrDataRows,
                       ArrayList datasets, ArrayList chartPanels, ArrayList chartsList,
@@ -4480,21 +4611,21 @@ void processFrameData(ImageProcessor ip, int frameNumber, long currentTime,
     ArrayList roiValues = measureROIs(ip);
 
     // Always store the RAW row
-    ArrayList rawRow = buildDataRow(frameNumber, currentTime, roiValues);
+    ArrayList rawRow = buildDataRow(frameNumber, currentTime, seqRow, roiValues);
     dataRows.add(rawRow);
 
     // Compute and store BG-corrected row if enabled
     ArrayList valuesForGraphs = roiValues;
     if (config.acqSettings.bgCorrectionEnabled) {
         ArrayList bgCorrValues = applyBGCorrection(roiValues);
-        correctedDataRows.add(buildDataRow(frameNumber, currentTime, bgCorrValues));
+        correctedDataRows.add(buildDataRow(frameNumber, currentTime, seqRow, bgCorrValues));
         valuesForGraphs = bgCorrValues;
 
         // Compute and store BT-corrected row (only valid after BG, only in Spatial)
         if (config.acqSettings.btCorrectionEnabled
                 && config.acqSettings.processingMode.equals("Spatial")) {
             ArrayList btValues = applyBTCorrection(bgCorrValues);
-            btCorrDataRows.add(buildDataRow(frameNumber, currentTime, btValues));
+            btCorrDataRows.add(buildDataRow(frameNumber, currentTime, seqRow, btValues));
             valuesForGraphs = btValues; // graphs show highest active correction
         }
     }
@@ -4518,15 +4649,18 @@ ArrayList measureROIs(ImageProcessor ip) {
     return roiValues;
 }
 
-// Build data row for CSV export
-ArrayList buildDataRow(int frameNumber, long timestamp, ArrayList roiValues) {
+// Build data row for CSV export.
+// Layout: [0]=frameNumber  [1]=timestamp  [2]=seqRow(1-based)  [3..]=roiValues
+// seqRow is mutable — RowTracker.patch() may overwrite index 2 retroactively.
+ArrayList buildDataRow(int frameNumber, long timestamp, int seqRow, ArrayList roiValues) {
     ArrayList dataRow = new ArrayList();
-    dataRow.add(frameNumber);
+    dataRow.add(new Integer(frameNumber));
     dataRow.add(timestamp);
+    dataRow.add(new Integer(seqRow));   // index 2 — patched by RowTracker on switch event
     for (int i = 0; i < roiValues.size(); i++) {
         dataRow.add(roiValues.get(i));
     }
-    while (dataRow.size() < 6) {  // Pad to 6 columns
+    while (dataRow.size() < 7) {  // Pad to 7 columns (was 6; seqRow occupies one slot)
         dataRow.add(null);
     }
     return dataRow;
@@ -5176,7 +5310,7 @@ void convertTiffsToStack(String experimentFolder) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents) {
 
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -5217,6 +5351,17 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 
     // PRE-ARM CLEANUP:
     // Order matters carefully here — each step prevents a specific contamination path.
+
+    // Step 0: Pause the Arduino-Hub monitor thread so it stops sending keep-alive
+    //         byte-40 queries while LUMETRIC has exclusive ownership of the serial port.
+    //         Without this the monitor thread can interleave with LUMETRIC traffic,
+    //         garbling the switch-notification packets we need to read back.
+    try {
+        mmc.setProperty("Arduino-Hub", "Paused", "1");
+        print("Pre-arm: Arduino-Hub monitor thread paused.");
+    } catch (Exception e) {
+        print("NOTE: Could not pause Arduino-Hub (property may not exist in this MM build): " + e.getMessage());
+    }
 
     // Step 1: Stop Arduino immediately so no TTL pulses arrive while the camera
     //         is in an undefined transition state.  Sending 66 is idempotent.
@@ -5446,9 +5591,53 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     final long NO_FRAME_WARNING_INTERVAL = 5000; // Warn every 5 seconds if no frames
     boolean noFrameWarningShown = false;
 
+    // Switch-event tracking: every time the Arduino sends a [67][row][hi][lo] packet
+    // we record which LUMETRIC frame was being processed and what the Arduino reported.
+    // switchEvents is passed in from the outer scope so the caller can use it for CSV export.
+    ArrayList rxAccum = new ArrayList();      // raw byte accumulator for partial packets
+
+    // Shadow state machine: mirrors the Arduino's row-sequencing logic so we know
+    // which sequence row is active for every frame without relying on serial packets.
+    // Switch-button events (byte 67 packets) patch any retroactive mismatches.
+    RowTracker rowTracker = new RowTracker(config.acqSettings.sequenceRows);
+
     // Main acquisition loop
     while (running[0] && (mmc.isSequenceRunning() || mmc.getRemainingImageCount() > 0)) {
         try {
+            // --- SWITCH-NOTIFICATION POLL ---
+            // Drain any bytes the Arduino has sent since the last loop iteration.
+            // The Arduino sends [67][destRow_1based][hi][lo] when it executes a
+            // LoopSwitchGoto step.  We accumulate bytes across iterations (partial
+            // packets are normal at 57600 baud).
+            try {
+                mmcorej.CharVector rxBytes = mmc.readFromSerialPort(config.serialPort);
+                for (int rxi = 0; rxi < (int)rxBytes.size(); rxi++) {
+                    rxAccum.add(new Integer(((int)(rxBytes.get(rxi))) & 0xFF));
+                }
+                while (rxAccum.size() >= 4) {
+                    if (((Integer)rxAccum.get(0)).intValue() == 67) {
+                        int evRow  = ((Integer)rxAccum.get(1)).intValue();
+                        int evFrHi = ((Integer)rxAccum.get(2)).intValue();
+                        int evFrLo = ((Integer)rxAccum.get(3)).intValue();
+                        int evArdFr = (evFrHi << 8) | evFrLo;
+                        // ev[0] = first LUMETRIC frame on the new row.
+                        // evArdFr is the Arduino's last frame on the old row, so
+                        // evArdFr+1 is the first frame on the new row — this is
+                        // authoritative regardless of how many frames BeanShell
+                        // has dequeued so far (framesProcessed lags the buffer).
+                        switchEvents.add(new int[]{ evArdFr + 1, evRow, evArdFr });
+                        // Patch all three data lists and sync the tracker.
+                        rowTracker.patch(evArdFr, evRow, dataRows, correctedDataRows, btCorrDataRows);
+                        print("SWITCH EVENT: new row=" + evRow
+                              + "  starts at LUMETRIC frame=" + (evArdFr + 1)
+                              + "  Arduino totalFrames so far=" + evArdFr);
+                        rxAccum.subList(0, 4).clear();
+                    } else {
+                        rxAccum.remove(0); // discard unexpected leading byte
+                    }
+                }
+            } catch (Exception serialEx) { /* non-fatal — serial read is best-effort */ }
+
             int remaining = (int) mmc.getRemainingImageCount();
 
             // Track maximum buffer depth
@@ -5529,14 +5718,21 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                             updateLiveView(liveViewPanel, ip, chartsList);
                         }
 
-                        // Measure ROIs, store RAW + corrected rows, update graphs
-                        processFrameData(ip, framesProcessed, currentTime,
+                        // Measure ROIs, store RAW + corrected rows, update graphs.
+                        // advanceFrame() is called regardless of ip-null so the tracker
+                        // stays in sync with framesProcessed even on conversion failures.
+                        int currentSeqRow = rowTracker.advanceFrame();
+                        processFrameData(ip, framesProcessed, currentTime, currentSeqRow,
                             dataRows, correctedDataRows, btCorrDataRows,
                             datasets, chartPanels, chartsList,
                             shouldUpdateGui);
                         if (shouldUpdateGui) {
                             lastGuiUpdateTime = currentTime;
                         }
+                    } else {
+                        // Conversion failed — still advance tracker so it stays aligned
+                        // with framesProcessed (which was already incremented above).
+                        rowTracker.advanceFrame();
                     }
                 }
             } else {
@@ -5634,6 +5830,31 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     //    The next run's pre-arm (step 3) calls setAutoShutter(false) again before any
     //    trigger config switch, so there is no risk of corrupting trigger state.
     try { mmc.setAutoShutter(true); } catch (Exception e) {}
+
+    // Resume Arduino-Hub monitor thread now that LUMETRIC no longer owns the port.
+    try {
+        mmc.setProperty("Arduino-Hub", "Paused", "0");
+        print("Arduino-Hub monitor thread resumed.");
+    } catch (Exception e) {
+        print("NOTE: Could not resume Arduino-Hub: " + e.getMessage());
+    }
+
+    // Export switch events log if any events were captured
+    if (switchEvents.size() > 0) {
+        try {
+            String switchCsvPath = config.experimentFolder + java.io.File.separator + "SwitchEvents.csv";
+            java.io.PrintWriter swWriter = new java.io.PrintWriter(new java.io.FileWriter(switchCsvPath));
+            swWriter.println("FirstFrameOnNewRow;DestRow_1based;Arduino_TotalFrames");
+            for (int sei = 0; sei < switchEvents.size(); sei++) {
+                int[] ev = (int[]) switchEvents.get(sei);
+                swWriter.println(ev[0] + ";" + ev[1] + ";" + ev[2]);
+            }
+            swWriter.close();
+            print("Switch events saved to: " + switchCsvPath);
+        } catch (Exception csvEx) {
+            print("WARNING: Could not write SwitchEvents.csv: " + csvEx.getMessage());
+        }
+    }
 
     // Final report
 
@@ -5878,7 +6099,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
 
                 // Measure ROIs, store RAW + corrected rows, update graphs
                 boolean shouldUpdateGraphs = shouldUpdateGui || (DEBUG_VERBOSE && globalFrameNumber <= 3);
-                processFrameData(ip, globalFrameNumber, currentTime,
+                processFrameData(ip, globalFrameNumber, currentTime, 1,
                     dataRows, correctedDataRows, btCorrDataRows,
                     datasets, chartPanels, chartsList,
                     shouldUpdateGraphs);
@@ -6131,7 +6352,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
                 }
 
                 // Build data row and store for CSV export
-                ArrayList dataRow = buildDataRow(globalFrameNumber, currentTime, roiValues);
+                ArrayList dataRow = buildDataRow(globalFrameNumber, currentTime, 1, roiValues);
                 dataRows.add(dataRow);
 
                 // Update graphs (throttled)
@@ -6227,6 +6448,8 @@ String computeFrameLogicLabel(ArrayList vizRow, boolean isTemporal) {
 // Helper: write one CSV file for one graph using the given set of rows.
 // corrSuffix is appended to the filename (e.g. "RAW", "BGcorr", "BTcorr").
 // Column headers carry no suffix — the filename already identifies the correction level.
+// Data row layout: [0]=frame [1]=timestamp [2]=seqRow [3..]=roiValues
+
 void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
                            int graphIdx, ArrayList vizRow, String graphType,
                            String frameLogic, boolean isTemporal) {
@@ -6256,7 +6479,7 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
             final int cycleLenF = cycleLen;
             final int posNumF = posNum, posDenF = posDen;
 
-            writer.print("Frame Pair;Timestamp [ms]");
+            writer.print("Frame Pair;Timestamp [ms];SeqRow");
             for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
                 writer.print(";ROI" + (roiIdx + 1) + "_Ratio");
             }
@@ -6290,14 +6513,15 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
                 ArrayList numerROIs = new ArrayList();
                 ArrayList denomROIs = new ArrayList();
                 for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                    numerROIs.add(rowN.get(2 + roiIdx));
-                    denomROIs.add(rowD.get(2 + roiIdx));
+                    numerROIs.add(rowN.get(3 + roiIdx));
+                    denomROIs.add(rowD.get(3 + roiIdx));
                 }
                 ArrayList ratios = calculateFrameRatio(numerROIs, denomROIs);
                 if (ratios == null || ratios.isEmpty()) continue;
                 writer.print(frameN + "-" + frameD + ";");
                 ArrayList laterRow = (frameN > frameD) ? rowN : rowD;
                 writer.print(laterRow.get(1));
+                writer.print(";" + laterRow.get(2));  // SeqRow stored at index 2
                 for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
                     writer.print(";");
                     Object val = ratios.get(roiIdx);
@@ -6312,7 +6536,7 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
         // --- Split Ratio (Spatial mode) ---
         } else if (graphType.startsWith("Split ratio")) {
             int numRatios = actualNumROIs / 2;
-            writer.print("Frame;Timestamp [ms]");
+            writer.print("Frame;Timestamp [ms];SeqRow");
             for (int roiIdx = 0; roiIdx < numRatios; roiIdx++) {
                 writer.print(";Ratio" + (roiIdx + 1));
             }
@@ -6324,9 +6548,10 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
                 if (shouldProcessFrame(frameNum, vizRow)) {
                     writer.print(row.get(0) + ";");
                     writer.print(row.get(1));
+                    writer.print(";" + row.get(2));  // SeqRow stored at index 2
                     ArrayList roiValues = new ArrayList();
                     for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                        roiValues.add(row.get(2 + roiIdx));
+                        roiValues.add(row.get(3 + roiIdx));
                     }
                     ArrayList ratios = calculateSpatialRatio(roiValues, graphType);
                     for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
@@ -6347,7 +6572,7 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
             if (!isTemporal && graphType.startsWith("Intensity ")) {
                 numROIsToExport = actualNumROIs / 2; // Spatial: source ROIs only
             }
-            writer.print("Frame;Timestamp [ms]");
+            writer.print("Frame;Timestamp [ms];SeqRow");
             for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
                 writer.print(";ROI" + (roiIdx + 1));
             }
@@ -6359,9 +6584,10 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
                 if (shouldProcessFrame(frameNum, vizRow)) {
                     writer.print(row.get(0) + ";");
                     writer.print(row.get(1));
+                    writer.print(";" + row.get(2));  // SeqRow stored at index 2
                     for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
                         writer.print(";");
-                        Object val = row.get(2 + roiIdx);
+                        Object val = row.get(3 + roiIdx);
                         if (val != null) writer.print(val);
                     }
                     writer.println();

@@ -1,0 +1,170 @@
+================================================================================
+LUMETRIC MODIFICATIONS TO Arduino.h / Arduino.cpp
+Repository:  PSJacoby/mmCoreAndDevices  (fork of micro-manager/mmCoreAndDevices)
+File path:   DeviceAdapters/Arduino/
+Date:        2026-05-15
+Author:      P. S. Jacoby  (LUMETRIC project)
+================================================================================
+
+PURPOSE
+-------
+LUMETRIC is a BeanShell script running inside Fiji/Micro-Manager that takes
+exclusive ownership of the Arduino's serial port during image acquisition.
+During that time the ArduinoInputMonitorThread (running inside the MM device
+adapter) continues to poll the port every 500 ms with keep-alive byte 40
+(GetDigitalInput command).  This creates two problems:
+
+  1. COLLISION: The monitor thread's byte-40 query and LUMETRIC's binary
+     acquisition traffic collide on the full-duplex serial stream, garbling
+     packets in both directions.
+
+  2. NOISE:  LUMETRIC needs to read unsolicited 4-byte switch-notification
+     packets [0x43, destRow, hi, lo] that the Arduino firmware sends when it
+     executes a loop-goto step.  Interleaved monitor traffic makes reliable
+     parsing of those packets impossible.
+
+The fix adds a "Paused" property to CArduinoHub.  LUMETRIC sets it to "1"
+before arming the camera and back to "0" after teardown.  While paused:
+  - the monitor thread sleeps (skips all serial I/O),
+  - CArduinoShutter::WriteToPort() is a no-op,
+  - CArduinoSwitch::WriteToPort() is a no-op.
+
+No existing functionality is changed; the pause path is entirely opt-in.
+
+================================================================================
+Arduino.h
+================================================================================
+
+Line 14-17  (file header — ADDED)
+  Added a brief "LUMETRIC modifications" block to the file header comment
+  so the purpose of the changes is clear at a glance.
+
+Line 64  (inside CArduinoHub public section — ADDED)
+  Declaration of the new property handler:
+      int OnPaused(MM::PropertyBase* pPropt, MM::ActionType eAct);
+  Follows the pattern of every other property handler in the class
+  (OnPort, OnLogic, OnVersion, OnExtendedVersion).
+
+Line 75-76  (inside CArduinoHub "custom interface" block — ADDED)
+  Two inline accessors:
+      bool IsPaused() const { return paused_; }
+      void SetPaused(bool p) { paused_ = p; }
+  Placed next to the analogous IsTimedOutputActive() / SetTimedOutput()
+  pair that already exists in the same block.  const-correct getter
+  allows use from const contexts; setter exists for completeness
+  (though in practice the property handler is used instead).
+
+Line 99  (inside CArduinoHub private section — ADDED)
+  New private member:
+      bool paused_;
+  Placed immediately after the existing bool members (portAvailable_,
+  invertedLogic_, timedOutputActive_) for grouping consistency.
+
+Line 234  (inside CArduinoInput public section — ADDED)
+  Declaration:
+      bool IsHubPaused() const;
+  Allows ArduinoInputMonitorThread::svc() — which only has a reference
+  to a CArduinoInput — to query the hub's pause state without needing a
+  direct pointer to CArduinoHub.  Keeping this behind a CArduinoInput
+  method avoids exposing hub_ to code outside the class.
+
+================================================================================
+Arduino.cpp
+================================================================================
+
+Line 14-19  (file header — ADDED)
+  Added a "LUMETRIC modifications" block listing all changes A5-A11
+  so the diff is self-documenting.
+
+Line 137  (CArduinoHub constructor body — ADDED)
+  Added:
+      paused_ = false;
+  Initialised in the constructor body (alongside portAvailable_,
+  invertedLogic_, timedOutputActive_) because it is a plain bool rather
+  than a member that can appear in the initialiser list in a
+  straightforward way with the existing style.
+  Default value "false" means behaviour is identical to the unmodified
+  adapter until LUMETRIC explicitly sets it.
+
+Lines 411-421  (end of CArduinoHub::Initialize() — ADDED)
+  Registers the "Paused" property with MM's property system:
+      CPropertyAction* pActPaused = new CPropertyAction(this, &CArduinoHub::OnPaused);
+      ret = CreateStringProperty("Paused", "0", false, pActPaused);
+      if (ret != DEVICE_OK) return ret;
+      AddAllowedValue("Paused", "0");
+      AddAllowedValue("Paused", "1");
+  Inserted just before "initialized_ = true; return DEVICE_OK;" following
+  the same pattern as all other properties created in Initialize().
+  String type ("0"/"1") rather than bool is used because MM's scripting
+  layer (BeanShell via mmc.setProperty) only supports strings.
+  Allowed values restrict the property to a binary switch.
+
+Lines 518-533  (new function — ADDED)
+  Full implementation of CArduinoHub::OnPaused():
+      if AfterSet  → parse "0"/"1", write paused_ flag
+      if BeforeGet → write current paused_ state back to property
+      returns DEVICE_OK unconditionally (cannot fail)
+  Follows the same skeleton as OnLogic(), OnVersion(), etc.
+
+Lines 692-693  (CArduinoSwitch::WriteToPort() — ADDED)
+  After the existing mutex lock line, added:
+      if (hub_->IsPaused()) return DEVICE_OK;
+  Placement: immediately after the lock_guard so the guard is still held
+  (no risk of another thread writing between the check and the return).
+  Returning DEVICE_OK (not an error) is intentional: from the caller's
+  perspective the write "succeeded" — we just silently skipped it because
+  LUMETRIC owns the port.  Returning an error code would propagate up
+  through MM's property system and appear as an error in the MM log/GUI,
+  which would be confusing and misleading.
+
+Lines 1522-1523  (CArduinoShutter::WriteToPort() — ADDED)
+  Same early-return guard as CArduinoSwitch::WriteToPort() above,
+  same reasoning.
+
+Lines 1794-1798  (new function — ADDED)
+  Full implementation of CArduinoInput::IsHubPaused():
+      return hub_ != nullptr && hub_->IsPaused();
+  The null-check on hub_ is defensive; hub_ is always set in Initialize()
+  before the monitor thread is started, but the thread destructor calls
+  Stop()+wait() which could theoretically be reached if Initialize() was
+  never called.
+
+Lines 2051-2056  (ArduinoInputMonitorThread::svc() — ADDED)
+  At the very top of the while(!stop_) loop, added:
+      if (aInput_.IsHubPaused()) {
+          CDeviceUtils::SleepMs(50);
+          continue;
+      }
+  Placement: before the first GetDigitalInput() call so no serial I/O
+  occurs at all while paused.  The 50 ms sleep prevents a hot busy-loop
+  (CDeviceUtils::SleepMs is the same helper used at the bottom of the
+  loop for the 500 ms inter-poll delay).  Using "continue" restarts the
+  loop, which re-checks stop_ and IsHubPaused() each time — so the thread
+  wakes promptly both when the acquisition ends (Paused→0) and when MM
+  signals it to stop.
+
+================================================================================
+LINES NOT CHANGED
+================================================================================
+Everything else in both files is unchanged from the upstream fork
+(PSJacoby/mmCoreAndDevices, branch main, as of 2026-05-14).
+In particular:
+  - All serial protocol logic (GetDigitalInput, GetAnalogInput, etc.)
+  - All existing property handlers
+  - The monitor thread's 500 ms sleep interval and error-handling path
+  - CArduinoDA, CArduinoMagnifier — completely untouched
+  - All error code definitions
+
+================================================================================
+BUILD NOTE
+================================================================================
+To produce mmgr_dal_Arduino.dll:
+  1. Open mmCoreAndDevices.sln in Visual Studio 2022.
+  2. Set configuration: Release | x64.
+  3. Build project "mmgr_dal_Arduino".
+  4. Copy the output DLL to the Micro-Manager installation folder,
+     replacing the existing mmgr_dal_Arduino.dll.
+  5. No firmware changes are required for the Paused feature alone
+     (the Arduino firmware already ignores byte 40 silently during
+     acquisition — that is a separate LUMETRIC firmware change).
+================================================================================
