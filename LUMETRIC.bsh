@@ -6040,321 +6040,197 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
 }
 
 // ==================== CSV Export for Graph Data ====================
-void exportGraphDataToCSV(ArrayList dataRows, ArrayList correctedDataRows, int numActiveGraphs, ArrayList visualizationRows) {
-    if (dataRows.isEmpty()) {
+// Helper: compute the frame-selection label used in CSV filenames.
+String computeFrameLogicLabel(ArrayList vizRow, boolean isTemporal) {
+    if (!isTemporal) return "every";
+    Boolean everyFrame = (Boolean) vizRow.get(2);
+    Boolean everyOdd   = (Boolean) vizRow.get(3);
+    Boolean everyEven  = (Boolean) vizRow.get(4);
+    String  custom     = (String)  vizRow.get(5);
+    if (everyFrame != null && everyFrame.booleanValue()) return "every";
+    if (everyOdd   != null && everyOdd.booleanValue())   return "odd";
+    if (everyEven  != null && everyEven.booleanValue())  return "even";
+    if (custom != null && !custom.equals("Off"))          return custom.replace(" ", "_");
+    return "every";
+}
 
-        return;
-    }
+// Helper: write one CSV file for one graph using the given set of rows.
+// corrSuffix is appended to the filename (e.g. "RAW", "BGcorr", "BTcorr").
+// Column headers carry no suffix — the filename already identifies the correction level.
+void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
+                           int graphIdx, ArrayList vizRow, String graphType,
+                           String frameLogic, boolean isTemporal) {
+    if (rows == null || rows.isEmpty()) return;
 
-    // Use experiment folder instead of root data directory
-    File experimentFolder = new File(config.experimentFolder);
-    if (!experimentFolder.exists()) {
+    int actualNumROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+    String fileName = "Graph" + (graphIdx + 1) + "_"
+        + graphType.replace(" ", "_").replace("/", "-")
+        + "_" + frameLogic + "_" + corrSuffix + ".csv";
+    File csvFile = new File(expFolder, fileName);
 
-        return;
-    }
+    try {
+        PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
 
-    // Determine how many ROIs we have from the first data row
-    int numROIs = ((ArrayList) dataRows.get(0)).size() - 2; // Subtract frame and timestamp columns
+        // --- N-frame cycle ratio (e.g. "Ratio 1/2 (2 frames)") ---
+        if (graphType.startsWith("Ratio ") && graphType.contains("frames)")) {
+            int cycleLen = 2, posNum = 1, posDen = 2;
+            try {
+                int parenIdx = graphType.indexOf("(");
+                int spaceIdx = graphType.indexOf(" ", parenIdx + 1);
+                cycleLen = Integer.parseInt(graphType.substring(parenIdx + 1, spaceIdx));
+                String[] parts = graphType.split(" ");
+                String[] positions = parts[1].split("/");
+                posNum = Integer.parseInt(positions[0]);
+                posDen = Integer.parseInt(positions[1]);
+            } catch (Exception e) {}
+            final int cycleLenF = cycleLen;
+            final int posNumF = posNum, posDenF = posDen;
 
-    // Create one CSV file per active graph
-    for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
-        ArrayList vizRow = (ArrayList) visualizationRows.get(graphIdx);
-        String graphType = (String) vizRow.get(1);
-
-        if (graphType.equals("none")) {
-            continue;
-        }
-
-        // Build descriptive filename
-        String frameLogic = "";
-        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
-
-        if (isTemporal) {
-            // Temporal mode: read frame selection columns
-            Boolean everyFrame = (Boolean) vizRow.get(2);
-            Boolean everyOdd = (Boolean) vizRow.get(3);
-            Boolean everyEven = (Boolean) vizRow.get(4);
-            String custom = (String) vizRow.get(5);
-
-            if (everyFrame != null && everyFrame.booleanValue()) {
-                frameLogic = "every";
-            } else if (everyOdd != null && everyOdd.booleanValue()) {
-                frameLogic = "odd";
-            } else if (everyEven != null && everyEven.booleanValue()) {
-                frameLogic = "even";
-            } else if (custom != null && !custom.equals("Off")) {
-                frameLogic = custom.replace(" ", "_");
+            writer.print("Frame Pair;Timestamp [ms]");
+            for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
+                writer.print(";ROI" + (roiIdx + 1) + "_Ratio");
             }
-        } else {
-            // Spatial mode: always every frame
-            frameLogic = "every";
-        }
+            writer.println();
 
-        String fileName = "Graph" + (graphIdx + 1) + "_" + graphType.replace(" ", "_").replace("/", "-") + "_" + frameLogic + ".csv";
-        File csvFile = new File(experimentFolder, fileName);
-
-        try {
-            PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
-
-            // Determine actual number of ROIs from stored ROIs
-            int actualNumROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
-
-            // Handle N-frame cycle ratio graphs (e.g. "Ratio 1/2 (2 frames)")
-            if (graphType.startsWith("Ratio ") && graphType.contains("frames)")) {
-                int cycleLen = 2;
-                int posNum = 1, posDen = 2;
-                try {
-                    int parenIdx = graphType.indexOf("(");
-                    int spaceIdx = graphType.indexOf(" ", parenIdx + 1);
-                    cycleLen = Integer.parseInt(graphType.substring(parenIdx + 1, spaceIdx));
-                    String[] parts = graphType.split(" ");
-                    String[] positions = parts[1].split("/");
-                    posNum = Integer.parseInt(positions[0]);
-                    posDen = Integer.parseInt(positions[1]);
-                } catch (Exception e) {
-                    // skip on parse error
+            Map cycleFrames = new HashMap();
+            for (int i = 0; i < rows.size(); i++) {
+                ArrayList row = (ArrayList) rows.get(i);
+                int frameNum = ((Integer) row.get(0)).intValue();
+                if (shouldProcessFrame(frameNum, vizRow)) {
+                    int cycleIdx = (frameNum - 1) / cycleLenF;
+                    int framePos = ((frameNum - 1) % cycleLenF) + 1;
+                    if (framePos == posNumF || framePos == posDenF) {
+                        Map cycle = (Map) cycleFrames.get(cycleIdx);
+                        if (cycle == null) { cycle = new HashMap(); cycleFrames.put(cycleIdx, cycle); }
+                        cycle.put("p" + framePos, row);
+                    }
                 }
-                final int cycleLenF = cycleLen;
-                final int posNumF = posNum, posDenF = posDen;
+            }
 
-                // Header
-                boolean bgEnabled = config.acqSettings.bgCorrectionEnabled && !correctedDataRows.isEmpty();
-                writer.print("Frame Pair;Timestamp [ms]");
+            List cycleIndices = new ArrayList(cycleFrames.keySet());
+            Collections.sort(cycleIndices);
+            for (int c = 0; c < cycleIndices.size(); c++) {
+                int cycleIdx = ((Integer) cycleIndices.get(c)).intValue();
+                Map cycle = (Map) cycleFrames.get(cycleIdx);
+                ArrayList rowN = (ArrayList) cycle.get("p" + posNumF);
+                ArrayList rowD = (ArrayList) cycle.get("p" + posDenF);
+                if (rowN == null || rowD == null) continue;
+                int frameN = ((Integer) rowN.get(0)).intValue();
+                int frameD = ((Integer) rowD.get(0)).intValue();
+                ArrayList numerROIs = new ArrayList();
+                ArrayList denomROIs = new ArrayList();
                 for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                    writer.print(";ROI" + (roiIdx + 1) + "_Ratio_RAW");
-                    if (bgEnabled) writer.print(";ROI" + (roiIdx + 1) + "_Ratio_BGcorr");
+                    numerROIs.add(rowN.get(2 + roiIdx));
+                    denomROIs.add(rowD.get(2 + roiIdx));
+                }
+                ArrayList ratios = calculateFrameRatio(numerROIs, denomROIs);
+                if (ratios == null || ratios.isEmpty()) continue;
+                writer.print(frameN + "-" + frameD + ";");
+                ArrayList laterRow = (frameN > frameD) ? rowN : rowD;
+                writer.print(laterRow.get(1));
+                for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
+                    writer.print(";");
+                    Object val = ratios.get(roiIdx);
+                    if (val != null) {
+                        double v = ((Double) val).doubleValue();
+                        writer.print(!Double.isNaN(v) && !Double.isInfinite(v) ? v : "NaN");
+                    }
                 }
                 writer.println();
+            }
 
-                // Build index from frame number to corrected row for O(1) lookup
-                Map correctedByFrame = new HashMap();
-                if (bgEnabled) {
-                    for (int i = 0; i < correctedDataRows.size(); i++) {
-                        ArrayList cr = (ArrayList) correctedDataRows.get(i);
-                        correctedByFrame.put(cr.get(0), cr);
-                    }
-                }
+        // --- Split Ratio (Spatial mode) ---
+        } else if (graphType.startsWith("Split ratio")) {
+            int numRatios = actualNumROIs / 2;
+            writer.print("Frame;Timestamp [ms]");
+            for (int roiIdx = 0; roiIdx < numRatios; roiIdx++) {
+                writer.print(";Ratio" + (roiIdx + 1));
+            }
+            writer.println();
 
-                // Group frames by cycle (RAW)
-                Map cycleFrames = new HashMap();
-                for (int i = 0; i < dataRows.size(); i++) {
-                    ArrayList row = (ArrayList) dataRows.get(i);
-                    int frameNum = ((Integer) row.get(0)).intValue();
-                    if (shouldProcessFrame(frameNum, vizRow)) {
-                        int cycleIdx = (frameNum - 1) / cycleLenF;
-                        int framePos = ((frameNum - 1) % cycleLenF) + 1;
-                        if (framePos == posNumF || framePos == posDenF) {
-                            Map cycle = (Map) cycleFrames.get(cycleIdx);
-                            if (cycle == null) { cycle = new HashMap(); cycleFrames.put(cycleIdx, cycle); }
-                            cycle.put("p" + framePos, row);
-                        }
-                    }
-                }
-
-                // Sort by cycle index and write pairs
-                List cycleIndices = new ArrayList(cycleFrames.keySet());
-                Collections.sort(cycleIndices);
-                for (int c = 0; c < cycleIndices.size(); c++) {
-                    int cycleIdx = ((Integer) cycleIndices.get(c)).intValue();
-                    Map cycle = (Map) cycleFrames.get(cycleIdx);
-                    ArrayList rowN = (ArrayList) cycle.get("p" + posNumF);
-                    ArrayList rowD = (ArrayList) cycle.get("p" + posDenF);
-                    if (rowN == null || rowD == null) continue;
-
-                    int frameN = ((Integer) rowN.get(0)).intValue();
-                    int frameD = ((Integer) rowD.get(0)).intValue();
-
-                    ArrayList numerROIs = new ArrayList();
-                    ArrayList denomROIs = new ArrayList();
+            for (int i = 0; i < rows.size(); i++) {
+                ArrayList row = (ArrayList) rows.get(i);
+                int frameNum = ((Integer) row.get(0)).intValue();
+                if (shouldProcessFrame(frameNum, vizRow)) {
+                    writer.print(row.get(0) + ";");
+                    writer.print(row.get(1));
+                    ArrayList roiValues = new ArrayList();
                     for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                        numerROIs.add(rowN.get(2 + roiIdx));
-                        denomROIs.add(rowD.get(2 + roiIdx));
+                        roiValues.add(row.get(2 + roiIdx));
                     }
-                    ArrayList ratios = calculateFrameRatio(numerROIs, denomROIs);
-                    if (ratios == null || ratios.isEmpty()) continue;
-
-                    // Corrected ratios (if enabled)
-                    ArrayList corrRatios = null;
-                    if (bgEnabled) {
-                        ArrayList corrRowN = (ArrayList) correctedByFrame.get(new Integer(frameN));
-                        ArrayList corrRowD = (ArrayList) correctedByFrame.get(new Integer(frameD));
-                        if (corrRowN != null && corrRowD != null) {
-                            ArrayList cNumer = new ArrayList();
-                            ArrayList cDenom = new ArrayList();
-                            for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                                cNumer.add(corrRowN.get(2 + roiIdx));
-                                cDenom.add(corrRowD.get(2 + roiIdx));
-                            }
-                            corrRatios = calculateFrameRatio(cNumer, cDenom);
-                        }
-                    }
-
-                    writer.print(frameN + "-" + frameD);
-                    writer.print(";");
-                    ArrayList laterRow = (frameN > frameD) ? rowN : rowD;
-                    writer.print(laterRow.get(1));
+                    ArrayList ratios = calculateSpatialRatio(roiValues, graphType);
                     for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
                         writer.print(";");
-                        Object ratioVal = ratios.get(roiIdx);
-                        if (ratioVal != null) {
-                            double ratio = ((Double) ratioVal).doubleValue();
-                            writer.print(!Double.isNaN(ratio) && !Double.isInfinite(ratio) ? ratio : "NaN");
-                        }
-                        if (bgEnabled) {
-                            writer.print(";");
-                            if (corrRatios != null && roiIdx < corrRatios.size()) {
-                                Object cVal = corrRatios.get(roiIdx);
-                                if (cVal != null) {
-                                    double cr = ((Double) cVal).doubleValue();
-                                    writer.print(!Double.isNaN(cr) && !Double.isInfinite(cr) ? cr : "NaN");
-                                }
-                            }
+                        Object val = ratios.get(roiIdx);
+                        if (val != null) {
+                            double v = ((Double) val).doubleValue();
+                            writer.print(!Double.isNaN(v) && !Double.isInfinite(v) ? v : "NaN");
                         }
                     }
                     writer.println();
                 }
             }
-            // Handle Split Ratio graphs (Spatial mode)
-            else if (graphType.startsWith("Split ratio")) {
-                boolean bgEnabled = config.acqSettings.bgCorrectionEnabled && !correctedDataRows.isEmpty();
-                int numRatios = actualNumROIs / 2;
 
-                // Header
-                writer.print("Frame;Timestamp [ms]");
-                for (int roiIdx = 0; roiIdx < numRatios; roiIdx++) {
-                    writer.print(";Ratio" + (roiIdx + 1) + "_RAW");
-                    if (bgEnabled) writer.print(";Ratio" + (roiIdx + 1) + "_BGcorr");
-                }
-                writer.println();
-
-                // Build corrected row index
-                Map correctedByFrame = new HashMap();
-                if (bgEnabled) {
-                    for (int i = 0; i < correctedDataRows.size(); i++) {
-                        ArrayList cr = (ArrayList) correctedDataRows.get(i);
-                        correctedByFrame.put(cr.get(0), cr);
-                    }
-                }
-
-                // Write data rows with calculated ratios
-                for (int i = 0; i < dataRows.size(); i++) {
-                    ArrayList row = (ArrayList) dataRows.get(i);
-                    int frameNum = ((Integer) row.get(0)).intValue();
-
-                    if (shouldProcessFrame(frameNum, vizRow)) {
-                        writer.print(row.get(0)); // Frame
-                        writer.print(";");
-                        writer.print(row.get(1)); // Timestamp
-
-                        // Extract all ROI values from row (actualNumROIs)
-                        ArrayList roiValues = new ArrayList();
-                        for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                            roiValues.add(row.get(2 + roiIdx));
-                        }
-                        ArrayList ratios = calculateSpatialRatio(roiValues, graphType);
-
-                        // Corrected ratios (if enabled)
-                        ArrayList corrRatios = null;
-                        if (bgEnabled) {
-                            ArrayList corrRow = (ArrayList) correctedByFrame.get(new Integer(frameNum));
-                            if (corrRow != null) {
-                                ArrayList corrVals = new ArrayList();
-                                for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                                    corrVals.add(corrRow.get(2 + roiIdx));
-                                }
-                                corrRatios = calculateSpatialRatio(corrVals, graphType);
-                            }
-                        }
-
-                        // Write interleaved RAW and BGcorr ratio columns
-                        for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
-                            writer.print(";");
-                            Object ratioVal = ratios.get(roiIdx);
-                            if (ratioVal != null) {
-                                double ratio = ((Double) ratioVal).doubleValue();
-                                writer.print(!Double.isNaN(ratio) && !Double.isInfinite(ratio) ? ratio : "NaN");
-                            }
-                            if (bgEnabled) {
-                                writer.print(";");
-                                if (corrRatios != null && roiIdx < corrRatios.size()) {
-                                    Object cVal = corrRatios.get(roiIdx);
-                                    if (cVal != null) {
-                                        double cr = ((Double) cVal).doubleValue();
-                                        writer.print(!Double.isNaN(cr) && !Double.isInfinite(cr) ? cr : "NaN");
-                                    }
-                                }
-                            }
-                        }
-                        writer.println();
-                    }
-                }
-
+        // --- Standard Intensity ---
+        } else {
+            int numROIsToExport = actualNumROIs;
+            if (!isTemporal && graphType.startsWith("Intensity ")) {
+                numROIsToExport = actualNumROIs / 2; // Spatial: source ROIs only
             }
-            else {
-                // Standard intensity data export
-                boolean bgEnabled = config.acqSettings.bgCorrectionEnabled && !correctedDataRows.isEmpty();
-                // Determine how many ROIs to export based on mode and graph type
-                int numROIsToExport = actualNumROIs;
-                boolean isSpatialIntensity = !isTemporal && graphType.startsWith("Intensity ");
-                if (isSpatialIntensity) {
-                    // Spatial mode Intensity: only export source ROIs (first half)
-                    numROIsToExport = actualNumROIs / 2;
-                }
+            writer.print("Frame;Timestamp [ms]");
+            for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
+                writer.print(";ROI" + (roiIdx + 1));
+            }
+            writer.println();
 
-                // Header with ROI columns (interleaved RAW + BGcorr when enabled)
-                writer.print("Frame;Timestamp [ms]");
-                for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
-                    writer.print(";ROI" + (roiIdx + 1) + "_RAW");
-                    if (bgEnabled) writer.print(";ROI" + (roiIdx + 1) + "_BGcorr");
-                }
-                writer.println();
-
-                // Build corrected row index
-                Map correctedByFrame = new HashMap();
-                if (bgEnabled) {
-                    for (int i = 0; i < correctedDataRows.size(); i++) {
-                        ArrayList cr = (ArrayList) correctedDataRows.get(i);
-                        correctedByFrame.put(cr.get(0), cr);
-                    }
-                }
-
-                // Write data rows - only include rows that pass this graph's frame filter
-                for (int i = 0; i < dataRows.size(); i++) {
-                    ArrayList row = (ArrayList) dataRows.get(i);
-                    int frameNum = ((Integer) row.get(0)).intValue();
-
-                    if (shouldProcessFrame(frameNum, vizRow)) {
-                        writer.print(row.get(0)); // Frame
+            for (int i = 0; i < rows.size(); i++) {
+                ArrayList row = (ArrayList) rows.get(i);
+                int frameNum = ((Integer) row.get(0)).intValue();
+                if (shouldProcessFrame(frameNum, vizRow)) {
+                    writer.print(row.get(0) + ";");
+                    writer.print(row.get(1));
+                    for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
                         writer.print(";");
-                        writer.print(row.get(1)); // Timestamp
-
-                        // Get matching corrected row if needed
-                        ArrayList corrRow = bgEnabled ? (ArrayList) correctedByFrame.get(new Integer(frameNum)) : null;
-
-                        // Write interleaved RAW and BGcorr ROI values
-                        for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
-                            writer.print(";");
-                            Object roiValue = row.get(2 + roiIdx);
-                            if (roiValue != null) writer.print(roiValue);
-                            if (bgEnabled) {
-                                writer.print(";");
-                                if (corrRow != null) {
-                                    Object corrVal = corrRow.get(2 + roiIdx);
-                                    if (corrVal != null) writer.print(corrVal);
-                                }
-                            }
-                        }
-                        writer.println();
+                        Object val = row.get(2 + roiIdx);
+                        if (val != null) writer.print(val);
                     }
+                    writer.println();
                 }
             }
+        }
 
-            writer.close();
-            // print("Graph " + (graphIdx + 1) + " data exported to: " + csvFile.getName());
+        writer.close();
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+}
 
-        } catch (IOException e) {
-            // print("ERROR: Failed to export graph " + (graphIdx + 1) + " data: " + e.getMessage());
-            e.printStackTrace();
+// Orchestrator: calls exportSingleGraphCSV once per active correction level.
+// To add bleedthrough correction later, pass allBTCorrRows and call exportSingleGraphCSV
+// with corrSuffix "BTcorr" exactly as done for "BGcorr" below.
+void exportGraphDataToCSV(ArrayList dataRows, ArrayList correctedDataRows,
+                           int numActiveGraphs, ArrayList visualizationRows) {
+    if (dataRows.isEmpty()) return;
+
+    File experimentFolder = new File(config.experimentFolder);
+    if (!experimentFolder.exists()) return;
+
+    boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+    boolean bgEnabled  = config.acqSettings.bgCorrectionEnabled && !correctedDataRows.isEmpty();
+
+    for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
+        ArrayList vizRow  = (ArrayList) visualizationRows.get(graphIdx);
+        String graphType  = (String) vizRow.get(1);
+        if (graphType.equals("none")) continue;
+
+        String frameLogic = computeFrameLogicLabel(vizRow, isTemporal);
+
+        exportSingleGraphCSV(dataRows, "RAW", experimentFolder,
+            graphIdx, vizRow, graphType, frameLogic, isTemporal);
+
+        if (bgEnabled) {
+            exportSingleGraphCSV(correctedDataRows, "BGcorr", experimentFolder,
+                graphIdx, vizRow, graphType, frameLogic, isTemporal);
         }
     }
 }
