@@ -1257,8 +1257,19 @@ table.getColumnModel().getColumn(8).setCellRenderer(new LoopSwitchGotoRenderer()
 scrollPane = new JScrollPane(table);
 sequencePanel.add(scrollPane, BorderLayout.CENTER);
 
-// Control panel
-controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+// Control panel — left side: main action buttons; right side: Post-Processor launcher
+controlPanel = new JPanel(new BorderLayout());
+JPanel leftButtons  = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+JPanel rightButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 2));
+JButton openPostProductionButton = new JButton("Open Post-Production");
+openPostProductionButton.setBackground(new Color(255, 200, 80));
+openPostProductionButton.setToolTipText("Open a finished experiment folder to refine ROIs and re-export graphs");
+openPostProductionButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        openPostProcessor();
+    }
+});
+rightButtons.add(openPostProductionButton);
 
 addButton = new JButton("Add Row");
 addButton.setBackground(Color.GREEN);
@@ -1415,14 +1426,16 @@ cancelButton.addActionListener(new ActionListener() {
     }
 });
 
-controlPanel.add(addButton);
-controlPanel.add(removeButton);
-controlPanel.add(validateButton);
-controlPanel.add(saveSettingsButton);
-controlPanel.add(loadSettingsButton);
-controlPanel.add(useTestTableCheckbox);
-controlPanel.add(okButton);
-controlPanel.add(cancelButton);
+leftButtons.add(addButton);
+leftButtons.add(removeButton);
+leftButtons.add(validateButton);
+leftButtons.add(saveSettingsButton);
+leftButtons.add(loadSettingsButton);
+leftButtons.add(useTestTableCheckbox);
+leftButtons.add(okButton);
+leftButtons.add(cancelButton);
+controlPanel.add(leftButtons, BorderLayout.WEST);
+controlPanel.add(rightButtons, BorderLayout.EAST);
 
 // Data directory panel
 dataDirPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -6350,4 +6363,623 @@ void exportEventTimesToCSV(ArrayList eventTimes) {
         // print("ERROR: Failed to export event data: " + e.getMessage());
         e.printStackTrace();
     }
+}
+
+// ==================== Post-Processor ====================
+
+// Rebuild config.storedROIs from the current state of the ROI Manager.
+// Temporal mode: all ROIs taken as-is.
+// Spatial mode: only ROIs whose centre lies in the configured source half are kept;
+//               they are re-mirrored to the other half and both sets are stored.
+void ppRebuildROIsFromManager(ij.plugin.frame.RoiManager rm, int imageWidth, int imageHeight) {
+    config.storedROIs = new ArrayList();
+    if (rm == null || rm.getCount() == 0) return;
+
+    boolean isSpatial = config.acqSettings.processingMode.equals("Spatial");
+
+    if (!isSpatial) {
+        for (int i = 0; i < rm.getCount(); i++) {
+            ij.gui.Roi roiCopy = (ij.gui.Roi) rm.getRoi(i).clone();
+            config.storedROIs.add(new ROIMetadata(roiCopy, "original", imageWidth, imageHeight));
+        }
+        // Rename all ROIs in temporal mode too
+        for (int i = 0; i < rm.getCount(); i++) {
+            rm.select(i);
+            rm.runCommand("Rename", "ROI" + (i + 1));
+        }
+        return;
+    }
+
+    // Spatial: keep only ROIs whose centre is in the source half
+    String splitAxis = config.acqSettings.spatialConfig.splitAxis;
+    String roiRegion = config.acqSettings.spatialConfig.roiSourceRegion;
+
+    ArrayList sourceROIs = new ArrayList();
+    for (int i = 0; i < rm.getCount(); i++) {
+        ij.gui.Roi roi = rm.getRoi(i);
+        java.awt.Rectangle b = roi.getBounds();
+        int cx = b.x + b.width  / 2;
+        int cy = b.y + b.height / 2;
+        boolean inSource;
+        if (splitAxis.equals("Horizontal")) {
+            int half = imageHeight / 2;
+            inSource = roiRegion.equals("Upper") ? (cy < half) : (cy >= half);
+        } else {
+            int half = imageWidth / 2;
+            inSource = roiRegion.equals("Left") ? (cx < half) : (cx >= half);
+        }
+        if (inSource) sourceROIs.add(roi.clone());
+    }
+
+    rm.reset();
+
+    String mirroredRegion = splitAxis.equals("Horizontal")
+        ? (roiRegion.equals("Upper") ? "Lower" : "Upper")
+        : (roiRegion.equals("Left")  ? "Right"  : "Left");
+
+    // Source ROIs first
+    for (int i = 0; i < sourceROIs.size(); i++) {
+        ij.gui.Roi src = (ij.gui.Roi) sourceROIs.get(i);
+        rm.addRoi((ij.gui.Roi) src.clone());
+        config.storedROIs.add(new ROIMetadata((ij.gui.Roi) src.clone(), roiRegion, imageWidth, imageHeight));
+    }
+
+    // Mirrored ROIs
+    for (int i = 0; i < sourceROIs.size(); i++) {
+        ij.gui.Roi src    = (ij.gui.Roi) sourceROIs.get(i);
+        ij.gui.Roi mirror = (ij.gui.Roi) src.clone();
+        java.awt.Rectangle b = src.getBounds();
+        if (splitAxis.equals("Horizontal")) {
+            int half = imageHeight / 2;
+            mirror.setLocation(b.x, roiRegion.equals("Upper") ? b.y + half : b.y - half);
+        } else {
+            int half = imageWidth / 2;
+            mirror.setLocation(roiRegion.equals("Left") ? b.x + half : b.x - half, b.y);
+        }
+        rm.addRoi(mirror);
+        config.storedROIs.add(new ROIMetadata((ij.gui.Roi) mirror.clone(), mirroredRegion, imageWidth, imageHeight));
+    }
+
+    for (int i = 0; i < rm.getCount(); i++) {
+        rm.select(i);
+        rm.runCommand("Rename", "ROI" + (i + 1));
+    }
+}
+
+// Synchronise the series count in each chart dataset with the current config.storedROIs.
+// Adds or removes series so updateGraphs() can address them by index without error.
+// Also updates the renderer stroke for any newly-added series.
+// Must be called on the EDT.
+void ppUpdateChartSeries(ArrayList datasets, ArrayList charts) {
+    boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+    int numROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+    for (int i = 0; i < 4; i++) {
+        if (i >= datasets.size() || datasets.get(i) == null) continue;
+        if (i >= config.acqSettings.visualizationRows.size()) continue;
+        ArrayList vizRow  = (ArrayList) config.acqSettings.visualizationRows.get(i);
+        String graphType  = (String) vizRow.get(1);
+        if (graphType == null || graphType.equals("none")) continue;
+        int required = (graphType.startsWith("Split ratio") || (!isTemporal && graphType.startsWith("Intensity ")))
+            ? numROIs / 2 : numROIs;
+        XYSeriesCollection ds = (XYSeriesCollection) datasets.get(i);
+        int current = ds.getSeriesCount();
+        if (current < required) {
+            for (int si = current; si < required; si++)
+                ds.addSeries(new XYSeries("ROI" + (si + 1)));
+        } else if (current > required) {
+            for (int si = current - 1; si >= required; si--)
+                ds.removeSeries(si);
+        }
+        // Keep renderer in sync for all series
+        if (i < charts.size() && charts.get(i) != null) {
+            XYPlot plot = ((JFreeChart) charts.get(i)).getXYPlot();
+            org.jfree.chart.renderer.xy.XYItemRenderer rend = plot.getRenderer();
+            if (rend instanceof org.jfree.chart.renderer.xy.XYLineAndShapeRenderer) {
+                org.jfree.chart.renderer.xy.XYLineAndShapeRenderer lr =
+                    (org.jfree.chart.renderer.xy.XYLineAndShapeRenderer) rend;
+                for (int si = 0; si < required; si++) {
+                    lr.setSeriesLinesVisible(si, Boolean.TRUE);
+                    lr.setSeriesShapesVisible(si, Boolean.FALSE);
+                    lr.setSeriesStroke(si, new BasicStroke(2.0f));
+                }
+            }
+        }
+    }
+}
+
+// Build a sparse frame-number → timestamp map from any *_RAW.csv in the experiment folder.
+// Returns an ArrayList indexed by (frameNum-1) holding Long timestamps; missing entries = null.
+ArrayList ppReadTimestamps(File expFolder) {
+    java.util.TreeMap frameMap = new java.util.TreeMap();
+
+    File[] csvFiles = expFolder.listFiles(new java.io.FilenameFilter() {
+        public boolean accept(File dir, String name) {
+            return name.contains("_RAW") && name.endsWith(".csv");
+        }
+    });
+
+    if (csvFiles != null) {
+        for (int fi = 0; fi < csvFiles.length; fi++) {
+            try {
+                BufferedReader br = new BufferedReader(new FileReader(csvFiles[fi]));
+                String line = br.readLine(); // skip header
+                while ((line = br.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    String[] parts = line.split(";");
+                    if (parts.length < 2) continue;
+                    try {
+                        int  fn = Integer.parseInt(parts[0].trim());
+                        long ts = Long.parseLong(parts[1].trim());
+                        frameMap.put(new Integer(fn), new Long(ts));
+                    } catch (Exception ignored) {}
+                }
+                br.close();
+            } catch (Exception e) { e.printStackTrace(); }
+        }
+    }
+
+    if (frameMap.isEmpty()) return new ArrayList();
+
+    int maxFrame = ((Integer) frameMap.lastKey()).intValue();
+    ArrayList result = new ArrayList();
+    for (int i = 0; i < maxFrame; i++) result.add(null);
+    java.util.Iterator it = frameMap.entrySet().iterator();
+    while (it.hasNext()) {
+        java.util.Map.Entry entry = (java.util.Map.Entry) it.next();
+        int fn = ((Integer) entry.getKey()).intValue();
+        result.set(fn - 1, entry.getValue());
+    }
+    return result;
+}
+
+// Re-measure every stack slice with the current config.storedROIs and refresh the charts.
+// Clears and rebuilds ppDataRows / ppCorrRows / ppBTRows in-place.
+void ppRecalculate(ImagePlus stack, ArrayList frameTimestamps,
+                   ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
+                   ArrayList datasets, ArrayList charts, ArrayList chartPanels) {
+    ppDataRows.clear();
+    ppCorrRows.clear();
+    ppBTRows.clear();
+
+    for (int gi = 0; gi < datasets.size(); gi++) {
+        if (datasets.get(gi) == null) continue;
+        XYSeriesCollection ds = (XYSeriesCollection) datasets.get(gi);
+        for (int si = 0; si < ds.getSeriesCount(); si++) ds.getSeries(si).clear();
+    }
+
+    frameCache = new HashMap();
+
+    long fallbackIntervalMs = 1000L;
+    if (!config.acqSettings.sequenceRows.isEmpty()) {
+        try {
+            ArrayList firstRow = (ArrayList) config.acqSettings.sequenceRows.get(0);
+            fallbackIntervalMs = Long.parseLong(firstRow.get(3).toString().trim());
+        } catch (Exception ignored) {}
+    }
+
+    RowTracker rowTracker = new RowTracker(config.acqSettings.sequenceRows);
+    int totalSlices = stack.getStackSize();
+
+    for (int s = 1; s <= totalSlices; s++) {
+        stack.setSlice(s);
+        ImageProcessor ip = stack.getProcessor();
+
+        int  frameNum = s;
+        long timestamp;
+        if (frameTimestamps != null && (frameNum - 1) < frameTimestamps.size()
+                && frameTimestamps.get(frameNum - 1) != null) {
+            timestamp = ((Long) frameTimestamps.get(frameNum - 1)).longValue();
+        } else {
+            timestamp = (long)(frameNum - 1) * fallbackIntervalMs;
+        }
+
+        int seqRow = rowTracker.advanceFrame();
+
+        ArrayList roiValues = measureROIs(ip);
+        ppDataRows.add(buildDataRow(frameNum, timestamp, seqRow, roiValues));
+
+        ArrayList valuesForGraphs = roiValues;
+        if (config.acqSettings.bgCorrectionEnabled) {
+            ArrayList bgCorr = applyBGCorrection(roiValues);
+            ppCorrRows.add(buildDataRow(frameNum, timestamp, seqRow, bgCorr));
+            valuesForGraphs = bgCorr;
+            if (config.acqSettings.btCorrectionEnabled
+                    && config.acqSettings.processingMode.equals("Spatial")) {
+                ArrayList btCorr = applyBTCorrection(bgCorr);
+                ppBTRows.add(buildDataRow(frameNum, timestamp, seqRow, btCorr));
+                valuesForGraphs = btCorr;
+            }
+        }
+        updateGraphs(datasets, frameNum, timestamp, valuesForGraphs, chartPanels, charts, seqRow);
+    }
+}
+
+// Export post-processed data to a new numbered folder next to the original experiment folder.
+void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
+              File originalExpFolder, ij.plugin.frame.RoiManager rm) {
+    int n = 1;
+    File outFolder;
+    do {
+        outFolder = new File(originalExpFolder.getParent(),
+            originalExpFolder.getName() + "_Postprocessed" + n);
+        n++;
+    } while (outFolder.exists());
+    outFolder.mkdirs();
+
+    String savedExpFolder = config.experimentFolder;
+    config.experimentFolder = outFolder.getAbsolutePath();
+
+    exportGraphDataToCSV(ppDataRows, ppCorrRows, ppBTRows,
+        config.acqSettings.visualizationRows.size(),
+        config.acqSettings.visualizationRows);
+
+    config.experimentFolder = savedExpFolder;
+
+    if (rm != null && rm.getCount() > 0)
+        rm.runCommand("Save", new File(outFolder, "RoiSet.zip").getAbsolutePath());
+
+    File srcSettings = new File(originalExpFolder, "AquisitionSettings.csv");
+    File dstSettings = new File(outFolder, "AquisitionSettings.csv");
+    if (srcSettings.exists()) {
+        try {
+            java.io.FileInputStream  fis = new java.io.FileInputStream(srcSettings);
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(dstSettings);
+            byte[] buf = new byte[4096];
+            int len;
+            while ((len = fis.read(buf)) > 0) fos.write(buf, 0, len);
+            fis.close();
+            fos.close();
+        } catch (Exception e) { System.err.println("Could not copy settings: " + e.getMessage()); }
+    }
+
+    JOptionPane.showMessageDialog(null,
+        "Exported to:\n" + outFolder.getName(),
+        "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+}
+
+// ==================== Post-Processor Entry Point ====================
+void openPostProcessor() {
+    // 1. Pick experiment folder
+    JFileChooser fc = new JFileChooser();
+    fc.setDialogTitle("Select Experiment Folder for Post-Processing");
+    fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+    String lastPath = prefs.get("lastSavePath", "");
+    if (!lastPath.isEmpty() && new File(lastPath).exists())
+        fc.setCurrentDirectory(new File(lastPath));
+    if (fc.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+
+    final File expFolder = fc.getSelectedFile();
+
+    // 2. Validate settings file
+    File settingsFile = new File(expFolder, "AquisitionSettings.csv");
+    if (!settingsFile.exists()) {
+        JOptionPane.showMessageDialog(frame,
+            "No AquisitionSettings.csv found in:\n" + expFolder.getAbsolutePath(),
+            "Invalid Folder", JOptionPane.ERROR_MESSAGE);
+        return;
+    }
+
+    // 3. Load settings into GUI widgets then capture into config
+    applySettingsFromFile(settingsFile);
+    config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics,
+        convertToStack, stackPerRow, prefs.get("lastSavePath", ""),
+        processingModeCombo, splitAxisCombo, roiSourceCombo,
+        bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
+    config.experimentFolder = expFolder.getAbsolutePath();
+
+    // 4. Find image source (images/ subfolder → Image_Stack.tif → Stack_Row_N.tif)
+    ImagePlus ppStack = null;
+    File imagesSubfolder = new File(expFolder, "images");
+    File singleStackFile = new File(expFolder, "Image_Stack.tif");
+
+    if (imagesSubfolder.exists()) {
+        File[] tiffs = imagesSubfolder.listFiles(new java.io.FilenameFilter() {
+            public boolean accept(File d, String name) {
+                String lc = name.toLowerCase();
+                return lc.endsWith(".tif") || lc.endsWith(".tiff");
+            }
+        });
+        if (tiffs != null && tiffs.length > 0) {
+            java.util.Arrays.sort(tiffs);
+            ij.ImageStack is = new ij.ImageStack();
+            for (int fi = 0; fi < tiffs.length; fi++) {
+                ImagePlus tmp = IJ.openImage(tiffs[fi].getAbsolutePath());
+                if (tmp != null) is.addSlice(tiffs[fi].getName(), tmp.getProcessor());
+            }
+            if (is.getSize() > 0) ppStack = new ImagePlus("Experiment Stack", is);
+        }
+    }
+    if (ppStack == null && singleStackFile.exists())
+        ppStack = IJ.openImage(singleStackFile.getAbsolutePath());
+
+    if (ppStack == null) {
+        File[] rowStacks = expFolder.listFiles(new java.io.FilenameFilter() {
+            public boolean accept(File d, String name) {
+                return name.startsWith("Stack_Row_") && name.endsWith(".tif");
+            }
+        });
+        if (rowStacks != null && rowStacks.length > 0) {
+            java.util.Arrays.sort(rowStacks);
+            ij.ImageStack is = new ij.ImageStack();
+            for (int fi = 0; fi < rowStacks.length; fi++) {
+                ImagePlus tmp = IJ.openImage(rowStacks[fi].getAbsolutePath());
+                if (tmp != null) {
+                    ij.ImageStack src = tmp.getImageStack();
+                    for (int sl = 1; sl <= src.getSize(); sl++)
+                        is.addSlice("", src.getProcessor(sl));
+                }
+            }
+            if (is.getSize() > 0) ppStack = new ImagePlus("Experiment Stack", is);
+        }
+    }
+    if (ppStack == null) {
+        JOptionPane.showMessageDialog(frame,
+            "No image data found in experiment folder.\n"
+            + "Expected: images/ subfolder, Image_Stack.tif, or Stack_Row_N.tif",
+            "No Images Found", JOptionPane.ERROR_MESSAGE);
+        return;
+    }
+
+    final ImagePlus finalStack = ppStack;
+    finalStack.show();
+
+    // 5. Load ROI Manager
+    ij.plugin.frame.RoiManager rm = ij.plugin.frame.RoiManager.getInstance();
+    if (rm == null) {
+        IJ.run("ROI Manager...", "");
+        rm = ij.plugin.frame.RoiManager.getInstance();
+    }
+    rm.reset();
+    File roiSetFile = new File(expFolder, "RoiSet.zip");
+    if (roiSetFile.exists()) rm.runCommand("Open", roiSetFile.getAbsolutePath());
+    rm.runCommand(finalStack, "Show All");
+
+    final int imgW = finalStack.getWidth();
+    final int imgH = finalStack.getHeight();
+    final ij.plugin.frame.RoiManager finalRM = rm;
+
+    ppRebuildROIsFromManager(rm, imgW, imgH);
+
+    // 6. Read frame timestamps from existing RAW CSVs (best-effort)
+    final ArrayList frameTimestamps = ppReadTimestamps(expFolder);
+
+    // 7. Data containers
+    final ArrayList ppDataRows = new ArrayList();
+    final ArrayList ppCorrRows = new ArrayList();
+    final ArrayList ppBTRows   = new ArrayList();
+
+    // 8. Build chart datasets and panels (same pattern as acquisition window)
+    final boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+    final ArrayList ppDatasets    = new ArrayList();
+    final ArrayList ppCharts      = new ArrayList();
+    final ArrayList ppChartPanels = new ArrayList();
+
+    for (int i = 0; i < 4; i++) {
+        if (i >= config.acqSettings.visualizationRows.size()) {
+            ppDatasets.add(null); ppCharts.add(null); ppChartPanels.add(null);
+            continue;
+        }
+        ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+        String graphType = (String) vizRow.get(1);
+        if (graphType == null || graphType.trim().isEmpty() || graphType.equals("none")) {
+            ppDatasets.add(null); ppCharts.add(null); ppChartPanels.add(null);
+            continue;
+        }
+        String frameLogic = computeFrameLogicLabel(vizRow, isTemporal);
+        XYSeriesCollection dataset = new XYSeriesCollection();
+        int numROIs = config.storedROIs != null ? config.storedROIs.size() : 0;
+        int numSeries = (graphType.startsWith("Split ratio") || (!isTemporal && graphType.startsWith("Intensity ")))
+            ? numROIs / 2 : numROIs;
+        for (int si = 0; si < numSeries; si++) dataset.addSeries(new XYSeries("ROI" + (si + 1)));
+        ppDatasets.add(dataset);
+
+        String yLabel = (graphType.equals("Intensity") || graphType.startsWith("Intensity "))
+            ? "Intensity [A.U.]" : "Ratio";
+        String title  = "Graph " + (i + 1) + " - " + graphType
+            + (frameLogic.isEmpty() ? "" : " (" + frameLogic + ")");
+        JFreeChart chart = ChartFactory.createXYLineChart(
+            title, "Time (s)", yLabel, dataset, PlotOrientation.VERTICAL, true, false, false);
+        chart.setBackgroundPaint(Color.WHITE);
+        chart.getTitle().setFont(new Font("SansSerif", Font.BOLD, 11));
+        XYPlot plot = chart.getXYPlot();
+        plot.setBackgroundPaint(Color.LIGHT_GRAY);
+        plot.setDomainGridlinePaint(Color.WHITE);
+        plot.setRangeGridlinePaint(Color.WHITE);
+        plot.getDomainAxis().setAutoRange(true);
+        plot.getRangeAxis().setAutoRange(true);
+        org.jfree.chart.renderer.xy.XYItemRenderer rend = plot.getRenderer();
+        if (rend instanceof org.jfree.chart.renderer.xy.XYLineAndShapeRenderer) {
+            org.jfree.chart.renderer.xy.XYLineAndShapeRenderer lr =
+                (org.jfree.chart.renderer.xy.XYLineAndShapeRenderer) rend;
+            for (int si = 0; si < numSeries; si++) {
+                lr.setSeriesLinesVisible(si, Boolean.TRUE);
+                lr.setSeriesShapesVisible(si, Boolean.FALSE);
+                lr.setSeriesStroke(si, new BasicStroke(2.0f));
+            }
+        }
+        ChartPanel cp = new ChartPanel(chart);
+        cp.setMouseWheelEnabled(true);
+        ppCharts.add(chart);
+        ppChartPanels.add(cp);
+    }
+
+    // 9. Chart grid layout
+    int activePanels = 0;
+    for (int i = 0; i < ppChartPanels.size(); i++) if (ppChartPanels.get(i) != null) activePanels++;
+    int gridCols = activePanels <= 1 ? 1 : 2;
+    int gridRows = activePanels <= 2 ? 1 : 2;
+    JPanel chartGrid = new JPanel(new GridLayout(gridRows, gridCols, 5, 5));
+    for (int i = 0; i < ppChartPanels.size(); i++) {
+        if (ppChartPanels.get(i) != null) chartGrid.add((ChartPanel) ppChartPanels.get(i));
+    }
+
+    // 10. BG correction controls
+    final JCheckBox ppBGCheckbox = new JCheckBox("BG Correction", config.acqSettings.bgCorrectionEnabled);
+    final JComboBox ppBGCombo    = new JComboBox();
+    for (int ri = 0; ri < config.storedROIs.size(); ri++) ppBGCombo.addItem("ROI " + (ri + 1));
+    if (config.storedROIs.size() > 0)
+        ppBGCombo.setSelectedIndex(Math.min(config.acqSettings.bgROIIndex, config.storedROIs.size() - 1));
+    ppBGCombo.setEnabled(config.acqSettings.bgCorrectionEnabled);
+
+    ppBGCheckbox.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            config.acqSettings.bgCorrectionEnabled = ppBGCheckbox.isSelected();
+            ppBGCombo.setEnabled(ppBGCheckbox.isSelected());
+        }
+    });
+    ppBGCombo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            if (ppBGCombo.getSelectedIndex() >= 0)
+                config.acqSettings.bgROIIndex = ppBGCombo.getSelectedIndex();
+        }
+    });
+
+    final JLabel ppStatus = new JLabel("Loading...");
+
+    // 11. Recalculate button
+    final JButton ppRecalcButton = new JButton("Recalculate");
+    ppRecalcButton.setBackground(new Color(150, 200, 255));
+    ppRecalcButton.setEnabled(false);
+    ppRecalcButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            ppStatus.setText("Recalculating...");
+            ppRecalcButton.setEnabled(false);
+            new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        SwingUtilities.invokeAndWait(new Runnable() {
+                            public void run() {
+                                // Rebuild ROIs on EDT (ROI Manager is a Swing component)
+                                ppRebuildROIsFromManager(finalRM, imgW, imgH);
+                                // Refresh BG ROI combo, keeping current selection
+                                int savedIdx = config.acqSettings.bgROIIndex;
+                                ppBGCombo.removeAllItems();
+                                for (int ri = 0; ri < config.storedROIs.size(); ri++)
+                                    ppBGCombo.addItem("ROI " + (ri + 1));
+                                int newIdx = config.storedROIs.size() > 0
+                                    ? Math.min(savedIdx, config.storedROIs.size() - 1) : 0;
+                                ppBGCombo.setSelectedIndex(newIdx);
+                                config.acqSettings.bgROIIndex = newIdx; // suppress spurious action events
+                                // Sync chart series count to new ROI count
+                                ppUpdateChartSeries(ppDatasets, ppCharts);
+                            }
+                        });
+                    } catch (Exception ex) { ex.printStackTrace(); }
+                    ppRecalculate(finalStack, frameTimestamps,
+                        ppDataRows, ppCorrRows, ppBTRows,
+                        ppDatasets, ppCharts, ppChartPanels);
+                    SwingUtilities.invokeLater(new Runnable() {
+                        public void run() {
+                            ppStatus.setText("Done \u2014 " + ppDataRows.size() + " frames");
+                            ppRecalcButton.setEnabled(true);
+                        }
+                    });
+                }
+            }).start();
+        }
+    });
+
+    // 12. Export button
+    final JButton ppExportButton = new JButton("Export");
+    ppExportButton.setBackground(new Color(150, 255, 150));
+    ppExportButton.setEnabled(false);
+    ppExportButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            ppStatus.setText("Exporting...");
+            ppExportButton.setEnabled(false);
+            new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        SwingUtilities.invokeAndWait(new Runnable() {
+                            public void run() {
+                                ppRebuildROIsFromManager(finalRM, imgW, imgH);
+                                ppUpdateChartSeries(ppDatasets, ppCharts);
+                            }
+                        });
+                    } catch (Exception ex) { ex.printStackTrace(); }
+                    ppRecalculate(finalStack, frameTimestamps,
+                        ppDataRows, ppCorrRows, ppBTRows,
+                        ppDatasets, ppCharts, ppChartPanels);
+                    ppExport(ppDataRows, ppCorrRows, ppBTRows, expFolder, finalRM);
+                    SwingUtilities.invokeLater(new Runnable() {
+                        public void run() {
+                            ppStatus.setText("Exported");
+                            ppExportButton.setEnabled(true);
+                        }
+                    });
+                }
+            }).start();
+        }
+    });
+
+    // 13. Close button
+    final JFrame[] ppFrameRef = {null};
+    JButton ppCloseButton = new JButton("Close");
+    ppCloseButton.setBackground(Color.ORANGE);
+    ppCloseButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            if (ppFrameRef[0] != null) ppFrameRef[0].dispose();
+            if (finalStack.getWindow() != null) finalStack.getWindow().close();
+            frame.setVisible(true);
+        }
+    });
+
+    // 14. Control panel
+    JPanel ppBGPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+    ppBGPanel.add(ppBGCheckbox);
+    ppBGPanel.add(new JLabel("BG ROI:"));
+    ppBGPanel.add(ppBGCombo);
+    ppBGPanel.add(ppStatus);
+
+    JPanel ppButtonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+    ppButtonPanel.add(ppRecalcButton);
+    ppButtonPanel.add(ppExportButton);
+    ppButtonPanel.add(ppCloseButton);
+
+    JPanel ppControlPanel = new JPanel(new BorderLayout());
+    ppControlPanel.add(ppBGPanel, BorderLayout.WEST);
+    ppControlPanel.add(ppButtonPanel, BorderLayout.EAST);
+    ppControlPanel.setBorder(BorderFactory.createEtchedBorder());
+
+    // 15. Post-processor frame
+    JFrame ppFrame = new JFrame("LUMETRIC Post-Processor \u2014 " + expFolder.getName());
+    ppFrameRef[0] = ppFrame;
+    java.awt.Dimension screenSize = java.awt.Toolkit.getDefaultToolkit().getScreenSize();
+    ppFrame.setSize((int)(screenSize.width * 0.85), (int)(screenSize.height * 0.80));
+    ppFrame.setLocationRelativeTo(null);
+    ppFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+    ppFrame.addWindowListener(new java.awt.event.WindowAdapter() {
+        public void windowClosing(java.awt.event.WindowEvent we) {
+            ppFrameRef[0].dispose();
+            if (finalStack.getWindow() != null) finalStack.getWindow().close();
+            frame.setVisible(true);
+        }
+    });
+
+    JPanel ppMain = new JPanel(new BorderLayout(5, 5));
+    ppMain.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+    ppMain.add(chartGrid,      BorderLayout.CENTER);
+    ppMain.add(ppControlPanel, BorderLayout.SOUTH);
+    ppFrame.add(ppMain);
+
+    // 16. Show post-processor, hide main menu
+    frame.setVisible(false);
+    ppFrame.setVisible(true);
+
+    // 17. Initial recalculate in background thread
+    new Thread(new Runnable() {
+        public void run() {
+            ppRecalculate(finalStack, frameTimestamps,
+                ppDataRows, ppCorrRows, ppBTRows,
+                ppDatasets, ppCharts, ppChartPanels);
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    ppStatus.setText("Ready \u2014 " + ppDataRows.size() + " frames");
+                    ppRecalcButton.setEnabled(true);
+                    ppExportButton.setEnabled(true);
+                }
+            });
+        }
+    }).start();
 }
