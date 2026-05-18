@@ -1344,8 +1344,8 @@ okButton.addActionListener(new ActionListener() {
             config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
 
             config.useTestTable = useTestTableCheckbox.isSelected();
-            // Dispose GUI immediately - no more GUI dependencies
-            frame.dispose();
+            // Hide GUI (not dispose — will be restored after acquisition)
+            frame.setVisible(false);
 
             // Run acquisition workflow in background thread with captured data
             new Thread(new Runnable() {
@@ -1356,6 +1356,9 @@ okButton.addActionListener(new ActionListener() {
 
                         if (config.acqSettings.isVisualizationNeeded()) {
                             if (!setupVisualizationROIs()) {
+                                SwingUtilities.invokeLater(new Runnable() {
+                                    public void run() { frame.setVisible(true); }
+                                });
                                 return;
                             }
                         }
@@ -1366,6 +1369,7 @@ okButton.addActionListener(new ActionListener() {
                                     JOptionPane.showMessageDialog(null,
                                         "Failed to save acquisition settings.\nPlease check folder permissions.",
                                         "File Write Error", JOptionPane.ERROR_MESSAGE);
+                                    frame.setVisible(true);
                                 }
                             });
                             return;
@@ -1382,8 +1386,6 @@ okButton.addActionListener(new ActionListener() {
                     } catch (Exception threadEx) {
                         // print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
-                        // Show user-friendly error dialog on EDT
-                        // Capture error message for inner class (BeanShell compatibility)
                         String capturedError = threadEx.getMessage();
                         if (capturedError == null) capturedError = threadEx.getClass().getName();
                         final String errorMsg = capturedError;
@@ -1396,6 +1398,7 @@ okButton.addActionListener(new ActionListener() {
                                     "- The folder is not on a network drive or read-only location\n" +
                                     "- You're not running in a restricted directory",
                                     "Acquisition Error", JOptionPane.ERROR_MESSAGE);
+                                frame.setVisible(true);
                             }
                         });
                     }
@@ -1765,10 +1768,10 @@ vizStartButton.addActionListener(new ActionListener() {
                 dataDirPathLabel.setForeground(Color.BLACK);
             }
 
-            // Capture all data from GUI before disposal
+            // Capture all data from GUI before hiding
             config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
-            // Dispose GUI immediately
-            frame.dispose();
+            // Hide GUI (not dispose — will be restored after acquisition)
+            frame.setVisible(false);
 
             // Run acquisition workflow in background thread with captured data
             new Thread(new Runnable() {
@@ -1779,6 +1782,9 @@ vizStartButton.addActionListener(new ActionListener() {
 
                         if (config.acqSettings.isVisualizationNeeded()) {
                             if (!setupVisualizationROIs()) {
+                                SwingUtilities.invokeLater(new Runnable() {
+                                    public void run() { frame.setVisible(true); }
+                                });
                                 return;
                             }
                         }
@@ -1789,6 +1795,7 @@ vizStartButton.addActionListener(new ActionListener() {
                                     JOptionPane.showMessageDialog(null,
                                         "Failed to save acquisition settings.\nPlease check folder permissions.",
                                         "File Write Error", JOptionPane.ERROR_MESSAGE);
+                                    frame.setVisible(true);
                                 }
                             });
                             return;
@@ -1805,8 +1812,6 @@ vizStartButton.addActionListener(new ActionListener() {
                     } catch (Exception threadEx) {
                         // print("ERROR: Uncaught exception in background thread: " + threadEx.getMessage());
                         threadEx.printStackTrace();
-                        // Show user-friendly error dialog on EDT
-                        // Capture error message for inner class (BeanShell compatibility)
                         String capturedError = threadEx.getMessage();
                         if (capturedError == null) capturedError = threadEx.getClass().getName();
                         final String errorMsg = capturedError;
@@ -1819,6 +1824,7 @@ vizStartButton.addActionListener(new ActionListener() {
                                     "- The folder is not on a network drive or read-only location\n" +
                                     "- You're not running in a restricted directory",
                                     "Acquisition Error", JOptionPane.ERROR_MESSAGE);
+                                frame.setVisible(true);
                             }
                         });
                     }
@@ -2779,68 +2785,39 @@ boolean exportTableToCSV() {
 }
 
 // Load settings from CSV file
-void loadSettingsFromCSV() {
-    JFileChooser fileChooser = new JFileChooser();
-    fileChooser.setDialogTitle("Load Acquisition Settings from CSV");
-    fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
-
-    // Set initial directory to last save path or Data folder
-    String lastPath = prefs.get("lastSavePath", "");
-    if (!lastPath.isEmpty() && new File(lastPath).exists()) {
-        fileChooser.setCurrentDirectory(new File(lastPath));
-    } else {
-        // Try Data folder in workspace
-        File dataFolder = new File(new File("").getAbsolutePath(), "Data");
-        if (dataFolder.exists()) {
-            fileChooser.setCurrentDirectory(dataFolder);
-        }
-    }
-
-    int result = fileChooser.showOpenDialog(frame);
-    if (result != JFileChooser.APPROVE_OPTION) {
-        return;
-    }
-
-    File csvFile = fileChooser.getSelectedFile();
-
+// Core settings loader — reads csvFile and applies it to all GUI widgets.
+// No dialogs, no return value; failures are logged to stderr only.
+// Safe to call from the EDT (e.g. auto-reload on restart).
+void applySettingsFromFile(File csvFile) {
     try {
         BufferedReader reader = new BufferedReader(new FileReader(csvFile));
         String line;
-        int lineNum = 0;
         boolean headerSkipped = false;
         boolean inVisualizationSection = false;
         boolean vizHeaderSkipped = false;
         int vizRowIndex = 0;
-        String loadedMode = "Temporal"; // Default
+        String loadedMode = "Temporal";
         String loadedSplitAxis = "Horizontal";
         String loadedROIRegion = "Upper";
         boolean loadedBtEnabled = false;
-        String  loadedBtDirection = "";  // set after splitAxis is applied
+        String  loadedBtDirection = "";
         String  loadedBtFactor = "0.0";
 
-        // Clear existing table data
         while (tableModel.getRowCount() > 0) {
             tableModel.removeRow(0);
         }
 
-        // print("Loading settings from: " + csvFile.getAbsolutePath());
-
-        ArrayList parsedSequenceRows = new ArrayList(); // Collect rows first, add after loop
+        ArrayList parsedSequenceRows = new ArrayList();
 
         while ((line = reader.readLine()) != null) {
-            lineNum++;
             line = line.trim();
 
-            // Check for visualization section header
             if (line.equals("# Visualization Settings")) {
                 inVisualizationSection = true;
-
-                // Apply mode settings NOW before loading visualization data
                 processingModeCombo.setSelectedItem(loadedMode);
                 if (loadedMode.equals("Spatial")) {
-                    splitAxisCombo.setSelectedItem(loadedSplitAxis); // triggers btDirectionCombo rebuild
+                    splitAxisCombo.setSelectedItem(loadedSplitAxis);
                     roiSourceCombo.setSelectedItem(loadedROIRegion);
-                    // Now btDirectionCombo has correct items — safe to set direction
                     if (!loadedBtDirection.isEmpty()) {
                         btDirectionCombo.setSelectedItem(loadedBtDirection);
                     }
@@ -2848,173 +2825,131 @@ void loadSettingsFromCSV() {
                     btCorrectionCheckbox.setSelected(loadedBtEnabled && bgCorrectionCheckbox.isSelected());
                     btFactorField.setText(loadedBtFactor);
                 }
-
                 continue;
             }
 
-            // If in visualization section
             if (inVisualizationSection) {
-                // Skip visualization header line
                 if (!vizHeaderSkipped) {
-                    if (line.startsWith("Graph,Type")) {
-                        vizHeaderSkipped = true;
-                        continue;
-                    }
+                    if (line.startsWith("Graph,Type")) { vizHeaderSkipped = true; continue; }
                 }
-
-                // Skip empty lines and other comments
-                if (line.isEmpty() || (line.startsWith("#") && !line.equals("# Visualization Settings"))) {
-                    continue;
-                }
-
-                // Parse visualization row
+                if (line.isEmpty() || (line.startsWith("#") && !line.equals("# Visualization Settings"))) continue;
                 String[] vizParts = parseCSVLine(line);
-
-                // Mode-aware parsing
                 if (loadedMode.equals("Temporal")) {
                     if (vizParts.length >= 4 && vizRowIndex < vizTableModel.getRowCount()) {
-                        // New 4-column format: Graph,Type,Numerator,Denominator
-                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type
-                        vizTableModel.setValueAt(vizParts[2], vizRowIndex, 2); // Numerator
-                        vizTableModel.setValueAt(vizParts[3], vizRowIndex, 3); // Denominator
+                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
+                        vizTableModel.setValueAt(vizParts[2], vizRowIndex, 2);
+                        vizTableModel.setValueAt(vizParts[3], vizRowIndex, 3);
                         vizRowIndex++;
                     } else if (vizParts.length >= 6 && vizRowIndex < vizTableModel.getRowCount()) {
-                        // Old 6-column format (backwards compat): Graph,Type,EveryFrame,Odd,Even,Custom
-                        // Migrate to new format: type set, numerator/denominator default to "Row 1"/"1"
-                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type (keep)
-                        // Leave numerator/denominator at defaults ("Row 1" / "1")
+                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
                         vizRowIndex++;
                     }
                 } else {
-                    // Spatial mode: only 2 columns
                     if (vizParts.length >= 2 && vizRowIndex < vizTableModel.getRowCount()) {
-                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type
+                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
                         vizRowIndex++;
                     }
                 }
                 continue;
             }
 
-            // Skip sequence header line (CSV never contains row numbers - they're GUI-only)
-            if (!headerSkipped) {
-                headerSkipped = true;
-                continue;
-            }
+            if (!headerSkipped) { headerSkipped = true; continue; }
 
-            // Check for mode settings (comments)
             if (line.startsWith("#")) {
-                if (line.contains("Live Pictures:")) {
-                    String value = line.substring(line.indexOf(":") + 1).trim();
-                    boolean livePicsValue = value.equalsIgnoreCase("true");
-                    livePics.setSelected(livePicsValue);
-
+                if (line.contains("Simple Snap Mode:")) {
+                    simpleSnapMode.setSelected(line.substring(line.indexOf(":") + 1).trim().equalsIgnoreCase("true"));
+                } else if (line.contains("Live Pictures:")) {
+                    livePics.setSelected(line.substring(line.indexOf(":") + 1).trim().equalsIgnoreCase("true"));
                 } else if (line.contains("Convert to Stack:")) {
-                    String value = line.substring(line.indexOf(":") + 1).trim();
-                    boolean convertToStackValue = value.equalsIgnoreCase("true");
-                    convertToStack.setSelected(convertToStackValue);
-
+                    convertToStack.setSelected(line.substring(line.indexOf(":") + 1).trim().equalsIgnoreCase("true"));
                 } else if (line.contains("Stack per Row:")) {
-                    String value = line.substring(line.indexOf(":") + 1).trim();
-                    boolean stackPerRowValue = value.equalsIgnoreCase("true");
-                    stackPerRow.setSelected(stackPerRowValue);
-
+                    stackPerRow.setSelected(line.substring(line.indexOf(":") + 1).trim().equalsIgnoreCase("true"));
                 } else if (line.contains("Processing Mode:")) {
-                    String value = line.substring(line.indexOf(":") + 1).trim();
-                    loadedMode = value;
-
+                    loadedMode = line.substring(line.indexOf(":") + 1).trim();
                 } else if (line.contains("Split Axis:")) {
-                    String value = line.substring(line.indexOf(":") + 1).trim();
-                    loadedSplitAxis = value;
-
+                    loadedSplitAxis = line.substring(line.indexOf(":") + 1).trim();
                 } else if (line.contains("ROI Region:")) {
-                    String value = line.substring(line.indexOf(":") + 1).trim();
-                    loadedROIRegion = value;
-
+                    loadedROIRegion = line.substring(line.indexOf(":") + 1).trim();
                 } else if (line.contains("BG Correction Enabled:")) {
-                    String value = line.substring(line.indexOf(":") + 1).trim();
-                    bgCorrectionCheckbox.setSelected(value.equalsIgnoreCase("true"));
-
+                    bgCorrectionCheckbox.setSelected(line.substring(line.indexOf(":") + 1).trim().equalsIgnoreCase("true"));
                 } else if (line.contains("BT Correction Enabled:")) {
-                    String value = line.substring(line.indexOf(":") + 1).trim();
-                    loadedBtEnabled = value.equalsIgnoreCase("true");
-
+                    loadedBtEnabled = line.substring(line.indexOf(":") + 1).trim().equalsIgnoreCase("true");
                 } else if (line.contains("BT Direction:")) {
                     loadedBtDirection = line.substring(line.indexOf(":") + 1).trim();
-
                 } else if (line.contains("BT Factor:")) {
                     loadedBtFactor = line.substring(line.indexOf(":") + 1).trim().replace(",", ".");
-
                 }
                 continue;
             }
 
-            // Skip empty lines
-            if (line.isEmpty()) {
-                continue;
-            }
+            if (line.isEmpty()) continue;
 
-            // Parse CSV line
             String[] parts = parseCSVLine(line);
-            if (parts.length < 8) {
+            if (parts.length < 8) continue;
 
-                continue;
-            }
+            String channel       = parts[0].equals("none") ? "" : parts[0];
+            String exposure      = parts[1];
+            String interval      = parts[2];
+            String frames        = parts[3];
+            String loopGoto      = parts[4];
+            String loopTimes     = parts[5].equals("always") ? "" : parts[5];
+            String constantIllum = parts[6].equals("none")   ? "" : parts[6];
+            String loopSwitchGoto = parts[7].equals("none")  ? "" : parts[7];
 
-            // Convert display values back to internal format (CSV never has row# column)
-            String channel = parts[0].equals("none") ? "" : parts[0];
-            String exposure = parts[1];
-            String interval = parts[2];
-            String frames = parts[3];
-            String loopGoto = parts[4];
-            String loopTimes = parts[5].equals("always") ? "" : parts[5];
-            String constantIllum = parts[6].equals("none") ? "" : parts[6];
-            String loopSwitchGoto = parts[7].equals("none") ? "" : parts[7];
-
-            // Collect row for two-pass loading (see below)
             parsedSequenceRows.add(new Object[]{
-                channel,
-                exposure,
-                interval,
-                frames,
-                loopGoto,
-                loopTimes,
-                constantIllum,
-                loopSwitchGoto
+                channel, exposure, interval, frames,
+                loopGoto, loopTimes, constantIllum, loopSwitchGoto
             });
         }
-
         reader.close();
 
-        // Pass 1: add all rows so updateLoopGotoDefaults() runs for every row,
-        //         giving each row its sequential default Loop Goto.
         for (int i = 0; i < parsedSequenceRows.size(); i++) {
             tableModel.addRow((Object[]) parsedSequenceRows.get(i));
         }
-        // Pass 2: restore the actual Loop Goto values from the file.
-        //         setValueAt(col=5) marks any non-default value as user-modified,
-        //         so updateLoopGotoDefaults() will never overwrite it again.
         for (int i = 0; i < parsedSequenceRows.size(); i++) {
             String loopGoto = (String) ((Object[]) parsedSequenceRows.get(i))[4];
-            tableModel.setValueAt(loopGoto, i, 5); // col 5 = Loop Goto (display column)
+            tableModel.setValueAt(loopGoto, i, 5);
         }
-
-        // print("Successfully loaded " + tableModel.getRowCount() + " sequence steps");
-        if (vizRowIndex > 0) {
-
-        }
-        JOptionPane.showMessageDialog(frame,
-            "Loaded " + tableModel.getRowCount() + " sequence steps" +
-            (vizRowIndex > 0 ? " and " + vizRowIndex + " graph configurations" : "") +
-            " from:\\n" + csvFile.getName(),
-            "Settings Loaded", JOptionPane.INFORMATION_MESSAGE);
-
     } catch (Exception e) {
-        // print("ERROR: Failed to load settings from CSV: " + e.getMessage());
         e.printStackTrace();
-        JOptionPane.showMessageDialog(frame,
-            "Failed to load settings:\\n" + e.getMessage(),
-            "Load Error", JOptionPane.ERROR_MESSAGE);
     }
+}
+
+// Reload settings from the last experiment folder and re-show the main GUI.
+// Called after every acquisition completes so the user returns to the main menu
+// with the same settings they used — ready for the next run.
+void restartMainGUI(String experimentFolder) {
+    if (experimentFolder != null && !experimentFolder.isEmpty()) {
+        File settingsFile = new File(experimentFolder, "AquisitionSettings.csv");
+        if (settingsFile.exists()) {
+            applySettingsFromFile(settingsFile);
+        }
+    }
+    frame.setVisible(true);
+}
+
+void loadSettingsFromCSV() {
+    JFileChooser fileChooser = new JFileChooser();
+    fileChooser.setDialogTitle("Load Acquisition Settings from CSV");
+    fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+
+    String lastPath = prefs.get("lastSavePath", "");
+    if (!lastPath.isEmpty() && new File(lastPath).exists()) {
+        fileChooser.setCurrentDirectory(new File(lastPath));
+    } else {
+        File dataFolder = new File(new File("").getAbsolutePath(), "Data");
+        if (dataFolder.exists()) fileChooser.setCurrentDirectory(dataFolder);
+    }
+
+    int result = fileChooser.showOpenDialog(frame);
+    if (result != JFileChooser.APPROVE_OPTION) return;
+
+    File csvFile = fileChooser.getSelectedFile();
+    applySettingsFromFile(csvFile);
+
+    JOptionPane.showMessageDialog(frame,
+        "Loaded " + tableModel.getRowCount() + " sequence steps from:\n" + csvFile.getName(),
+        "Settings Loaded", JOptionPane.INFORMATION_MESSAGE);
 }
 
 // Parse a CSV line, handling quoted fields
@@ -3075,6 +3010,7 @@ void writeSettingsToFile(File csvFile) {
 
         // Mode settings
         writer.println("");
+        writer.println("# Simple Snap Mode: " + simpleSnapMode.isSelected());
         writer.println("# Live Pictures: " + livePics.isSelected());
         writer.println("# Convert to Stack: " + convertToStack.isSelected());
         writer.println("# Stack per Row: " + stackPerRow.isSelected());
@@ -5626,6 +5562,12 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
             try { acqFrame.dispose(); } catch (Exception ex2) {}
         }
     }
+
+    // Return to main menu with settings from this experiment auto-reloaded
+    final String cbExpFolder = config.experimentFolder;
+    SwingUtilities.invokeLater(new Runnable() {
+        public void run() { restartMainGUI(cbExpFolder); }
+    });
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
@@ -5968,6 +5910,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
             convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
         }
 
+        // Return to main menu with settings from this experiment auto-reloaded
+        final String snapExpFolder = config.experimentFolder;
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() { restartMainGUI(snapExpFolder); }
+        });
+
         return; // Exit after simple mode completes
     }
 
@@ -6168,6 +6116,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
             ex.printStackTrace();
         }
     }
+
+    // Return to main menu with settings from this experiment auto-reloaded
+    final String advExpFolder = config.experimentFolder;
+    SwingUtilities.invokeLater(new Runnable() {
+        public void run() { restartMainGUI(advExpFolder); }
+    });
 }
 
 // Helper: compute the frame-selection label used in CSV filenames.
