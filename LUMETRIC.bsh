@@ -947,16 +947,17 @@ class LoopSwitchGotoRenderer extends DefaultTableCellRenderer {
 // Table Model for visualization configuration
 class VisualizationTableModel extends DefaultTableModel {
     String currentMode = "Temporal";  // Track current processing mode
-    String[] temporalColumns = {"Graph", "Type", "every", "every 2nd (odd)", "every 2nd (even)", "Custom"};
-    String[] spatialColumns = {"Graph", "Type"};  // Spatial mode: no frame selection columns
+    // Temporal columns: Graph | Type | Numerator (row) | Denominator (row)
+    String[] temporalColumns = {"Graph", "Type", "Numerator", "Denominator"};
+    String[] spatialColumns = {"Graph", "Type"};  // Spatial mode: no extra columns
 
     public VisualizationTableModel() {
         super(new Object[][]{
-            {"1", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"},
-            {"2", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"},
-            {"3", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"},
-            {"4", "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"}
-        }, new String[]{"Graph", "Type", "every", "every 2nd (odd)", "every 2nd (even)", "Custom"});
+            {"1", "none", "Row 1", "1"},
+            {"2", "none", "Row 1", "1"},
+            {"3", "none", "Row 1", "1"},
+            {"4", "none", "Row 1", "1"}
+        }, new String[]{"Graph", "Type", "Numerator", "Denominator"});
     }
 
     void setProcessingMode(String mode) {
@@ -966,11 +967,10 @@ class VisualizationTableModel extends DefaultTableModel {
         } else {
             setColumnIdentifiers(spatialColumns);
         }
-        // Reset all rows
         setRowCount(0);
         for (int i = 1; i <= 4; i++) {
             if (mode.equals("Temporal")) {
-                addRow(new Object[]{String.valueOf(i), "none", Boolean.FALSE, Boolean.FALSE, Boolean.FALSE, "Off"});
+                addRow(new Object[]{String.valueOf(i), "none", "Row 1", "1"});
             } else {
                 addRow(new Object[]{String.valueOf(i), "none"});
             }
@@ -978,32 +978,22 @@ class VisualizationTableModel extends DefaultTableModel {
     }
 
     public Class getColumnClass(int col) {
-        if (currentMode.equals("Temporal") && col >= 2 && col <= 4) {
-            return Boolean.class;
-        }
         return String.class;
     }
 
     public boolean isCellEditable(int row, int col) {
         if (col == 0) return false;
         if (col == 1) return true;
+        if (currentMode.equals("Spatial")) return false;
 
-        // Spatial mode: only Graph and Type columns exist
-        if (currentMode.equals("Spatial")) {
-            return false;  // No other columns to edit
-        }
-
-        // Temporal mode editing logic
+        // Numerator always editable when type != none
         String type = (String) getValueAt(row, 1);
         if (type.equals("none")) return false;
+        if (col == 2) return true; // Numerator
 
-        // Ratio and Split ratio types: checkboxes not editable (auto-managed or not applicable)
-        if (type.startsWith("Ratio ") || type.startsWith("Split ratio")) {
-            return false;
-        }
-
-        if (col == 5) return true; // Custom column always editable when type != none
-        return true;
+        // Denominator locked to "1" for Intensity; editable for Ratio
+        if (col == 3) return type.equals("Ratio");
+        return false;
     }
 
     public void setValueAt(Object value, int row, int col) {
@@ -1011,79 +1001,23 @@ class VisualizationTableModel extends DefaultTableModel {
 
         if (col == 1) {
             String newType = (String) value;
-            String oldType = (String) super.getValueAt(row, col);
             super.setValueAt(newType, row, col);
-
-            // Only handle checkbox columns in Temporal mode
             if (currentMode.equals("Temporal")) {
                 if (newType.equals("none")) {
-                    for (int i = 2; i <= 4; i++) {
-                        super.setValueAt(Boolean.FALSE, row, i);
-                    }
-                    super.setValueAt("Off", row, 5);
-                } else if (newType.startsWith("Ratio ")) {
-                    // N-frame cycle ratio: frame selection is driven by the type string; clear all checkboxes
-                    super.setValueAt(Boolean.FALSE, row, 2); // every
-                    super.setValueAt(Boolean.FALSE, row, 3); // odd
-                    super.setValueAt(Boolean.FALSE, row, 4); // even
-                    super.setValueAt("Off", row, 5);         // custom
-                } else if (newType.startsWith("Split ratio")) {
-                    // Split Ratio: always processes every frame (spatial processing)
-                    super.setValueAt(Boolean.TRUE, row, 2);  // every
-                    super.setValueAt(Boolean.FALSE, row, 3); // odd
-                    super.setValueAt(Boolean.FALSE, row, 4); // even
-                    super.setValueAt("Off", row, 5);         // custom
-                } else if (oldType.equals("none")) {
-                    for (int i = 2; i <= 4; i++) {
-                        super.setValueAt(Boolean.FALSE, row, i);
-                    }
-                    super.setValueAt("Off", row, 5);
+                    super.setValueAt("Row 1", row, 2);
+                    super.setValueAt("1",     row, 3);
+                } else if (newType.equals("Intensity")) {
+                    // Denominator must be constant 1 for plain intensity
+                    super.setValueAt("1", row, 3);
                 }
+                // For "Ratio": leave existing numerator/denominator as-is
             }
-            // Spatial mode: no extra columns to set
-
             fireTableRowsUpdated(row, row);
             return;
         }
 
-        if (col >= 2 && col <= 4) {
-            String type = (String) super.getValueAt(row, 1);
-            if (type.equals("none")) return;
-
-            boolean newValue = ((Boolean) value).booleanValue();
-            int checkedCount = 0;
-            for (int i = 2; i <= 4; i++) {
-                if (((Boolean) super.getValueAt(row, i)).booleanValue()) {
-                    checkedCount++;
-                }
-            }
-
-            // Check if custom is active
-            String customValue = (String) super.getValueAt(row, 5);
-            boolean customActive = !customValue.equals("Off");
-
-            if (newValue && (checkedCount >= 1 || customActive)) {
-                return;
-            }
-
-            super.setValueAt(value, row, col);
-        }
-
-        if (col == 5) {
-            String type = (String) super.getValueAt(row, 1);
-            if (type.equals("none")) return;
-
-            String newValue = (String) value;
-
-            // If setting custom to something other than "Off", uncheck all checkboxes
-            if (!newValue.equals("Off")) {
-                for (int i = 2; i <= 4; i++) {
-                    super.setValueAt(Boolean.FALSE, row, i);
-                }
-            }
-
-            super.setValueAt(value, row, col);
-        }
+        // Cols 2 (Numerator) and 3 (Denominator): accept any string value
+        super.setValueAt(value, row, col);
     }
 }
 
@@ -1111,14 +1045,7 @@ class VisualizationTypeEditor extends DefaultCellEditor {
 
         if (currentMode.equals("Temporal")) {
             combo.addItem("Intensity");
-            combo.addItem("Ratio 1/2 (2 frames)");
-            combo.addItem("Ratio 2/1 (2 frames)");
-            combo.addItem("Ratio 1/2 (3 frames)");
-            combo.addItem("Ratio 2/1 (3 frames)");
-            combo.addItem("Ratio 1/2 (4 frames)");
-            combo.addItem("Ratio 2/1 (4 frames)");
-            combo.addItem("Ratio 3/4 (4 frames)");
-            combo.addItem("Ratio 4/3 (4 frames)");
+            combo.addItem("Ratio");
         } else if (currentMode.equals("Spatial")) {
             // Add split ratio options based on spatial config
             String dir1 = spatialConfig.getRatioDirection1();
@@ -1138,57 +1065,37 @@ class VisualizationTypeEditor extends DefaultCellEditor {
     }
 }
 
-// Custom cell editor for Custom column (dropdown with interval/offset options)
-class VisualizationCustomEditor extends DefaultCellEditor {
-    public VisualizationCustomEditor() {
-        super(new JComboBox(new String[]{
-            "Off",
-            "every 3rd",
-            "every 3rd (offset 1)",
-            "every 3rd (offset 2)",
-            "every 4th",
-            "every 4th (offset 1)",
-            "every 4th (offset 2)",
-            "every 4th (offset 3)",
-            "every 5th",
-            "every 10th"
-        }));
-    }
-}
+// Cell editor for Numerator / Denominator row dropdowns.
+// Options are rebuilt dynamically when the editor is invoked so they always
+// reflect the current number of sequence rows.
+// Options: "1" (constant) followed by "Row 1", "Row 2", ..., "Row N".
+class VisualizationRowEditor extends DefaultCellEditor {
+    JComboBox rowCombo;
 
-// Custom cell renderer for checkboxes that disables when type is "none"
-class VisualizationCheckBoxRenderer extends JCheckBox implements javax.swing.table.TableCellRenderer {
-    public VisualizationCheckBoxRenderer() {
-        setHorizontalAlignment(SwingConstants.CENTER);
+    public VisualizationRowEditor() {
+        super(new JComboBox());
+        rowCombo = (JComboBox) getComponent();
+        rowCombo.addItem("1");
+        rowCombo.addItem("Row 1");
     }
 
-    public Component getTableCellRendererComponent(JTable table, Object value,
-                                                   boolean isSelected, boolean hasFocus,
-                                                   int row, int column) {
-        String type = (String) table.getValueAt(row, 1);
-        boolean enabled = !type.equals("none");
-
-        setEnabled(enabled);
-        setSelected(value != null && ((Boolean) value).booleanValue());
-
-        if (isSelected) {
-            setBackground(table.getSelectionBackground());
-            setForeground(table.getSelectionForeground());
-        } else {
-            setBackground(table.getBackground());
-            setForeground(table.getForeground());
+    public Component getTableCellEditorComponent(JTable table, Object value,
+                                                  boolean isSelected, int row, int column) {
+        // Rebuild options from current sequence table row count
+        rowCombo.removeAllItems();
+        rowCombo.addItem("1");
+        int seqRowCount = tableModel.getRowCount();
+        if (seqRowCount == 0) seqRowCount = 1; // fallback
+        for (int i = 1; i <= seqRowCount; i++) {
+            rowCombo.addItem("Row " + i);
         }
-
-        return this;
+        if (value != null) rowCombo.setSelectedItem(value.toString());
+        return rowCombo;
     }
-}
 
-// Custom cell editor for checkboxes
-class VisualizationCheckBoxEditor extends DefaultCellEditor {
-    public VisualizationCheckBoxEditor() {
-        super(new JCheckBox());
-        JCheckBox checkBox = (JCheckBox) getComponent();
-        checkBox.setHorizontalAlignment(SwingConstants.CENTER);
+    public Object getCellEditorValue() {
+        Object sel = rowCombo.getSelectedItem();
+        return sel != null ? sel.toString() : "1";
     }
 }
 
@@ -1212,8 +1119,7 @@ convertToStack = new JCheckBox("Convert to Stack", true);
 convertToStack.setToolTipText("After acquisition, convert individual TIFFs to a single stack and delete originals");
 
 stackPerRow = new JCheckBox("Stack per Row");
-stackPerRow.setToolTipText("Create one stack for each row in the acquisition settings (not yet implemented)");
-stackPerRow.setEnabled(false); // Disabled for now
+stackPerRow.setToolTipText("After acquisition, create one TIFF stack per sequence row (mutually exclusive with Convert to Stack)");
 
 // Processing mode combo boxes (declared at script scope for save/load access)
 processingModeCombo = null;
@@ -1680,14 +1586,11 @@ processingModeCombo.addActionListener(new ActionListener() {
 
         // Reconfigure table columns for mode
         if (mode.equals("Temporal")) {
-            // Re-add checkbox columns
-            for (int i = 2; i < 5; i++) {
-                vizTable.getColumnModel().getColumn(i).setCellRenderer(new VisualizationCheckBoxRenderer());
-                vizTable.getColumnModel().getColumn(i).setCellEditor(new VisualizationCheckBoxEditor());
-                vizTable.getColumnModel().getColumn(i).setPreferredWidth(100);
-            }
-            vizTable.getColumnModel().getColumn(5).setCellEditor(new VisualizationCustomEditor());
-            vizTable.getColumnModel().getColumn(5).setPreferredWidth(150);
+            // Install row-selector dropdowns for Numerator and Denominator
+            vizTable.getColumnModel().getColumn(2).setCellEditor(new VisualizationRowEditor());
+            vizTable.getColumnModel().getColumn(2).setPreferredWidth(120);
+            vizTable.getColumnModel().getColumn(3).setCellEditor(new VisualizationRowEditor());
+            vizTable.getColumnModel().getColumn(3).setPreferredWidth(120);
         }
         // Spatial mode: only 2 columns, no special renderers needed
 
@@ -1816,16 +1719,11 @@ vizTable.getColumnModel().getColumn(0).setPreferredWidth(80);
 vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
 vizTable.getColumnModel().getColumn(1).setPreferredWidth(180);
 
-// Columns 2-4: Frame checkboxes
-for (int i = 2; i < 5; i++) {
-    vizTable.getColumnModel().getColumn(i).setCellRenderer(new VisualizationCheckBoxRenderer());
-    vizTable.getColumnModel().getColumn(i).setCellEditor(new VisualizationCheckBoxEditor());
-    vizTable.getColumnModel().getColumn(i).setPreferredWidth(100);
+// Columns 2–3: Numerator and Denominator row dropdowns
+for (int i = 2; i < 4; i++) {
+    vizTable.getColumnModel().getColumn(i).setCellEditor(new VisualizationRowEditor());
+    vizTable.getColumnModel().getColumn(i).setPreferredWidth(120);
 }
-
-// Column 5: Custom (dropdown with interval/offset options)
-vizTable.getColumnModel().getColumn(5).setCellEditor(new VisualizationCustomEditor());
-vizTable.getColumnModel().getColumn(5).setPreferredWidth(150);
 
 vizScrollPane = new JScrollPane(vizTable);
 
@@ -2789,76 +2687,8 @@ boolean exportTableToCSV() {
     ArrayList tableData = config.acqSettings.sequenceRows;
 
     try {
-        // ===== HUMAN-READABLE VERSION =====
-        PrintWriter writerReadable = new PrintWriter(new FileWriter(csvFileReadable));
-        writerReadable.println("Channel,Exposure [ms],Frame Interval [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
-        for (int i = 0; i < tableData.size(); i++) {
-            StringBuilder row = new StringBuilder();
-            ArrayList rowData = (ArrayList) tableData.get(i);
-            for (int j = 1; j < rowData.size(); j++) { // Skip column 0 (Row number)
-                String value = rowData.get(j).toString();
-
-                // Format display values
-                if (j == 1 && value.isEmpty()) { // Channel
-                    value = "none";
-                } else if (j == 6 && value.isEmpty()) { // Loop Times
-                    value = "always";
-                } else if (j == 7 && value.isEmpty()) { // Constant Illum
-                    value = "none";
-                } else if (j == 8 && value.isEmpty()) { // Loop Switch Goto
-                    value = "none";
-                }
-
-                row.append(escapeCSV(value));
-                if (j < rowData.size() - 1) {
-                    row.append(",");
-                }
-            }
-            writerReadable.println(row.toString());
-        }
-
-        // Write mode settings as comments
-        writerReadable.println("");
-        writerReadable.println("# Live Pictures: " + config.acqSettings.livePics);
-
-        // Write visualization settings
-        writerReadable.println("");
-        writerReadable.println("# Visualization Settings");
-
-        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
-
-        if (isTemporal) {
-            writerReadable.println("Graph,Type,Every Frame,Every Odd,Every Even,Custom");
-            for (int i = 0; i < config.acqSettings.visualizationRows.size(); i++) {
-                ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
-                StringBuilder vizRowStr = new StringBuilder();
-                vizRowStr.append(escapeCSV(vizRow.get(0).toString())); // Graph name
-                vizRowStr.append(",");
-                vizRowStr.append(escapeCSV(vizRow.get(1).toString())); // Type
-                vizRowStr.append(",");
-                vizRowStr.append(vizRow.get(2) != null && ((Boolean)vizRow.get(2)).booleanValue() ? "true" : "false"); // Every frame
-                vizRowStr.append(",");
-                vizRowStr.append(vizRow.get(3) != null && ((Boolean)vizRow.get(3)).booleanValue() ? "true" : "false"); // Every odd
-                vizRowStr.append(",");
-                vizRowStr.append(vizRow.get(4) != null && ((Boolean)vizRow.get(4)).booleanValue() ? "true" : "false"); // Every even
-                vizRowStr.append(",");
-                vizRowStr.append(escapeCSV(vizRow.get(5).toString())); // Custom
-                writerReadable.println(vizRowStr.toString());
-            }
-        } else {
-            // Spatial mode: only 2 columns
-            writerReadable.println("Graph,Type");
-            for (int i = 0; i < config.acqSettings.visualizationRows.size(); i++) {
-                ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
-                StringBuilder vizRowStr = new StringBuilder();
-                vizRowStr.append(escapeCSV(vizRow.get(0).toString())); // Graph name
-                vizRowStr.append(",");
-                vizRowStr.append(escapeCSV(vizRow.get(1).toString())); // Type
-                writerReadable.println(vizRowStr.toString());
-            }
-        }
-
-        writerReadable.close();
+        // ===== FULL SETTINGS VERSION (loadable via "Load Settings") =====
+        writeSettingsToFile(csvFileReadable);
 
         // ===== ARDUINO VERSION =====
         PrintWriter writerArduino = new PrintWriter(new FileWriter(csvFileArduino));
@@ -3042,12 +2872,17 @@ void loadSettingsFromCSV() {
 
                 // Mode-aware parsing
                 if (loadedMode.equals("Temporal")) {
-                    if (vizParts.length >= 6 && vizRowIndex < vizTableModel.getRowCount()) {
+                    if (vizParts.length >= 4 && vizRowIndex < vizTableModel.getRowCount()) {
+                        // New 4-column format: Graph,Type,Numerator,Denominator
                         vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type
-                        vizTableModel.setValueAt(Boolean.valueOf(vizParts[2]), vizRowIndex, 2); // Every frame
-                        vizTableModel.setValueAt(Boolean.valueOf(vizParts[3]), vizRowIndex, 3); // Every odd
-                        vizTableModel.setValueAt(Boolean.valueOf(vizParts[4]), vizRowIndex, 4); // Every even
-                        vizTableModel.setValueAt(vizParts[5], vizRowIndex, 5); // Custom
+                        vizTableModel.setValueAt(vizParts[2], vizRowIndex, 2); // Numerator
+                        vizTableModel.setValueAt(vizParts[3], vizRowIndex, 3); // Denominator
+                        vizRowIndex++;
+                    } else if (vizParts.length >= 6 && vizRowIndex < vizTableModel.getRowCount()) {
+                        // Old 6-column format (backwards compat): Graph,Type,EveryFrame,Odd,Even,Custom
+                        // Migrate to new format: type set, numerator/denominator default to "Row 1"/"1"
+                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1); // Type (keep)
+                        // Leave numerator/denominator at defaults ("Row 1" / "1")
                         vizRowIndex++;
                     }
                 } else {
@@ -3098,12 +2933,6 @@ void loadSettingsFromCSV() {
                 } else if (line.contains("BG Correction Enabled:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
                     bgCorrectionCheckbox.setSelected(value.equalsIgnoreCase("true"));
-
-                } else if (line.contains("BG ROI Index:")) {
-                    try {
-                        int idx = Integer.parseInt(line.substring(line.indexOf(":") + 1).trim());
-                        config.acqSettings.bgROIIndex = idx;
-                    } catch (Exception ex) {}
 
                 } else if (line.contains("BT Correction Enabled:")) {
                     String value = line.substring(line.indexOf(":") + 1).trim();
@@ -3217,51 +3046,9 @@ String[] parseCSVLine(String line) {
 }
 
 // Save current settings to CSV file
-void saveSettingsToCSV() {
-    // Commit any active cell edit before reading from the model
-    if (table.isEditing()) {
-        javax.swing.table.TableCellEditor editor = table.getCellEditor();
-        if (editor != null) {
-            editor.stopCellEditing();
-        }
-    }
-    if (vizTable.isEditing()) {
-        javax.swing.table.TableCellEditor editor = vizTable.getCellEditor();
-        if (editor != null) {
-            editor.stopCellEditing();
-        }
-    }
-
-    JFileChooser fileChooser = new JFileChooser();
-    fileChooser.setDialogTitle("Save Acquisition Settings to CSV");
-    fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
-
-    // Set initial directory to last save path or Data folder
-    String lastPath = prefs.get("lastSavePath", "");
-    if (!lastPath.isEmpty() && new File(lastPath).exists()) {
-        fileChooser.setCurrentDirectory(new File(lastPath));
-    } else {
-        File dataFolder = new File(new File("").getAbsolutePath(), "Data");
-        if (dataFolder.exists()) {
-            fileChooser.setCurrentDirectory(dataFolder);
-        }
-    }
-
-    // Set default filename
-    fileChooser.setSelectedFile(new File("Settings.csv"));
-
-    int result = fileChooser.showSaveDialog(frame);
-    if (result != JFileChooser.APPROVE_OPTION) {
-        return;
-    }
-
-    File csvFile = fileChooser.getSelectedFile();
-
-    // Ensure .csv extension
-    if (!csvFile.getName().toLowerCase().endsWith(".csv")) {
-        csvFile = new File(csvFile.getAbsolutePath() + ".csv");
-    }
-
+// Write the full settings file (sequence rows + all GUI state) to the given file.
+// Called both from the Save Settings button and automatically at acquisition start.
+void writeSettingsToFile(File csvFile) {
     try {
         PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
 
@@ -3275,32 +3062,23 @@ void saveSettingsToCSV() {
                 Object value = tableModel.getValueAt(i, j);
                 String valueStr = value != null ? value.toString() : "";
 
-                // Format display values
-                if (j == 1 && valueStr.isEmpty()) { // Channel
-                    valueStr = "none";
-                } else if (j == 6 && valueStr.isEmpty()) { // Loop Times
-                    valueStr = "always";
-                } else if (j == 7 && valueStr.isEmpty()) { // Constant Illum
-                    valueStr = "none";
-                } else if (j == 8 && valueStr.isEmpty()) { // Loop Switch Goto
-                    valueStr = "none";
-                }
+                if (j == 1 && valueStr.isEmpty()) { valueStr = "none"; }
+                else if (j == 6 && valueStr.isEmpty()) { valueStr = "always"; }
+                else if (j == 7 && valueStr.isEmpty()) { valueStr = "none"; }
+                else if (j == 8 && valueStr.isEmpty()) { valueStr = "none"; }
 
                 row.append(escapeCSV(valueStr));
-                if (j < tableModel.getColumnCount() - 1) {
-                    row.append(",");
-                }
+                if (j < tableModel.getColumnCount() - 1) row.append(",");
             }
             writer.println(row.toString());
         }
 
-        // Write mode settings
+        // Mode settings
         writer.println("");
         writer.println("# Live Pictures: " + livePics.isSelected());
         writer.println("# Convert to Stack: " + convertToStack.isSelected());
         writer.println("# Stack per Row: " + stackPerRow.isSelected());
 
-        // Write processing mode settings
         String currentMode = (String) processingModeCombo.getSelectedItem();
         writer.println("# Processing Mode: " + currentMode);
         if (currentMode.equals("Spatial")) {
@@ -3308,69 +3086,84 @@ void saveSettingsToCSV() {
             writer.println("# ROI Region: " + roiSourceCombo.getSelectedItem());
         }
 
-        // Write visualization settings
+        // Visualization settings
         writer.println("");
         writer.println("# Visualization Settings");
-
-        // Mode-aware column headers and data
         if (currentMode.equals("Temporal")) {
-            writer.println("Graph,Type,Every Frame,Every Odd,Every Even,Custom");
+            writer.println("Graph,Type,Numerator,Denominator");
             for (int i = 0; i < vizTableModel.getRowCount(); i++) {
                 StringBuilder vizRow = new StringBuilder();
-                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString())); // Graph name
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString()));
                 vizRow.append(",");
-                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString())); // Type
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString()));
                 vizRow.append(",");
-
-                Object everyFrame = vizTableModel.getValueAt(i, 2);
-                vizRow.append(everyFrame != null && ((Boolean)everyFrame).booleanValue() ? "true" : "false");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 2).toString()));
                 vizRow.append(",");
-
-                Object everyOdd = vizTableModel.getValueAt(i, 3);
-                vizRow.append(everyOdd != null && ((Boolean)everyOdd).booleanValue() ? "true" : "false");
-                vizRow.append(",");
-
-                Object everyEven = vizTableModel.getValueAt(i, 4);
-                vizRow.append(everyEven != null && ((Boolean)everyEven).booleanValue() ? "true" : "false");
-                vizRow.append(",");
-
-                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 5).toString())); // Custom
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 3).toString()));
                 writer.println(vizRow.toString());
             }
         } else {
-            // Spatial mode: only 2 columns
             writer.println("Graph,Type");
             for (int i = 0; i < vizTableModel.getRowCount(); i++) {
                 StringBuilder vizRow = new StringBuilder();
-                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString())); // Graph name
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString()));
                 vizRow.append(",");
-                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString())); // Type
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString()));
                 writer.println(vizRow.toString());
             }
         }
 
-        // Write background and bleedthrough correction settings
+        // BG / BT correction settings
         writer.println("");
         writer.println("# BG Correction Enabled: " + bgCorrectionCheckbox.isSelected());
-        writer.println("# BG ROI Index: " + config.acqSettings.bgROIIndex);
         writer.println("# BT Correction Enabled: " + btCorrectionCheckbox.isSelected());
         writer.println("# BT Direction: " + btDirectionCombo.getSelectedItem());
         writer.println("# BT Factor: " + btFactorField.getText().trim().replace(",", "."));
 
         writer.close();
-
-        // print("Settings saved to: " + csvFile.getAbsolutePath());
-        JOptionPane.showMessageDialog(frame,
-            "Settings saved successfully to:\\n" + csvFile.getName(),
-            "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
-
     } catch (Exception e) {
-        // print("ERROR: Failed to save settings to CSV: " + e.getMessage());
         e.printStackTrace();
-        JOptionPane.showMessageDialog(frame,
-            "Failed to save settings:\\n" + e.getMessage(),
-            "Save Error", JOptionPane.ERROR_MESSAGE);
     }
+}
+
+void saveSettingsToCSV() {
+    // Commit any active cell edit before reading from the model
+    if (table.isEditing()) {
+        javax.swing.table.TableCellEditor editor = table.getCellEditor();
+        if (editor != null) editor.stopCellEditing();
+    }
+    if (vizTable.isEditing()) {
+        javax.swing.table.TableCellEditor editor = vizTable.getCellEditor();
+        if (editor != null) editor.stopCellEditing();
+    }
+
+    JFileChooser fileChooser = new JFileChooser();
+    fileChooser.setDialogTitle("Save Acquisition Settings to CSV");
+    fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+
+    String lastPath = prefs.get("lastSavePath", "");
+    if (!lastPath.isEmpty() && new File(lastPath).exists()) {
+        fileChooser.setCurrentDirectory(new File(lastPath));
+    } else {
+        File dataFolder = new File(new File("").getAbsolutePath(), "Data");
+        if (dataFolder.exists()) fileChooser.setCurrentDirectory(dataFolder);
+    }
+
+    fileChooser.setSelectedFile(new File("Settings.csv"));
+
+    int result = fileChooser.showSaveDialog(frame);
+    if (result != JFileChooser.APPROVE_OPTION) return;
+
+    File csvFile = fileChooser.getSelectedFile();
+    if (!csvFile.getName().toLowerCase().endsWith(".csv")) {
+        csvFile = new File(csvFile.getAbsolutePath() + ".csv");
+    }
+
+    writeSettingsToFile(csvFile);
+
+    JOptionPane.showMessageDialog(frame,
+        "Settings saved successfully to:\n" + csvFile.getName(),
+        "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
 }
 
 // ==================== Acquisition Control Window ====================
@@ -3538,30 +3331,8 @@ void createInlineAcquisitionWindow() {
             continue;
         }
 
-        // Build frame logic string
-        String frameLogic = "";
-        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
-
-        if (isTemporal) {
-            // Temporal mode: read frame selection columns
-            Boolean everyFrame = (Boolean) vizRow.get(2);
-            Boolean everyOdd = (Boolean) vizRow.get(3);
-            Boolean everyEven = (Boolean) vizRow.get(4);
-            String custom = (String) vizRow.get(5);
-
-            if (everyFrame != null && everyFrame.booleanValue()) {
-                frameLogic = "every";
-            } else if (everyOdd != null && everyOdd.booleanValue()) {
-                frameLogic = "odd";
-            } else if (everyEven != null && everyEven.booleanValue()) {
-                frameLogic = "even";
-            } else if (custom != null && !custom.equals("Off")) {
-                frameLogic = custom;
-            }
-        } else {
-            // Spatial mode: always process every frame
-            frameLogic = "every";
-        }
+        // Build frame logic string for chart title
+        String frameLogic = computeFrameLogicLabel(vizRow, config.acqSettings.processingMode.equals("Temporal"));
 
         // Create dataset with multiple series (one per ROI)
         XYSeriesCollection dataset = new XYSeriesCollection();
@@ -4201,83 +3972,43 @@ void createInlineAcquisitionWindow() {
 }
 
 // ==================== Frame Filtering Logic ====================
-boolean shouldProcessFrame(int frameNumber, ArrayList vizRow) {
-    // Spatial mode: always process every frame
-    if (config.acqSettings.processingMode.equals("Spatial")) {
-        return true;
+// Parse a row-selector string from the visualization table.
+// "1"      → 0  (constant denominator — never matches a seqRow)
+// "Row N"  → N  (1-based sequence row number)
+int parseRowNumber(String s) {
+    if (s == null || s.trim().equals("1")) return 0;
+    String trimmed = s.trim();
+    if (trimmed.startsWith("Row ")) {
+        try { return Integer.parseInt(trimmed.substring(4).trim()); }
+        catch (Exception e) {}
     }
+    return 0;
+}
 
-    // N-frame cycle ratio types (e.g. "Ratio 1/2 (3 frames)"): accept only the two relevant positions
+// Returns true when a frame with the given seqRow should be processed for this vizRow.
+// seqRow is the 1-based sequence row number stored in dataRows[i][2].
+// For Intensity: accept only frames whose seqRow matches the Numerator row.
+// For Ratio:     accept frames matching either Numerator or Denominator (both needed for caching).
+// Spatial mode:  always true (unchanged).
+boolean shouldProcessFrame(int seqRow, ArrayList vizRow) {
+    if (config.acqSettings.processingMode.equals("Spatial")) return true;
+
     String graphType = (String) vizRow.get(1);
-    if (graphType != null && graphType.startsWith("Ratio ") && graphType.contains("frames)")) {
-        try {
-            int parenIdx = graphType.indexOf("(");
-            int spaceIdx = graphType.indexOf(" ", parenIdx + 1);
-            int cycleLen = Integer.parseInt(graphType.substring(parenIdx + 1, spaceIdx));
-            String[] parts = graphType.split(" ");
-            String[] positions = parts[1].split("/");
-            int posA = Integer.parseInt(positions[0]);
-            int posB = Integer.parseInt(positions[1]);
-            int framePos = ((frameNumber - 1) % cycleLen) + 1; // 1-based position in cycle
-            return (framePos == posA || framePos == posB);
-        } catch (Exception e) {
-            return false;
-        }
+    if (graphType == null || graphType.equals("none")) return false;
+
+    int numerRow = parseRowNumber((String) vizRow.get(2));
+    int denomRow = parseRowNumber((String) vizRow.get(3));
+
+    if (graphType.equals("Intensity")) {
+        return (numerRow > 0 && seqRow == numerRow);
     }
-
-    // Temporal mode: check frame selection columns
-    Boolean everyFrame = (Boolean) vizRow.get(2);
-    if (everyFrame != null && everyFrame.booleanValue()) {
-        return true;
+    if (graphType.equals("Ratio")) {
+        boolean matchNumer = (numerRow > 0 && seqRow == numerRow);
+        boolean matchDenom = (denomRow > 0 && seqRow == denomRow); // "1" → denomRow==0, never matches
+        return matchNumer || matchDenom;
     }
-
-    Boolean everyOdd = (Boolean) vizRow.get(3);
-    Boolean everyEven = (Boolean) vizRow.get(4);
-
-    // Special case: if BOTH odd and even are checked (Frame Ratio graphs), accept all frames
-    boolean oddChecked = (everyOdd != null && everyOdd.booleanValue());
-    boolean evenChecked = (everyEven != null && everyEven.booleanValue());
-
-    if (oddChecked && evenChecked) {
-        return true; // Accept both odd and even frames for Frame Ratio
-    }
-
-    // Normal case: check individually
-    if (oddChecked) {
-        return (frameNumber % 2 == 1);
-    }
-
-    if (evenChecked) {
-        return (frameNumber % 2 == 0);
-    }
-
-    String custom = (String) vizRow.get(5);
-    if (custom != null && !custom.equals("Off")) {
-        // Parse custom patterns like "every 3rd", "every 4th (offset 1)", etc.
-        if (custom.startsWith("every ")) {
-            String[] parts = custom.split(" ");
-            if (parts.length >= 2) {
-                String numStr = parts[1].replace("rd", "").replace("th", "").replace("nd", "").replace("st", "");
-                try {
-                    int interval = Integer.parseInt(numStr);
-                    int offset = 0;
-
-                    // Check for offset
-                    if (custom.contains("offset")) {
-                        String offsetStr = custom.substring(custom.indexOf("offset") + 7).trim();
-                        offsetStr = offsetStr.replace(")", "").trim();
-                        offset = Integer.parseInt(offsetStr);
-                    }
-
-                    return ((frameNumber - 1) % interval == offset);
-                } catch (NumberFormatException e) {
-
-                }
-            }
-        }
-    }
-
-    return false;
+    // Spatial types (Split ratio, Intensity Upper/Lower/Left/Right): always accept
+    return true;
 }
 
 // ==================== COMMON ACQUISITION HELPER FUNCTIONS ====================
@@ -4632,7 +4363,7 @@ void processFrameData(ImageProcessor ip, int frameNumber, long currentTime, int 
 
     // Update graphs (throttled by caller)
     if (shouldUpdateGui) {
-        updateGraphs(datasets, frameNumber, currentTime, valuesForGraphs, chartPanels, chartsList);
+        updateGraphs(datasets, frameNumber, currentTime, valuesForGraphs, chartPanels, chartsList, seqRow);
     }
 }
 
@@ -4667,9 +4398,10 @@ ArrayList buildDataRow(int frameNumber, long timestamp, int seqRow, ArrayList ro
 }
 
 // Update all graphs with new data
-void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues, ArrayList chartPanels, ArrayList charts) {
+// seqRow: 1-based sequence-row index of the incoming frame (from RowTracker via processFrameData)
+void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayList roiValues, ArrayList chartPanels, ArrayList charts, int seqRow) {
     if (frameNumber <= 3) {
-        // print("DEBUG updateGraphs: frame=" + frameNumber + ", time=" + currentTime + ", roiValues.size=" + roiValues.size());
+        // print("DEBUG updateGraphs: frame=" + frameNumber + ", seqRow=" + seqRow + ", time=" + currentTime + ", roiValues.size=" + roiValues.size());
     }
 
     for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
@@ -4677,66 +4409,33 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
         String graphType = (String) vizRow.get(1);
 
         if (graphType.equals("none") || datasets.get(graphIdx) == null) {
-            if (frameNumber <= 3) {
-                // print("  Graph " + (graphIdx + 1) + ": skipped (none or null dataset)");
-            }
             continue;
         }
 
-        if (!shouldProcessFrame(frameNumber, vizRow)) {
-            if (frameNumber <= 3) {
-                // print("  Graph " + (graphIdx + 1) + ": filtered out by shouldProcessFrame");
-            }
+        // Use seqRow-aware gate
+        if (!shouldProcessFrame(seqRow, vizRow)) {
             continue;
         }
 
-        if (frameNumber <= 3) {
-            // print("  Graph " + (graphIdx + 1) + " (" + graphType + "): processing...");
-        }
-
-        // Handle Intensity graphs
+        // ── Intensity ──────────────────────────────────────────────────────────
         if (graphType.equals("Intensity") || graphType.startsWith("Intensity ")) {
-            if (frameNumber <= 3) {
+            int numerRow = parseRowNumber((String) vizRow.get(2));
 
-
-                // print("    chartPanels=" + (chartPanels != null ? "not null" : "NULL"));
-                // print("    charts=" + (charts != null ? "not null" : "NULL"));
-                // print("    datasets=" + (datasets != null ? "not null" : "NULL"));
+            // Temporal Intensity: gate on Numerator row
+            if (config.acqSettings.processingMode.equals("Temporal")) {
+                if (numerRow == 0 || seqRow != numerRow) continue;
             }
 
-            final int gIdx = graphIdx;
-            final long time = currentTime;
-            final ArrayList chartPanelsCopy = chartPanels;
-            final ArrayList chartsCopy = charts;
-
-            if (frameNumber <= 3) {
-
-            }
-
-            // Determine how many series to update based on mode
-            int numSeriesToUpdate = 0;  // Initialize
+            int numSeriesToUpdate = 0;
             ArrayList valuesToPlot = new ArrayList();
 
-            if (frameNumber <= 3) {
-
-            }
-
             boolean isSpatialMode = config.acqSettings.processingMode.equals("Spatial");
-            if (frameNumber <= 3) {
-                // print("    isSpatialMode=" + isSpatialMode + ", roiValues.size=" + roiValues.size());
-            }
-
             if (isSpatialMode) {
-                // Spatial mode: plot either source ROIs (first half) or mirrored ROIs (second half)
-                // depending on whether the graph type matches the source region or the mirrored region
                 numSeriesToUpdate = roiValues.size() / 2;
-                if (frameNumber <= 3) {
-
-                }
                 int roiOffset = 0;
                 if (graphType.startsWith("Intensity ")) {
-                    String graphRegion = graphType.substring("Intensity ".length()); // "Upper", "Lower", "Left", "Right"
-                    String srcRegion = config.acqSettings.spatialConfig.roiSourceRegion; // "Upper", "Lower", "Left", "Right"
+                    String graphRegion = graphType.substring("Intensity ".length());
+                    String srcRegion = config.acqSettings.spatialConfig.roiSourceRegion;
                     boolean matchesSource = srcRegion.equals(graphRegion);
                     roiOffset = matchesSource ? 0 : numSeriesToUpdate;
                 }
@@ -4744,137 +4443,30 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                     valuesToPlot.add(roiValues.get(roiOffset + i));
                 }
             } else {
-                // Temporal mode: plot all ROIs
                 numSeriesToUpdate = roiValues.size();
-                if (frameNumber <= 3) {
-
-                }
                 valuesToPlot.addAll(roiValues);
             }
 
-            final int numSeriesToUpdateFinal = numSeriesToUpdate;
-            final ArrayList valuesToPlotFinal = valuesToPlot;
-
-            if (frameNumber <= 3) {
-                // print("    Intensity: numSeriesToUpdate=" + numSeriesToUpdateFinal + ", valuesToPlot.size=" + valuesToPlotFinal.size());
-            }
-
-            SwingUtilities.invokeLater(new Runnable() {
-                public void run() {
-                    try {
-                        if (frameNumber <= 3) {
-
-                        }
-                        XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                        if (frameNumber <= 3) {
-                            // print("    Dataset has " + dataset.getSeriesCount() + " series");
-                        }
-                        for (int roiIdx = 0; roiIdx < numSeriesToUpdateFinal; roiIdx++) {
-                            XYSeries series = dataset.getSeries(roiIdx);
-                            double value = ((Double) valuesToPlotFinal.get(roiIdx)).doubleValue();
-                            series.add(time / 1000.0, value, true);  // Notify on each add
-                            if (frameNumber <= 3 && roiIdx == 0) {
-                                // print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
-                                // print("      Series now has " + series.getItemCount() + " points");
-                            }
-                        }
-                        if (frameNumber <= 3) {
-
-                        }
-                        if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
-                            ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
-                            JFreeChart chart = cp.getChart();
-
-                            // Verify chart's dataset
-                            if (frameNumber <= 3) {
-                                XYPlot plot = (XYPlot) chart.getPlot();
-                                XYSeriesCollection ds = (XYSeriesCollection) plot.getDataset();
-                                // print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
-                            }
-
-                            // Force complete chart refresh
-                            chart.fireChartChanged();
-
-                            // Force complete panel refresh (WITHOUT resetting zoom)
-                            // cp.restoreAutoBounds(); // REMOVED - this resets user zoom
-                            cp.invalidate();
-                            cp.validate();
-                            cp.repaint();
-                            if (frameNumber <= 3) {
-
-                            }
-                        } else if (frameNumber <= 3) {
-                            // print("      WARNING: ChartPanel is null for Intensity graph " + (gIdx + 1));
-                        }
-                    } catch (Exception e) {
-                        // print("ERROR updating Intensity graph " + (gIdx + 1) + ": " + e.getClass().getName() + ": " + e.getMessage());
-                        e.printStackTrace();
-                    }
-                }
-            });
-        }
-        // Handle N-frame cycle ratio graphs (e.g. "Ratio 1/2 (2 frames)")
-        else if (graphType.startsWith("Ratio ") && graphType.contains("frames)")) {
-            int cycleLen = 2;
-            int posNum = 1, posDen = 2;
-            try {
-                int parenIdx = graphType.indexOf("(");
-                int spaceIdx = graphType.indexOf(" ", parenIdx + 1);
-                cycleLen = Integer.parseInt(graphType.substring(parenIdx + 1, spaceIdx));
-                String[] parts = graphType.split(" ");
-                String[] positions = parts[1].split("/");
-                posNum = Integer.parseInt(positions[0]);
-                posDen = Integer.parseInt(positions[1]);
-            } catch (Exception e) {
-                continue;
-            }
-
-            // Cache this frame at its cycle position
-            int framePos = ((frameNumber - 1) % cycleLen) + 1;
-            cacheFrameDataAtPosition(graphIdx, "p" + framePos, frameNumber, currentTime, roiValues);
-
-            // Retrieve numerator and denominator slots
-            if (!frameCache.containsKey(graphIdx)) continue;
-            Map graphCache = (Map) frameCache.get(graphIdx);
-            ArrayList frameNumer = (ArrayList) graphCache.get("p" + posNum);
-            ArrayList frameDenom = (ArrayList) graphCache.get("p" + posDen);
-            if (frameNumer == null || frameDenom == null) continue;
-
-            // Validate both frames belong to the same cycle
-            int fnNumer = ((Integer) frameNumer.get(0)).intValue();
-            int fnDenom = ((Integer) frameDenom.get(0)).intValue();
-            if ((fnNumer - 1) / cycleLen != (fnDenom - 1) / cycleLen) continue;
-
-            ArrayList roiNumer = (ArrayList) frameNumer.get(2);
-            ArrayList roiDenom = (ArrayList) frameDenom.get(2);
-            ArrayList ratioValues = calculateFrameRatio(roiNumer, roiDenom);
-            if (ratioValues == null || ratioValues.isEmpty()) continue;
-
-            // Timestamp of the later frame in the pair
-            long ratioTimestamp = ((Long) (fnNumer > fnDenom ? frameNumer.get(1) : frameDenom.get(1))).longValue();
-
             final int gIdx = graphIdx;
-            final long time = ratioTimestamp;
-            final ArrayList ratioValsCopy = new ArrayList(ratioValues);
+            final long time = currentTime;
+            final int numSeriesFinal = numSeriesToUpdate;
+            final ArrayList valuesToPlotFinal = valuesToPlot;
             final ArrayList chartPanelsCopy = chartPanels;
 
             SwingUtilities.invokeLater(new Runnable() {
                 public void run() {
                     try {
                         XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
-                        for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
+                        for (int roiIdx = 0; roiIdx < numSeriesFinal; roiIdx++) {
                             XYSeries series = dataset.getSeries(roiIdx);
-                            Object ratioObj = ratioValsCopy.get(roiIdx);
-                            if (ratioObj != null && ratioObj instanceof Double) {
-                                double value = ((Double) ratioObj).doubleValue();
-                                if (!Double.isNaN(value) && !Double.isInfinite(value)) {
-                                    series.add(time / 1000.0, value, true);
-                                }
-                            }
+                            double value = ((Double) valuesToPlotFinal.get(roiIdx)).doubleValue();
+                            series.add(time / 1000.0, value, true);
                         }
                         if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
                             ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
-                            cp.revalidate();
+                            cp.getChart().fireChartChanged();
+                            cp.invalidate();
+                            cp.validate();
                             cp.repaint();
                         }
                     } catch (Exception e) {
@@ -4883,14 +4475,75 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                 }
             });
         }
-        // Handle Split Ratio graphs (Spatial mode)
+        // ── Temporal Ratio (row-based) ─────────────────────────────────────────
+        else if (graphType.equals("Ratio") && config.acqSettings.processingMode.equals("Temporal")) {
+            int numerRow  = parseRowNumber((String) vizRow.get(2));
+            int denomRow  = parseRowNumber((String) vizRow.get(3)); // 0 = constant "1"
+
+            // Cache denominator frame whenever we see a denominator row
+            if (denomRow > 0 && seqRow == denomRow) {
+                cacheFrameDataAtPosition(graphIdx, "denom", frameNumber, currentTime, roiValues);
+            }
+
+            // Plot ratio when we see a numerator row
+            if (numerRow > 0 && seqRow == numerRow) {
+                ArrayList denomValues;
+                if (denomRow == 0) {
+                    // Denominator is constant 1 — build a list of 1.0 values
+                    denomValues = new ArrayList();
+                    for (int ri = 0; ri < roiValues.size(); ri++) {
+                        denomValues.add(new Double(1.0));
+                    }
+                } else {
+                    // Retrieve most-recently cached denominator frame
+                    if (!frameCache.containsKey(graphIdx)) continue;
+                    Map graphCache = (Map) frameCache.get(graphIdx);
+                    ArrayList denomFrame = (ArrayList) graphCache.get("denom");
+                    if (denomFrame == null) continue; // No denom frame seen yet — skip silently
+                    denomValues = (ArrayList) denomFrame.get(2);
+                }
+
+                ArrayList ratioValues = calculateFrameRatio(roiValues, denomValues);
+                if (ratioValues == null || ratioValues.isEmpty()) continue;
+
+                final int gIdx = graphIdx;
+                final long time = currentTime;
+                final ArrayList ratioValsCopy = new ArrayList(ratioValues);
+                final ArrayList chartPanelsCopy = chartPanels;
+
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        try {
+                            XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
+                            for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
+                                XYSeries series = dataset.getSeries(roiIdx);
+                                Object ratioObj = ratioValsCopy.get(roiIdx);
+                                if (ratioObj != null && ratioObj instanceof Double) {
+                                    double value = ((Double) ratioObj).doubleValue();
+                                    if (!Double.isNaN(value) && !Double.isInfinite(value)) {
+                                        series.add(time / 1000.0, value, true);
+                                    }
+                                }
+                            }
+                            if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
+                                ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
+                                cp.revalidate();
+                                cp.repaint();
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                });
+            }
+        }
+        // ── Split Ratio (Spatial mode) ─────────────────────────────────────────
         else if (graphType.startsWith("Split ratio")) {
             if (frameNumber <= 3) {
 
                 // print("    roiValues.size=" + roiValues.size());
             }
 
-            // Calculate spatial ratios directly from current frame's ROI values
             ArrayList ratioValues = calculateSpatialRatio(roiValues, graphType);
 
             if (frameNumber <= 3) {
@@ -4904,13 +4557,8 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                 continue;
             }
 
-            // Debug output periodically
             if (frameNumber % 10 == 1) {
                 // print("Frame " + frameNumber + " - " + graphType + " calculated for Graph " + (graphIdx + 1) + ": " + ratioValues);
-            }
-
-            if (frameNumber <= 3) {
-
             }
 
             final int gIdx = graphIdx;
@@ -4919,17 +4567,12 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
             final ArrayList chartPanelsCopy = chartPanels;
             final ArrayList chartsCopy = charts;
 
-            if (frameNumber <= 3) {
-
-            }
-
             SwingUtilities.invokeLater(new Runnable() {
                 public void run() {
                     try {
                         XYSeriesCollection dataset = (XYSeriesCollection) datasets.get(gIdx);
                         if (frameNumber <= 3) {
                             // print("    SwingUtilities running for Split ratio, dataset has " + dataset.getSeriesCount() + " series");
-                            // print("    ratioValsCopy.size=" + ratioValsCopy.size() + ", time=" + (time/1000.0));
                         }
                         for (int roiIdx = 0; roiIdx < ratioValsCopy.size(); roiIdx++) {
                             XYSeries series = dataset.getSeries(roiIdx);
@@ -4937,72 +4580,26 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
                             if (ratioObj != null && ratioObj instanceof Double) {
                                 double value = ((Double) ratioObj).doubleValue();
                                 if (!Double.isNaN(value) && !Double.isInfinite(value)) {
-                                    series.add(time / 1000.0, value, true);  // Notify on each add
-                                    if (frameNumber <= 3 && roiIdx == 0) {
-                                        // print("      Added point: time=" + (time/1000.0) + ", value=" + value + " to series " + series.getKey());
-                                        // print("      Series now has " + series.getItemCount() + " points");
-                                    }
-                                } else if (frameNumber <= 3) {
-
+                                    series.add(time / 1000.0, value, true);
                                 }
-                            } else if (frameNumber <= 3) {
-
                             }
-                        }
-                        if (frameNumber <= 3) {
-
                         }
                         if (chartPanelsCopy != null && gIdx < chartPanelsCopy.size() && chartPanelsCopy.get(gIdx) != null) {
                             ChartPanel cp = (ChartPanel) chartPanelsCopy.get(gIdx);
-                            // Verify chart's dataset
                             if (frameNumber <= 3) {
                                 JFreeChart chart = cp.getChart();
-                                if (chart == null) {
-                                    // print("      ERROR: ChartPanel.getChart() returned null!");
-                                } else {
+                                if (chart != null) {
                                     XYPlot plot = (XYPlot) chart.getPlot();
-                                    XYSeriesCollection ds = (XYSeriesCollection) plot.getDataset();
-                                    // print("      Chart verification: dataset has " + ds.getSeriesCount() + " series, first series has " + ds.getSeries(0).getItemCount() + " points");
-                                    // print("      Chart visible=" + chart.isNotify() + ", Panel visible=" + cp.isVisible() + ", Panel size=" + cp.getSize());
-
-                                    // Verify data is actually in the series
-                                    XYSeries series0 = ds.getSeries(0);
-                                    if (series0.getItemCount() > 0) {
-                                        org.jfree.data.xy.XYDataItem item = series0.getDataItem(0);
-                                        // print("      First data point: X=" + item.getX() + ", Y=" + item.getY());
-                                    }
-
-                                    // Check renderer configuration
-                                    org.jfree.chart.renderer.xy.XYItemRenderer renderer = plot.getRenderer();
-                                    // print("      Renderer type: " + renderer.getClass().getName());
-                                    // print("      Series 0 visible: " + renderer.getItemVisible(0, 0));
-                                    // print("      Series 0 lines visible: " + renderer.getSeriesLinesVisible(0));
-
-                                    // Force axis range recalculation
                                     org.jfree.chart.axis.ValueAxis domainAxis = plot.getDomainAxis();
                                     org.jfree.chart.axis.ValueAxis rangeAxis = plot.getRangeAxis();
                                     domainAxis.configure();
                                     rangeAxis.configure();
-
-                                    // Print axis ranges for debugging
-                                    // print("      Domain axis range: " + domainAxis.getLowerBound() + " to " + domainAxis.getUpperBound());
-                                    // print("      Range axis range: " + rangeAxis.getLowerBound() + " to " + rangeAxis.getUpperBound());
-
-                                    // Force complete chart refresh
                                     chart.fireChartChanged();
                                 }
                             }
-                            // Force complete panel refresh (WITHOUT resetting zoom)
-                            // cp.restoreAutoBounds(); // REMOVED - this resets user zoom
                             cp.invalidate();
                             cp.validate();
                             cp.repaint();
-                            if (frameNumber <= 3) {
-
-
-                            }
-                        } else if (frameNumber <= 3) {
-                            // print("      WARNING: ChartPanel is null for Split ratio graph " + (gIdx + 1));
                         }
                     } catch (Exception e) {
                         // print("ERROR updating Split ratio graph " + (gIdx + 1) + ": " + e.getMessage());
@@ -5301,6 +4898,143 @@ void convertTiffsToStack(String experimentFolder) {
             public void run() {
                 JOptionPane.showMessageDialog(null,
                     "Error during stack conversion:\n" + e.getMessage() + "\n\n" +
+                    "Individual TIFF files have been kept.",
+                    "Stack Conversion Error",
+                    JOptionPane.ERROR_MESSAGE);
+            }
+        });
+    }
+}
+
+// ==================== Convert TIFFs to Per-Row Stacks ====================
+// Groups Frame_NNNNN.tif files by their sequence row (from dataRows[i][2]) and
+// saves one Stack_Row_N.tif per row.  Individual TIFFs are deleted afterwards.
+void convertTiffsToStacksPerRow(String experimentFolder, ArrayList dataRows) {
+    import ij.ImageStack;
+    import ij.io.FileSaver;
+
+    try {
+        File expFolder = new File(experimentFolder);
+        if (!expFolder.exists() || !expFolder.isDirectory()) {
+            return;
+        }
+
+        // Check for images subfolder first (matches saveImageAsTiff save location)
+        File imagesFolder = new File(expFolder, "images");
+        File searchFolder = imagesFolder.exists() ? imagesFolder : expFolder;
+
+        // Find all Frame_*.tif files
+        File[] tiffFiles = searchFolder.listFiles(new java.io.FilenameFilter() {
+            public boolean accept(File dir, String name) {
+                return name.startsWith("Frame_") && name.endsWith(".tif");
+            }
+        });
+
+        if (tiffFiles == null || tiffFiles.length == 0) {
+            return;
+        }
+
+        java.util.Arrays.sort(tiffFiles);
+
+        // Build fast filename -> File lookup
+        HashMap nameToFile = new HashMap();
+        for (int i = 0; i < tiffFiles.length; i++) {
+            nameToFile.put(tiffFiles[i].getName(), tiffFiles[i]);
+        }
+
+        // Group frame numbers by seqRow.
+        // dataRows layout: [0]=frameNumber  [1]=timestamp  [2]=seqRow  [3..]=roiValues
+        HashMap rowToFrames = new HashMap(); // Integer seqRow -> ArrayList of Integer frameNum
+        for (int i = 0; i < dataRows.size(); i++) {
+            ArrayList row = (ArrayList) dataRows.get(i);
+            if (row.size() < 3) continue;
+            Object seqRowObj = row.get(2);
+            Object frameNumObj = row.get(0);
+            if (!rowToFrames.containsKey(seqRowObj)) {
+                rowToFrames.put(seqRowObj, new ArrayList());
+            }
+            ((ArrayList) rowToFrames.get(seqRowObj)).add(frameNumObj);
+        }
+
+        if (rowToFrames.isEmpty()) {
+            return;
+        }
+
+        // Get image dimensions from first available file
+        ImagePlus firstImp = IJ.openImage(tiffFiles[0].getAbsolutePath());
+        if (firstImp == null) {
+            return;
+        }
+        int width  = firstImp.getWidth();
+        int height = firstImp.getHeight();
+
+        // Build sorted list of seqRow keys
+        ArrayList seqRowKeys = new ArrayList();
+        java.util.Iterator keyIt = rowToFrames.keySet().iterator();
+        while (keyIt.hasNext()) {
+            seqRowKeys.add(keyIt.next());
+        }
+        java.util.Collections.sort(seqRowKeys);
+
+        // Track all files successfully incorporated into stacks (for deletion)
+        ArrayList processedFiles = new ArrayList();
+
+        for (int ri = 0; ri < seqRowKeys.size(); ri++) {
+            Integer seqRowKey = (Integer) seqRowKeys.get(ri);
+            ArrayList frames = (ArrayList) rowToFrames.get(seqRowKey);
+            java.util.Collections.sort(frames);
+
+            ImageStack stack = new ImageStack(width, height);
+            int loadedCount = 0;
+
+            for (int fi = 0; fi < frames.size(); fi++) {
+                int frameNum = ((Integer) frames.get(fi)).intValue();
+                String paddedNumber = "" + frameNum;
+                while (paddedNumber.length() < 5) paddedNumber = "0" + paddedNumber;
+                String fname = "Frame_" + paddedNumber + ".tif";
+                File f = (File) nameToFile.get(fname);
+                if (f == null || !f.exists()) continue;
+
+                ImagePlus imp = IJ.openImage(f.getAbsolutePath());
+                if (imp == null) continue;
+
+                stack.addSlice("Frame_" + frameNum, imp.getProcessor());
+                loadedCount++;
+                processedFiles.add(f);
+            }
+
+            if (loadedCount == 0) continue;
+
+            String stackName = "Stack_Row_" + seqRowKey.intValue() + ".tif";
+            String stackPath = experimentFolder + File.separator + stackName;
+            ImagePlus stackImp = new ImagePlus("Row_" + seqRowKey.intValue(), stack);
+            FileSaver fs = new FileSaver(stackImp);
+            boolean success = fs.saveAsTiffStack(stackPath);
+
+            if (!success) {
+                print("ERROR: Failed to save " + stackName);
+            }
+        }
+
+        // Delete individual TIFF files that were incorporated into stacks
+        for (int i = 0; i < processedFiles.size(); i++) {
+            ((File) processedFiles.get(i)).delete();
+        }
+
+        // Remove images subfolder if now empty
+        if (imagesFolder.exists() && imagesFolder.isDirectory()) {
+            File[] remaining = imagesFolder.listFiles();
+            if (remaining == null || remaining.length == 0) {
+                imagesFolder.delete();
+            }
+        }
+
+    } catch (Exception e) {
+        e.printStackTrace();
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() {
+                JOptionPane.showMessageDialog(null,
+                    "Error during per-row stack conversion:\n" + e.getMessage() + "\n\n" +
                     "Individual TIFF files have been kept.",
                     "Stack Conversion Error",
                     JOptionPane.ERROR_MESSAGE);
@@ -5872,6 +5606,8 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     // Convert to stack if requested
     if (config.acqSettings.convertToStack) {
         convertTiffsToStack(config.experimentFolder);
+    } else if (config.acqSettings.stackPerRow) {
+        convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
     }
 
     // Dispose the acquisition frame after acquisition completes.
@@ -6228,6 +5964,8 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
         // Convert to stack if requested
         if (config.acqSettings.convertToStack) {
             convertTiffsToStack(config.experimentFolder);
+        } else if (config.acqSettings.stackPerRow) {
+            convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
         }
 
         return; // Exit after simple mode completes
@@ -6413,6 +6151,8 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
     // Convert to stack if requested
     if (config.acqSettings.convertToStack) {
         convertTiffsToStack(config.experimentFolder);
+    } else if (config.acqSettings.stackPerRow) {
+        convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
     }
 
     // Dispose the acquisition frame after acquisition completes (Advanced Mode)
@@ -6430,24 +6170,20 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
     }
 }
 
-// ==================== CSV Export for Graph Data ====================
 // Helper: compute the frame-selection label used in CSV filenames.
 String computeFrameLogicLabel(ArrayList vizRow, boolean isTemporal) {
     if (!isTemporal) return "every";
-    Boolean everyFrame = (Boolean) vizRow.get(2);
-    Boolean everyOdd   = (Boolean) vizRow.get(3);
-    Boolean everyEven  = (Boolean) vizRow.get(4);
-    String  custom     = (String)  vizRow.get(5);
-    if (everyFrame != null && everyFrame.booleanValue()) return "every";
-    if (everyOdd   != null && everyOdd.booleanValue())   return "odd";
-    if (everyEven  != null && everyEven.booleanValue())  return "even";
-    if (custom != null && !custom.equals("Off"))          return custom.replace(" ", "_");
-    return "every";
+    String type  = (String) vizRow.get(1);
+    String numer = (String) vizRow.get(2);
+    String denom = (String) vizRow.get(3);
+    String numerLabel = numer.replace(" ", "");   // e.g. "Row1", "1"
+    String denomLabel = denom.replace(" ", "");
+    if (type.equals("Ratio")) return numerLabel + "_div_" + denomLabel;
+    return numerLabel; // Intensity: just the numerator row
 }
 
 // Helper: write one CSV file for one graph using the given set of rows.
 // corrSuffix is appended to the filename (e.g. "RAW", "BGcorr", "BTcorr").
-// Column headers carry no suffix — the filename already identifies the correction level.
 // Data row layout: [0]=frame [1]=timestamp [2]=seqRow [3..]=roiValues
 
 void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
@@ -6464,73 +6200,60 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
     try {
         PrintWriter writer = new PrintWriter(new FileWriter(csvFile));
 
-        // --- N-frame cycle ratio (e.g. "Ratio 1/2 (2 frames)") ---
-        if (graphType.startsWith("Ratio ") && graphType.contains("frames)")) {
-            int cycleLen = 2, posNum = 1, posDen = 2;
-            try {
-                int parenIdx = graphType.indexOf("(");
-                int spaceIdx = graphType.indexOf(" ", parenIdx + 1);
-                cycleLen = Integer.parseInt(graphType.substring(parenIdx + 1, spaceIdx));
-                String[] parts = graphType.split(" ");
-                String[] positions = parts[1].split("/");
-                posNum = Integer.parseInt(positions[0]);
-                posDen = Integer.parseInt(positions[1]);
-            } catch (Exception e) {}
-            final int cycleLenF = cycleLen;
-            final int posNumF = posNum, posDenF = posDen;
+        // --- Temporal Ratio (row-based) ---
+        if (graphType.equals("Ratio") && isTemporal) {
+            int numerRow = parseRowNumber((String) vizRow.get(2));
+            int denomRow = parseRowNumber((String) vizRow.get(3)); // 0 = constant 1
 
-            writer.print("Frame Pair;Timestamp [ms];SeqRow");
+            writer.print("Frame;Timestamp [ms];SeqRow");
             for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
                 writer.print(";ROI" + (roiIdx + 1) + "_Ratio");
             }
             writer.println();
 
-            Map cycleFrames = new HashMap();
+            // Carry the most-recently-seen denominator row forward
+            ArrayList lastDenomROIs = null;
+
             for (int i = 0; i < rows.size(); i++) {
                 ArrayList row = (ArrayList) rows.get(i);
-                int frameNum = ((Integer) row.get(0)).intValue();
-                if (shouldProcessFrame(frameNum, vizRow)) {
-                    int cycleIdx = (frameNum - 1) / cycleLenF;
-                    int framePos = ((frameNum - 1) % cycleLenF) + 1;
-                    if (framePos == posNumF || framePos == posDenF) {
-                        Map cycle = (Map) cycleFrames.get(cycleIdx);
-                        if (cycle == null) { cycle = new HashMap(); cycleFrames.put(cycleIdx, cycle); }
-                        cycle.put("p" + framePos, row);
-                    }
-                }
-            }
+                int seqRow = ((Integer) row.get(2)).intValue();
 
-            List cycleIndices = new ArrayList(cycleFrames.keySet());
-            Collections.sort(cycleIndices);
-            for (int c = 0; c < cycleIndices.size(); c++) {
-                int cycleIdx = ((Integer) cycleIndices.get(c)).intValue();
-                Map cycle = (Map) cycleFrames.get(cycleIdx);
-                ArrayList rowN = (ArrayList) cycle.get("p" + posNumF);
-                ArrayList rowD = (ArrayList) cycle.get("p" + posDenF);
-                if (rowN == null || rowD == null) continue;
-                int frameN = ((Integer) rowN.get(0)).intValue();
-                int frameD = ((Integer) rowD.get(0)).intValue();
-                ArrayList numerROIs = new ArrayList();
-                ArrayList denomROIs = new ArrayList();
-                for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
-                    numerROIs.add(rowN.get(3 + roiIdx));
-                    denomROIs.add(rowD.get(3 + roiIdx));
-                }
-                ArrayList ratios = calculateFrameRatio(numerROIs, denomROIs);
-                if (ratios == null || ratios.isEmpty()) continue;
-                writer.print(frameN + "-" + frameD + ";");
-                ArrayList laterRow = (frameN > frameD) ? rowN : rowD;
-                writer.print(laterRow.get(1));
-                writer.print(";" + laterRow.get(2));  // SeqRow stored at index 2
-                for (int roiIdx = 0; roiIdx < ratios.size(); roiIdx++) {
-                    writer.print(";");
-                    Object val = ratios.get(roiIdx);
-                    if (val != null) {
-                        double v = ((Double) val).doubleValue();
-                        writer.print(!Double.isNaN(v) && !Double.isInfinite(v) ? v : "NaN");
+                // Cache denominator row values
+                if (denomRow > 0 && seqRow == denomRow) {
+                    lastDenomROIs = new ArrayList();
+                    for (int ri = 0; ri < actualNumROIs; ri++) {
+                        lastDenomROIs.add(row.get(3 + ri));
                     }
                 }
-                writer.println();
+
+                // Emit ratio when we hit a numerator row
+                if (numerRow > 0 && seqRow == numerRow) {
+                    ArrayList denomROIs;
+                    if (denomRow == 0) {
+                        denomROIs = new ArrayList();
+                        for (int ri = 0; ri < actualNumROIs; ri++) denomROIs.add(new Double(1.0));
+                    } else {
+                        if (lastDenomROIs == null) continue; // No denominator seen yet
+                        denomROIs = lastDenomROIs;
+                    }
+                    ArrayList numerROIs = new ArrayList();
+                    for (int ri = 0; ri < actualNumROIs; ri++) numerROIs.add(row.get(3 + ri));
+                    ArrayList ratios = calculateFrameRatio(numerROIs, denomROIs);
+                    if (ratios == null || ratios.isEmpty()) continue;
+
+                    writer.print(row.get(0) + ";");
+                    writer.print(row.get(1));
+                    writer.print(";" + seqRow);
+                    for (int ri = 0; ri < ratios.size(); ri++) {
+                        writer.print(";");
+                        Object val = ratios.get(ri);
+                        if (val != null) {
+                            double v = ((Double) val).doubleValue();
+                            writer.print(!Double.isNaN(v) && !Double.isInfinite(v) ? v : "NaN");
+                        }
+                    }
+                    writer.println();
+                }
             }
 
         // --- Split Ratio (Spatial mode) ---
@@ -6544,11 +6267,11 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
 
             for (int i = 0; i < rows.size(); i++) {
                 ArrayList row = (ArrayList) rows.get(i);
-                int frameNum = ((Integer) row.get(0)).intValue();
-                if (shouldProcessFrame(frameNum, vizRow)) {
+                int seqRow = ((Integer) row.get(2)).intValue();
+                if (shouldProcessFrame(seqRow, vizRow)) {
                     writer.print(row.get(0) + ";");
                     writer.print(row.get(1));
-                    writer.print(";" + row.get(2));  // SeqRow stored at index 2
+                    writer.print(";" + seqRow);
                     ArrayList roiValues = new ArrayList();
                     for (int roiIdx = 0; roiIdx < actualNumROIs; roiIdx++) {
                         roiValues.add(row.get(3 + roiIdx));
@@ -6580,11 +6303,11 @@ void exportSingleGraphCSV(ArrayList rows, String corrSuffix, File expFolder,
 
             for (int i = 0; i < rows.size(); i++) {
                 ArrayList row = (ArrayList) rows.get(i);
-                int frameNum = ((Integer) row.get(0)).intValue();
-                if (shouldProcessFrame(frameNum, vizRow)) {
+                int seqRow = ((Integer) row.get(2)).intValue();
+                if (shouldProcessFrame(seqRow, vizRow)) {
                     writer.print(row.get(0) + ";");
                     writer.print(row.get(1));
-                    writer.print(";" + row.get(2));  // SeqRow stored at index 2
+                    writer.print(";" + seqRow);
                     for (int roiIdx = 0; roiIdx < numROIsToExport; roiIdx++) {
                         writer.print(";");
                         Object val = row.get(3 + roiIdx);
