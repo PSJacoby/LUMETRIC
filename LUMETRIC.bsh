@@ -41,6 +41,9 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableCellEditor;
+import javax.swing.DefaultCellEditor;
+import javax.swing.event.TableModelEvent;
+import javax.swing.event.TableModelListener;
 
 // JFreeChart imports - moved to top to avoid BeanShell loading issues
 import org.jfree.chart.ChartFactory;
@@ -1072,39 +1075,10 @@ class VisualizationTypeEditor extends DefaultCellEditor {
     }
 }
 
-// Cell editor for Numerator / Denominator row dropdowns.
-// Options are rebuilt dynamically when the editor is invoked so they always
-// reflect the current number of sequence rows.
-// Options: "1" (constant) followed by "Row 1", "Row 2", ..., "Row N".
-class VisualizationRowEditor extends DefaultCellEditor {
-    JComboBox rowCombo;
-
-    public VisualizationRowEditor() {
-        super(new JComboBox());
-        rowCombo = (JComboBox) getComponent();
-        rowCombo.addItem("1");
-        rowCombo.addItem("Row 1");
-    }
-
-    public Component getTableCellEditorComponent(JTable table, Object value,
-                                                  boolean isSelected, int row, int column) {
-        // Rebuild options from current sequence table row count
-        rowCombo.removeAllItems();
-        rowCombo.addItem("1");
-        int seqRowCount = tableModel.getRowCount();
-        if (seqRowCount == 0) seqRowCount = 1; // fallback
-        for (int i = 1; i <= seqRowCount; i++) {
-            rowCombo.addItem("Row " + i);
-        }
-        if (value != null) rowCombo.setSelectedItem(value.toString());
-        return rowCombo;
-    }
-
-    public Object getCellEditorValue() {
-        Object sel = rowCombo.getSelectedItem();
-        return sel != null ? sel.toString() : "1";
-    }
-}
+// Row-selector dropdowns for Numerator/Denominator are built inline (see installTemporalRowEditors
+// calls below) so that tableModel is read from the outer script scope where it is always reachable.
+// BeanShell named-class methods cannot reliably access outer-namespace variables;
+// anonymous listener bodies can, so the inline approach is used instead of a custom class.
 
 // Main GUI
 frame = new JFrame("LUMETRIC - Hardware control");
@@ -1607,22 +1581,28 @@ processingModeCombo.addActionListener(new ActionListener() {
         typeEditor.setProcessingMode(mode, config);
         vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
 
-        // Reconfigure table columns for mode
-        if (mode.equals("Temporal")) {
-            // Install row-selector dropdowns for Numerator and Denominator
-            vizTable.getColumnModel().getColumn(2).setCellEditor(new VisualizationRowEditor());
-            vizTable.getColumnModel().getColumn(2).setPreferredWidth(120);
-            vizTable.getColumnModel().getColumn(3).setCellEditor(new VisualizationRowEditor());
-            vizTable.getColumnModel().getColumn(3).setPreferredWidth(120);
-        }
-        // Spatial mode: only 2 columns, no special renderers needed
-
+        // Fire structure change (resets the column model — all editors must be re-applied below)
         vizTableModel.fireTableStructureChanged();
         vizTable.getColumnModel().getColumn(0).setPreferredWidth(80);
         vizTable.getColumnModel().getColumn(1).setPreferredWidth(180);
 
-        // Re-apply cell editor after structure change
+        // Re-apply all cell editors after structure change
         vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
+        if (mode.equals("Temporal")) {
+            // Build row-selector combos inline — tableModel is accessible here (outer scope)
+            int rCnt = tableModel.getRowCount();
+            if (rCnt < 1) rCnt = 1;
+            JComboBox mNumCombo = new JComboBox();
+            mNumCombo.addItem("1");
+            for (int r = 1; r <= rCnt; r++) mNumCombo.addItem("Row " + r);
+            vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(mNumCombo));
+            vizTable.getColumnModel().getColumn(2).setPreferredWidth(120);
+            JComboBox mDenCombo = new JComboBox();
+            mDenCombo.addItem("1");
+            for (int r = 1; r <= rCnt; r++) mDenCombo.addItem("Row " + r);
+            vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(mDenCombo));
+            vizTable.getColumnModel().getColumn(3).setPreferredWidth(120);
+        }
     }
 });
 
@@ -1742,13 +1722,45 @@ vizTable.getColumnModel().getColumn(0).setPreferredWidth(80);
 vizTable.getColumnModel().getColumn(1).setCellEditor(typeEditor);
 vizTable.getColumnModel().getColumn(1).setPreferredWidth(180);
 
-// Columns 2–3: Numerator and Denominator row dropdowns
-for (int i = 2; i < 4; i++) {
-    vizTable.getColumnModel().getColumn(i).setCellEditor(new VisualizationRowEditor());
-    vizTable.getColumnModel().getColumn(i).setPreferredWidth(120);
-}
+// Columns 2–3: Numerator and Denominator row dropdowns (inline, outer scope)
+int initRowCnt = tableModel.getRowCount();
+if (initRowCnt < 1) initRowCnt = 1;
+JComboBox initNumCombo = new JComboBox();
+initNumCombo.addItem("1");
+for (int r = 1; r <= initRowCnt; r++) initNumCombo.addItem("Row " + r);
+vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(initNumCombo));
+vizTable.getColumnModel().getColumn(2).setPreferredWidth(120);
+JComboBox initDenCombo = new JComboBox();
+initDenCombo.addItem("1");
+for (int r = 1; r <= initRowCnt; r++) initDenCombo.addItem("Row " + r);
+vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(initDenCombo));
+vizTable.getColumnModel().getColumn(3).setPreferredWidth(120);
 
 vizScrollPane = new JScrollPane(vizTable);
+
+// Reinstall Temporal row-selector editors whenever sequence rows are added or removed.
+// This anonymous listener CAN access outer variables (tableModel, vizTable, processingModeCombo).
+tableModel.addTableModelListener(new TableModelListener() {
+    public void tableChanged(TableModelEvent e) {
+        int evType = e.getType();
+        if (evType != TableModelEvent.INSERT && evType != TableModelEvent.DELETE) return;
+        if (vizTable == null || processingModeCombo == null) return;
+        String curMode = (String) processingModeCombo.getSelectedItem();
+        if (!"Temporal".equals(curMode)) return;
+        try {
+            int cnt = tableModel.getRowCount();
+            if (cnt < 1) cnt = 1;
+            JComboBox lNumCombo = new JComboBox();
+            lNumCombo.addItem("1");
+            for (int r = 1; r <= cnt; r++) lNumCombo.addItem("Row " + r);
+            vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(lNumCombo));
+            JComboBox lDenCombo = new JComboBox();
+            lDenCombo.addItem("1");
+            for (int r = 1; r <= cnt; r++) lDenCombo.addItem("Row " + r);
+            vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(lDenCombo));
+        } catch (Exception ex) { /* ignore if columns not yet available */ }
+    }
+});
 
 // Bottom panel with Live Pictures and Start Acquisition button
 vizBottomPanel = new JPanel(new BorderLayout());
@@ -6556,6 +6568,59 @@ ArrayList ppReadTimestamps(File expFolder) {
     return result;
 }
 
+// Reads all _RAW CSVs from expFolder, groups timestamps by seqRow (column 2), and returns
+// Map<Integer seqRow, ArrayList<Long> timestamps> in frame-number order for each row.
+// Used when loading per-row stacks (Stack_Row_N.tif) so each stack gets the correct
+// original acquisition timestamps instead of the wrong global-frameNum lookup.
+Map ppReadTimestampsPerRow(File expFolder) {
+    Map rowFrameMap = new HashMap(); // Integer seqRow -> TreeMap<Integer frameNum, Long ts>
+
+    File[] csvFiles = expFolder.listFiles(new java.io.FilenameFilter() {
+        public boolean accept(File dir, String name) {
+            return name.contains("_RAW") && name.endsWith(".csv");
+        }
+    });
+
+    if (csvFiles != null) {
+        for (int fi = 0; fi < csvFiles.length; fi++) {
+            try {
+                BufferedReader br = new BufferedReader(new FileReader(csvFiles[fi]));
+                String line = br.readLine(); // skip header
+                while ((line = br.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    String[] parts = line.split(";");
+                    if (parts.length < 3) continue;
+                    try {
+                        int  fn  = Integer.parseInt(parts[0].trim());
+                        long ts  = Long.parseLong(parts[1].trim());
+                        int  row = Integer.parseInt(parts[2].trim());
+                        Integer rowKey = new Integer(row);
+                        if (!rowFrameMap.containsKey(rowKey))
+                            rowFrameMap.put(rowKey, new java.util.TreeMap());
+                        ((java.util.TreeMap) rowFrameMap.get(rowKey)).put(new Integer(fn), new Long(ts));
+                    } catch (Exception ignored) {}
+                }
+                br.close();
+            } catch (Exception e) { e.printStackTrace(); }
+        }
+    }
+
+    // Convert per-row TreeMap<frameNum, ts> → ordered ArrayList<Long>
+    Map result = new HashMap();
+    java.util.Iterator rowIt = rowFrameMap.entrySet().iterator();
+    while (rowIt.hasNext()) {
+        java.util.Map.Entry entry = (java.util.Map.Entry) rowIt.next();
+        Integer seqRowKey = (Integer) entry.getKey();
+        java.util.TreeMap frameMap = (java.util.TreeMap) entry.getValue();
+        ArrayList tsList = new ArrayList();
+        java.util.Iterator tsIt = frameMap.values().iterator();
+        while (tsIt.hasNext()) tsList.add(tsIt.next());
+        result.put(seqRowKey, tsList);
+    }
+    return result;
+}
+
 // Computes the per-ROI mean BG-corrected acceptor signal over a reference frame range.
 // Returns ArrayList<Double> of size N/2 — one value per ROI pair, for the acceptor side.
 // "Acceptor side" follows the same fromIsSource logic as applyBTCorrection.
@@ -6625,7 +6690,8 @@ ArrayList applyDECorrection(ArrayList btCorrValues, ArrayList meanDirExPerRoi) {
 void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
                    ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
                    ArrayList ppDERows,
-                   ArrayList datasets, ArrayList charts, ArrayList chartPanels) {
+                   ArrayList datasets, ArrayList charts, ArrayList chartPanels,
+                   ArrayList perStackSeqRows, ArrayList perStackTimestamps) {
     ppDataRows.clear();
     ppCorrRows.clear();
     ppBTRows.clear();
@@ -6657,27 +6723,63 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
     }
 
     int frameNum = 0;
-    for (int stackIdx = 0; stackIdx < stacks.size(); stackIdx++) {
-        ImagePlus curStack = (ImagePlus) stacks.get(stackIdx);
-        int totalSlices = curStack.getStackSize();
-        for (int s = 1; s <= totalSlices; s++) {
+
+    if (perStackSeqRows != null) {
+        // ── Per-row stacks mode ──────────────────────────────────────────────────────────
+        // Build a flat list of all (stackIdx, sliceIdx, seqRow, timestamp) tuples,
+        // sort by timestamp to reconstruct the original acquisition order, then process.
+        // This ensures ratio denominator caching works in the same temporal order as the
+        // original block acquisition (e.g. Row2-block → Row1-block → Row2-block → ...).
+        ArrayList allFrameEntries = new ArrayList();
+        for (int si = 0; si < stacks.size(); si++) {
+            int rowSeqRow = ((Integer) perStackSeqRows.get(si)).intValue();
+            ImagePlus sk  = (ImagePlus) stacks.get(si);
+            ArrayList rowTsList = (ArrayList) perStackTimestamps.get(si);
+            // Per-row fallback interval from sequence table
+            long rowFallback = fallbackIntervalMs;
+            if (!config.acqSettings.sequenceRows.isEmpty() && rowSeqRow >= 1
+                    && rowSeqRow <= config.acqSettings.sequenceRows.size()) {
+                try {
+                    ArrayList rowConf = (ArrayList) config.acqSettings.sequenceRows.get(rowSeqRow - 1);
+                    rowFallback = Long.parseLong(rowConf.get(3).toString().trim());
+                } catch (Exception ignored) {}
+            }
+            for (int s = 1; s <= sk.getStackSize(); s++) {
+                long ts;
+                if (rowTsList != null && (s-1) < rowTsList.size() && rowTsList.get(s-1) != null) {
+                    ts = ((Long) rowTsList.get(s-1)).longValue();
+                } else {
+                    ts = rowFallback * (long)(s-1);
+                }
+                ArrayList entry = new ArrayList();
+                entry.add(new Integer(si));       // [0] stackIdx
+                entry.add(new Integer(s));        // [1] sliceIdx (1-based)
+                entry.add(new Integer(rowSeqRow)); // [2] seqRow
+                entry.add(new Long(ts));          // [3] timestamp
+                allFrameEntries.add(entry);
+            }
+        }
+        // Sort by timestamp → restores original block-acquisition order
+        java.util.Collections.sort(allFrameEntries, new java.util.Comparator() {
+            public int compare(Object a, Object b) {
+                long tsA = ((Long)((ArrayList)a).get(3)).longValue();
+                long tsB = ((Long)((ArrayList)b).get(3)).longValue();
+                return Long.compare(tsA, tsB);
+            }
+        });
+        // Process frames in temporal order
+        for (int fi = 0; fi < allFrameEntries.size(); fi++) {
+            ArrayList entry = (ArrayList) allFrameEntries.get(fi);
+            int si         = ((Integer) entry.get(0)).intValue();
+            int s          = ((Integer) entry.get(1)).intValue();
+            int seqRow     = ((Integer) entry.get(2)).intValue();
+            long timestamp = ((Long)    entry.get(3)).longValue();
             frameNum++;
+            ImagePlus curStack = (ImagePlus) stacks.get(si);
             curStack.setSlice(s);
             ImageProcessor ip = curStack.getProcessor();
-
-            long timestamp;
-            if (frameTimestamps != null && (frameNum - 1) < frameTimestamps.size()
-                    && frameTimestamps.get(frameNum - 1) != null) {
-                timestamp = ((Long) frameTimestamps.get(frameNum - 1)).longValue();
-            } else {
-                timestamp = (long)(frameNum - 1) * fallbackIntervalMs;
-            }
-
-            int seqRow = rowTracker.advanceFrame();
-
             ArrayList roiValues = measureROIs(ip);
             ppDataRows.add(buildDataRow(frameNum, timestamp, seqRow, roiValues));
-
             ArrayList valuesForGraphs = roiValues;
             if (config.acqSettings.bgCorrectionEnabled) {
                 ArrayList bgCorr = applyBGCorrection(roiValues);
@@ -6696,6 +6798,49 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
                 }
             }
             updateGraphs(datasets, frameNum, timestamp, valuesForGraphs, chartPanels, charts, seqRow);
+        }
+    } else {
+        // ── Interleaved stacks mode (original behaviour) ─────────────────────────────────
+        for (int stackIdx = 0; stackIdx < stacks.size(); stackIdx++) {
+            ImagePlus curStack = (ImagePlus) stacks.get(stackIdx);
+            int totalSlices = curStack.getStackSize();
+            for (int s = 1; s <= totalSlices; s++) {
+                frameNum++;
+                curStack.setSlice(s);
+                ImageProcessor ip = curStack.getProcessor();
+
+                long timestamp;
+                if (frameTimestamps != null && (frameNum - 1) < frameTimestamps.size()
+                        && frameTimestamps.get(frameNum - 1) != null) {
+                    timestamp = ((Long) frameTimestamps.get(frameNum - 1)).longValue();
+                } else {
+                    timestamp = (long)(frameNum - 1) * fallbackIntervalMs;
+                }
+
+                int seqRow = rowTracker.advanceFrame();
+
+                ArrayList roiValues = measureROIs(ip);
+                ppDataRows.add(buildDataRow(frameNum, timestamp, seqRow, roiValues));
+
+                ArrayList valuesForGraphs = roiValues;
+                if (config.acqSettings.bgCorrectionEnabled) {
+                    ArrayList bgCorr = applyBGCorrection(roiValues);
+                    ppCorrRows.add(buildDataRow(frameNum, timestamp, seqRow, bgCorr));
+                    valuesForGraphs = bgCorr;
+                    if (config.acqSettings.btCorrectionEnabled && isSpatial) {
+                        ArrayList btCorr = applyBTCorrection(bgCorr);
+                        ppBTRows.add(buildDataRow(frameNum, timestamp, seqRow, btCorr));
+                        ArrayList valuesAfterBT = btCorr;
+                        if (config.acqSettings.deEnabled && !meanDirEx.isEmpty()) {
+                            ArrayList deCorr = applyDECorrection(btCorr, meanDirEx);
+                            ppDERows.add(buildDataRow(frameNum, timestamp, seqRow, deCorr));
+                            valuesAfterBT = deCorr;
+                        }
+                        valuesForGraphs = valuesAfterBT;
+                    }
+                }
+                updateGraphs(datasets, frameNum, timestamp, valuesForGraphs, chartPanels, charts, seqRow);
+            }
         }
     }
 }
@@ -6939,6 +7084,10 @@ void openPostProcessor() {
         if (tmp != null) ppStacks.add(tmp);
     }
 
+    // Per-row stack metadata: non-null only when Stack_Row_N.tif files are loaded.
+    // perStackSeqRows[i] = seqRow for stacks[i]; perStackTimestamps[i] = ordered timestamps.
+    ArrayList ppPerStackSeqRows    = null;
+    ArrayList ppPerStackTimestamps = null;
     if (ppStacks.isEmpty()) {
         File[] rowStacks = expFolder.listFiles(new java.io.FilenameFilter() {
             public boolean accept(File d, String name) {
@@ -6947,9 +7096,25 @@ void openPostProcessor() {
         });
         if (rowStacks != null && rowStacks.length > 0) {
             java.util.Arrays.sort(rowStacks);
+            // Build per-row timelines from RAW CSVs so each stack's slices get
+            // their correct original acquisition timestamps (not the wrong global index).
+            ppPerStackSeqRows    = new ArrayList();
+            ppPerStackTimestamps = new ArrayList();
+            Map rowTimelinesMap = ppReadTimestampsPerRow(expFolder);
             for (int fi = 0; fi < rowStacks.length; fi++) {
                 ImagePlus tmp = IJ.openImage(rowStacks[fi].getAbsolutePath());
-                if (tmp != null) ppStacks.add(tmp); // one window per row-stack file
+                if (tmp == null) continue;
+                ppStacks.add(tmp);
+                // Extract N from filename "Stack_Row_N.tif"
+                int rowNum = fi + 1; // fallback
+                try {
+                    String numStr = rowStacks[fi].getName()
+                        .replace("Stack_Row_", "").replace(".tif", "").trim();
+                    rowNum = Integer.parseInt(numStr);
+                } catch (Exception ignored) {}
+                ppPerStackSeqRows.add(new Integer(rowNum));
+                ArrayList rowTsList = (ArrayList) rowTimelinesMap.get(new Integer(rowNum));
+                ppPerStackTimestamps.add(rowTsList != null ? rowTsList : new ArrayList());
             }
         }
     }
@@ -6962,6 +7127,8 @@ void openPostProcessor() {
     }
 
     final ArrayList finalStacks = ppStacks;
+    final ArrayList finalPerStackSeqRows    = ppPerStackSeqRows;
+    final ArrayList finalPerStackTimestamps = ppPerStackTimestamps;
     for (int si = 0; si < finalStacks.size(); si++)
         ((ImagePlus) finalStacks.get(si)).show();
 
@@ -7111,7 +7278,8 @@ void openPostProcessor() {
                     } catch (Exception ex) { ex.printStackTrace(); }
                     ppRecalculate(finalStacks, frameTimestamps,
                         ppDataRows, ppCorrRows, ppBTRows, ppDERows,
-                        ppDatasets, ppCharts, ppChartPanels);
+                        ppDatasets, ppCharts, ppChartPanels,
+                        finalPerStackSeqRows, finalPerStackTimestamps);
                     SwingUtilities.invokeLater(new Runnable() {
                         public void run() {
                             ppStatus.setText("Done \u2014 " + ppDataRows.size() + " frames");
@@ -7143,7 +7311,8 @@ void openPostProcessor() {
                     } catch (Exception ex) { ex.printStackTrace(); }
                     ppRecalculate(finalStacks, frameTimestamps,
                         ppDataRows, ppCorrRows, ppBTRows, ppDERows,
-                        ppDatasets, ppCharts, ppChartPanels);
+                        ppDatasets, ppCharts, ppChartPanels,
+                        finalPerStackSeqRows, finalPerStackTimestamps);
                     ppExport(ppDataRows, ppCorrRows, ppBTRows, ppDERows, expFolder, finalRM);
                     SwingUtilities.invokeLater(new Runnable() {
                         public void run() {
@@ -7232,7 +7401,8 @@ void openPostProcessor() {
         public void run() {
             ppRecalculate(finalStacks, frameTimestamps,
                 ppDataRows, ppCorrRows, ppBTRows, ppDERows,
-                ppDatasets, ppCharts, ppChartPanels);
+                ppDatasets, ppCharts, ppChartPanels,
+                finalPerStackSeqRows, finalPerStackTimestamps);
             SwingUtilities.invokeLater(new Runnable() {
                 public void run() {
                     ppStatus.setText("Ready \u2014 " + ppDataRows.size() + " frames");
