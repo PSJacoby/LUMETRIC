@@ -5354,11 +5354,17 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                 // after ~1 ms, giving a natural 1 ms back-off between retries.
                 dcamNeedsRestart.set(false);
                 try {
-                    // Defensive stop first: the device adapter may hold an internal
-                    // 'isRunning' flag even after DCAM stops naturally at numFrames.
-                    // Calling stop on an already-idle camera is a no-op or near-instant.
-                    try { mmc.stopSequenceAcquisition(); } catch (Exception ignored) {}
+                    // Do NOT call stopSequenceAcquisition() here.
+                    // DCAM already stopped naturally (all numFrames slots filled) so it
+                    // is in idle state.  An explicit stop on an already-idle Hamamatsu
+                    // camera is not a no-op — it can corrupt the DCAM capture-engine
+                    // state machine, causing cascading errors on subsequent restarts
+                    // (observed: camera LED flashes red/green on second restart).
+                    // Just re-arm directly with startSequenceAcquisition().
                     mmc.startSequenceAcquisition(numFrames, 0, stopOnOverflow);
+                    // Brief settle: give DCAM time to fully enter trigger-wait state
+                    // before the next Arduino TTL pulse arrives.
+                    Thread.sleep(50);
                     print("DCAM restarted at frame " + framesProcessed + ".");
                 } catch (Exception re) {
                     print("WARNING: DCAM restart failed: " + re.getMessage());
