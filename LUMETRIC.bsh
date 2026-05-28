@@ -5308,9 +5308,64 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     // Switch-button events (byte 67 packets) patch any retroactive mismatches.
     RowTracker rowTracker = new RowTracker(config.acqSettings.sequenceRows);
 
+    // --- DCAM WATCHDOG THREAD ---
+    // Polls isSequenceRunning() every 1 ms and sets dcamNeedsRestart to true the
+    // moment DCAM's ring buffer is exhausted (all numFrames slots filled).
+    // All CMMCore state-changing calls stay on the main thread; the watchdog only
+    // reads state (isSequenceRunning() is a thread-safe read).
+    // AtomicBoolean ensures the watchdog's write is immediately visible to the
+    // main thread without relying on x86 hardware memory ordering.
+    final java.util.concurrent.atomic.AtomicBoolean dcamNeedsRestart =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    final Thread[] dcamWatchdog = {null};
+    dcamWatchdog[0] = new Thread(new Runnable() {
+        public void run() {
+            while (running[0]) {
+                try {
+                    if (!mmc.isSequenceRunning()) {
+                        dcamNeedsRestart.set(true);
+                    }
+                    Thread.sleep(1);
+                } catch (InterruptedException ie) {
+                    break;
+                } catch (Exception e) {
+                    print("DCAM watchdog: isSequenceRunning() error — " + e.getMessage());
+                }
+            }
+        }
+    });
+    dcamWatchdog[0].setDaemon(true);
+    dcamWatchdog[0].start();
+
     // Main acquisition loop
-    while (running[0] && (mmc.isSequenceRunning() || mmc.getRemainingImageCount() > 0)) {
+    // dcamNeedsRestart.get() keeps the loop alive for one extra iteration when DCAM
+    // stops and the MM buffer drains simultaneously (e.g. at low frame rates), so the
+    // restart check at the top of the loop body always gets a chance to fire.
+    while (running[0] && (mmc.isSequenceRunning() || mmc.getRemainingImageCount() > 0 || dcamNeedsRestart.get())) {
         try {
+            // --- DCAM RESTART CHECK ---
+            // Fires within ~1 ms of DCAM exhausting its ring buffer (watchdog latency).
+            // startSequenceAcquisition() only reallocates DCAM's ring buffer;
+            // MM's circular buffer and any unprocessed frames are completely untouched.
+            if (dcamNeedsRestart.get() && running[0]) {
+                // Clear the flag BEFORE attempting restart so that a failure doesn't
+                // cause a tight retry loop on every iteration.  If restart fails,
+                // the watchdog will re-detect the stopped DCAM and re-set the flag
+                // after ~1 ms, giving a natural 1 ms back-off between retries.
+                dcamNeedsRestart.set(false);
+                try {
+                    // Defensive stop first: the device adapter may hold an internal
+                    // 'isRunning' flag even after DCAM stops naturally at numFrames.
+                    // Calling stop on an already-idle camera is a no-op or near-instant.
+                    try { mmc.stopSequenceAcquisition(); } catch (Exception ignored) {}
+                    mmc.startSequenceAcquisition(numFrames, 0, stopOnOverflow);
+                    print("DCAM restarted at frame " + framesProcessed + ".");
+                } catch (Exception re) {
+                    print("WARNING: DCAM restart failed: " + re.getMessage());
+                    // watchdog will re-set the flag once it detects DCAM is still stopped
+                }
+            }
+
             // --- SWITCH-NOTIFICATION POLL ---
             // Drain any bytes the Arduino has sent since the last loop iteration.
             // The Arduino sends [67][destRow_1based][hi][lo] when it executes a
@@ -5475,6 +5530,9 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         }
     }
 
+    // Stop watchdog thread — no longer needed once the acquisition loop exits.
+    dcamWatchdog[0].interrupt();
+
     // CLEANUP — REVISED ORDER to prevent camera state corruption:
     // Stop sequence WHILE STILL IN TRIGGER MODE, then switch config.
     // Switching config during active sequence can leave DCAM in confused state.
@@ -5509,6 +5567,18 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     } catch (Exception e) {
         print("WARNING: stopSequenceAcquisition failed: " + e.getMessage());
     }
+
+    // 3.5. Wait for DCAM to fully settle after stopping.
+    //      At fast frame rates the camera may be mid-readout or mid-DMA-transfer
+    //      when stopSequenceAcquisition() is called.  Even though that call blocks
+    //      until DCAM's capture engine accepts the stop command, the camera's USB
+    //      readout pipeline can still be draining the last frame(s) for a few
+    //      milliseconds afterward.  Issuing setConfig() (TTL → USB mode switch)
+    //      before that drain completes sends a property-write to DCAM while its
+    //      state machine is in an intermediate cleanup state → "buggy camera".
+    //      2 s is conservative but cheap — it runs once at the end of an experiment.
+    try { Thread.sleep(2000); } catch (Exception e) {}
+    print("Post-stop settle wait complete — switching camera to snap mode.");
 
     // 4. NOW switch camera to snap mode (after acquisition fully stopped)
     try {
