@@ -1,6 +1,7 @@
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridLayout;
@@ -22,6 +23,8 @@ import java.util.prefs.Preferences;
 
 import javax.swing.AbstractCellEditor;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
@@ -31,6 +34,7 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
@@ -3888,14 +3892,11 @@ void createInlineAcquisitionWindow() {
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
-                // Send kill command (byte 66) to Arduino to stop hardware acquisition
-                try {
-                    mmcorej.CharVector cv66 = new mmcorej.CharVector();
-                    cv66.add((char)66);
-                    mmc.writeToSerialPort(config.serialPort, cv66);
-                } catch (Exception ardEx) {
-                    // print("Arduino kill error: " + ardEx.getMessage());
-                }
+                // Do NOT send byte 66 here.
+                // stopSequenceAcquisition() must be called first while Arduino is still
+                // active so DCAM is not in trigger-wait when stop is issued (matches
+                // Paulis_AACon order).  Both calls happen inside the acquisition thread's
+                // drain-bound block below.
                 acquisitionRunning[0] = false;
 
                 // Hide the frame immediately so the user gets instant visual feedback.
@@ -5099,23 +5100,30 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     try { mmc.setAutoShutter(false); } catch (Exception e) {}
     try { mmc.setShutterOpen(false); } catch (Exception e) {}
 
-    // Step 4: Only switch to snap config if the sequence is actually running.
-    //         This is needed to break an external-trigger-wait (which would cause
-    //         stopSequenceAcquisition() to block for ~30 s), but we must NOT write
-    //         TRIGGER SOURCE=INTERNAL unnecessarily: doing so on every pre-arm
-    //         (even when already stopped) means the camera goes INTERNAL → EXTERNAL
-    //         on every run. On the second run the Hamamatsu DCAM driver sometimes
-    //         fails to fully accept the EXTERNAL re-write, leaving it free-running.
-    //         The original Paulis_AACon script never toggled snap/trigger mid-session.
+    // Step 4: Stop any leftover sequence from the previous run.
+    //
+    //         Normal cleanup: stopSequenceAcquisition() is called inside the
+    //         acquisition loop's drain-bound block (while Arduino is still active),
+    //         so it returns immediately.  isSequenceRunning() is therefore FALSE here
+    //         on a clean second run \u2192 else-branch fires as a harmless no-op.
+    //
+    //         Crash-recovery: if the previous run was killed before the drain block
+    //         ran, isSequenceRunning() may still be TRUE.  The if-branch handles that:
+    //         snap config switches DCAM to INTERNAL trigger (breaks any leftover
+    //         trigger-wait), 300 ms gives DCAM time to absorb the change, then stop.
     if (mmc.isSequenceRunning()) {
-        print("Pre-arm: sequence still running — switching to snap config to release trigger-wait lock...");
+        print("Pre-arm: sequence still running (MM flag set) — stopping cleanly...");
+        // Snap config is already set by cleanup; applying it again is harmless and
+        // ensures we're safe even if cleanup ran in an unexpected order.
         try { mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig); } catch (Exception e) {}
         Thread.sleep(300);
         try { mmc.stopSequenceAcquisition(); } catch (Exception e) {}
         Thread.sleep(200);
     } else {
-        print("Pre-arm: sequence already stopped — skipping snap-config toggle.");
-        try { mmc.stopSequenceAcquisition(); } catch (Exception e) {} // idempotent safety call
+        // isSequenceRunning() is false — first run, or sequence was already closed.
+        // Snap config is already set (or will be set momentarily); bare stop is harmless.
+        print("Pre-arm: sequence already stopped.");
+        try { mmc.stopSequenceAcquisition(); } catch (Exception e) {}
     }
 
     // Step 5: Confirm sequence is actually stopped.
@@ -5168,26 +5176,13 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         return;
     }
 
-    // CRITICAL: numFrames must be SMALL (≤ ~1000) to keep DCAM in true sequence-capture mode.
-    // The Hamamatsu DCAM SDK uses numImages to switch between two internal modes:
-    //   - Sequence capture (small n):  sensor idles cleanly between external triggers
-    //   - Live capture    (large n):   sensor free-runs at maximum internal rate between
-    //                                  triggers, accumulating charge → bright frames.
-    // This is *not* about stopOnOverflow — it is a separate DCAM internal mode switch
-    // triggered purely by the numImages value. 500000, 1000000, Integer.MAX_VALUE all
-    // put DCAM in live-capture mode. Verified experimentally: changing numFrames changes
-    // the bright-frame frequency, which is impossible if only the interval mattered.
-    // 1000 frames @ 1 fps = 16 min — sufficient for any realistic experiment.
-    // If the experiment runs longer, the loop exits when the user presses Stop anyway.
-    int numFrames = 1000;
-    // IMPORTANT: stopOnOverflow must be TRUE.
-    // false → DCAM circular/ring buffer = "live capture" mode → camera's internal idle-reset
-    // cycles keep running between external J0 triggers → trigger arriving shortly after an idle
-    // reset causes the sensor to integrate charge from BOTH the idle cycle AND the J0-triggered
-    // exposure → double-bright frames.  It ALSO leaves the DCAM capture engine in live mode
-    // after stopSequenceAcquisition(), so the second acquisition run reverts to internal trigger.
-    // true → DCAM finite-sequence mode → camera idles cleanly between triggers, no idle resets.
-    // Matches the behaviour of the original working Paulis_AACon script (stopOnOverflow=true).
+    // Number of frames DCAM pre-allocates in its ring buffer per acquisition run.
+    // 10000 frames @ 1 fps ≈ 2.8 h — effectively unlimited for any realistic experiment.
+    // The watchdog will restart DCAM if the buffer is ever exhausted, but this should
+    // never happen in practice. (Reference: Paulis_AACon used 500000 without issues.)
+    int numFrames = 10000;
+    // stopOnOverflow=true: MM stops inserting frames into its circular buffer when full,
+    // preventing overwrite of unread frames. Must stay true to avoid dropped data.
     boolean stopOnOverflow = true;
 
     try {
@@ -5320,10 +5315,23 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     final Thread[] dcamWatchdog = {null};
     dcamWatchdog[0] = new Thread(new Runnable() {
         public void run() {
+            int consecutiveFalse = 0;
             while (running[0]) {
                 try {
                     if (!mmc.isSequenceRunning()) {
-                        dcamNeedsRestart.set(true);
+                        consecutiveFalse++;
+                        // Require 5 consecutive false readings (5 ms) before signalling
+                        // a restart.  startSequenceAcquisition() has a 1-2 ms internal
+                        // initialisation window where isSequenceRunning() briefly returns
+                        // false even though the sequence just started.  A single-poll check
+                        // would fire a spurious restart on the very next loop iteration,
+                        // causing a "restart not possible while sequence running" error.
+                        if (consecutiveFalse >= 5) {
+                            dcamNeedsRestart.set(true);
+                            consecutiveFalse = 0;
+                        }
+                    } else {
+                        consecutiveFalse = 0;
                     }
                     Thread.sleep(1);
                 } catch (InterruptedException ie) {
@@ -5338,11 +5346,45 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     dcamWatchdog[0].start();
 
     // Main acquisition loop
-    // dcamNeedsRestart.get() keeps the loop alive for one extra iteration when DCAM
-    // stops and the MM buffer drains simultaneously (e.g. at low frame rates), so the
-    // restart check at the top of the loop body always gets a chance to fire.
-    while (running[0] && (mmc.isSequenceRunning() || mmc.getRemainingImageCount() > 0 || dcamNeedsRestart.get())) {
+    // Condition is split into two parts:
+    //   (A) running[0] && (isSequenceRunning || dcamNeedsRestart) — normal active-acquisition gate
+    //   (B) getRemainingImageCount() > 0 — drain MM's circular buffer after Stop
+    // Part (B) is independent of running[0] so that frames already in MM's buffer when
+    // the user clicks Stop are fully processed and saved before teardown.
+    // Paulis_AACon stop order (enforced in the drain-bound block):
+    //   stopSequenceAcquisition() first (Arduino still active \u2192 fast), then byte 66.
+    // After DCAM is stopped, no new frames can arrive even if Arduino keeps triggering.
+    //
+    // drainBound: snapshot of getRemainingImageCount() taken after stop + byte 66.
+    // The drain loop is capped at this count so that a null return from
+    // popNextTaggedImage() (which should never happen but is an MM edge case) cannot
+    // keep the drain spinning forever if the count never reaches zero.
+    int drainBound = -1; // -1 = drain mode not yet entered
+    // Third condition (!running[0] && drainBound < 0) guarantees the loop body runs
+    // at least once after quit so the drain-bound block always fires — even when
+    // getRemainingImageCount() is 0 at the exact moment running[0] becomes false.
+    while ((running[0] && (mmc.isSequenceRunning() || dcamNeedsRestart.get())) || mmc.getRemainingImageCount() > 0 || (!running[0] && drainBound < 0)) {
         try {
+            // --- DRAIN BOUND: activate on first post-Stop iteration ---
+            if (!running[0]) {
+                if (drainBound < 0) {
+                    // First iteration after quit: stop DCAM while Arduino is still active.
+                    // Calling stop BEFORE byte 66 (Paulis_AACon order) means DCAM is NOT
+                    // in trigger-wait → stopSequenceAcquisition() returns immediately.
+                    try { mmc.stopSequenceAcquisition(); } catch (Exception e) {}
+                    // Now safe to kill Arduino triggers.
+                    try {
+                        mmcorej.CharVector cv66q = new mmcorej.CharVector();
+                        cv66q.add((char)66);
+                        mmc.writeToSerialPort(config.serialPort, cv66q);
+                        print("Byte 66 sent (Arduino stopped).");
+                    } catch (Exception e) {}
+                    drainBound = (int) mmc.getRemainingImageCount();
+                    if (drainBound > 0) print("Post-stop drain: " + drainBound + " frame(s) to flush.");
+                }
+                if (drainBound == 0) break;
+            }
+
             // --- DCAM RESTART CHECK ---
             // Fires within ~1 ms of DCAM exhausting its ring buffer (watchdog latency).
             // startSequenceAcquisition() only reallocates DCAM's ring buffer;
@@ -5447,6 +5489,8 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                 Object taggedImg = mmc.popNextTaggedImage();
 
                 if (taggedImg != null) {
+                    // Decrement drain bound so the safety exit tracks actual pops.
+                    if (!running[0] && drainBound > 0) drainBound--;
                     framesProcessed++;
                     final int currentFrameCount = framesProcessed;
                     SwingUtilities.invokeLater(new Runnable() {
@@ -5539,82 +5583,101 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     // Stop watchdog thread — no longer needed once the acquisition loop exits.
     dcamWatchdog[0].interrupt();
 
-    // CLEANUP — REVISED ORDER to prevent camera state corruption:
-    // Stop sequence WHILE STILL IN TRIGGER MODE, then switch config.
-    // Switching config during active sequence can leave DCAM in confused state.
+    // ── PROGRESS WINDOW ──────────────────────────────────────────────────────
+    // Shown immediately after the loop exits.  Uses an indeterminate progress bar
+    // (pulsing animation) because step durations are hardware-dependent.
+    // All Swing construction is on the EDT via invokeAndWait; status updates use
+    // invokeLater (fire-and-forget from the acquisition thread).
+    final JFrame[] statusFrame = {null};
+    final JLabel[] statusLabel = {null};
+    try {
+        SwingUtilities.invokeAndWait(new Runnable() {
+            public void run() {
+                JFrame f = new JFrame("LUMETRIC");
+                f.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+                f.setAlwaysOnTop(true);
+                f.setResizable(false);
 
-    // 1. Stop Arduino triggers
+                JPanel panel = new JPanel();
+                panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+                panel.setBorder(BorderFactory.createEmptyBorder(28, 40, 28, 40));
+                panel.setBackground(Color.WHITE);
+
+                JLabel title = new JLabel("Finishing experiment");
+                title.setFont(title.getFont().deriveFont(java.awt.Font.BOLD, 14f));
+                title.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+                JProgressBar bar = new JProgressBar();
+                bar.setIndeterminate(true);
+                bar.setAlignmentX(Component.CENTER_ALIGNMENT);
+                bar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 18));
+
+                JLabel status = new JLabel("Stopping acquisition...");
+                status.setFont(status.getFont().deriveFont(12f));
+                status.setForeground(new Color(90, 90, 90));
+                status.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+                panel.add(title);
+                panel.add(Box.createVerticalStrut(16));
+                panel.add(bar);
+                panel.add(Box.createVerticalStrut(10));
+                panel.add(status);
+
+                f.setContentPane(panel);
+                f.setMinimumSize(new Dimension(360, 1));
+                f.pack();
+                f.setLocationRelativeTo(null);
+                f.setVisible(true);
+
+                statusFrame[0] = f;
+                statusLabel[0] = status;
+            }
+        });
+    } catch (Exception swEx) { /* non-critical — continue without the window */ }
+
+    // CLEANUP:
+    // stopSequenceAcquisition() and byte 66 were already sent inside the acquisition
+    // loop's drain-bound block (Paulis_AACon order: stop while Arduino active → fast).
+    // Here we just restore camera state for MM GUI use.
+
+    // 1. Byte 66 safety-net — redundant if drain block ran, but harmless and necessary
+    //    if the loop exited naturally (DCAM's numFrames exhausted without user quit).
     try {
         mmcorej.CharVector cv66 = new mmcorej.CharVector();
         cv66.add((char)66);
         mmc.writeToSerialPort(config.serialPort, cv66);
-        print("Byte 66 sent — Arduino triggers stopped.");
-    } catch (Exception e) { print("WARNING: Could not send stop byte: " + e.getMessage()); }
-
-    // 2. Send one final trigger pulse to break trigger-wait if camera is stuck waiting
-    //    This ensures stopSequenceAcquisition() won't block for 30s timeout
-    try {
-        mmcorej.CharVector cvKick = new mmcorej.CharVector();
-        cvKick.add((char)1);  // Case 1: set digital output
-        cvKick.add((char)1);  // Pattern = 0x01 (J0 HIGH - trigger pulse)
-        mmc.writeToSerialPort(config.serialPort, cvKick);
-        Thread.sleep(10);     // 10ms pulse
-        cvKick = new mmcorej.CharVector();
-        cvKick.add((char)1);
-        cvKick.add((char)0);  // J0 LOW
-        mmc.writeToSerialPort(config.serialPort, cvKick);
-        print("Sent final trigger pulse to release camera.");
     } catch (Exception e) {}
 
-    // 3. Stop sequence WHILE STILL IN TRIGGER MODE (camera state stays clean)
-    try {
-        mmc.stopSequenceAcquisition();
-        print("Sequence acquisition stopped (in trigger mode).");
-    } catch (Exception e) {
-        print("WARNING: stopSequenceAcquisition failed: " + e.getMessage());
-    }
-
-    // 3.5. Wait for DCAM to fully settle after stopping.
-    //      At fast frame rates the camera may be mid-readout or mid-DMA-transfer
-    //      when stopSequenceAcquisition() is called.  Even though that call blocks
-    //      until DCAM's capture engine accepts the stop command, the camera's USB
-    //      readout pipeline can still be draining the last frame(s) for a few
-    //      milliseconds afterward.  Issuing setConfig() (TTL → USB mode switch)
-    //      before that drain completes sends a property-write to DCAM while its
-    //      state machine is in an intermediate cleanup state → "buggy camera".
-    //      2 s is conservative but cheap — it runs once at the end of an experiment.
-    try { Thread.sleep(2000); } catch (Exception e) {}
-    print("Post-stop settle wait complete — switching camera to snap mode.");
-
-    // 4. NOW switch camera to snap mode (after acquisition fully stopped)
+    // 2. Restore snap mode so MM GUI operations work correctly.
+    //    (Snap preset contains only trigger properties — no ROI/binning reset.)
+    SwingUtilities.invokeLater(new Runnable() { public void run() {
+        if (statusLabel[0] != null) statusLabel[0].setText("Switching to snap mode..."); } });
     try {
         mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
-        Thread.sleep(50);
         print("Camera switched to snap mode.");
-    } catch (Exception e) { print("WARNING: Could not restore snap config: " + e.getMessage()); }
+    } catch (Exception e) { print("WARNING: Could not switch to snap config: " + e.getMessage()); }
 
-    // 3b. Clear circular buffer to prevent old frames from contaminating next run
+    // 3. Clear circular buffer.
+    SwingUtilities.invokeLater(new Runnable() { public void run() {
+        if (statusLabel[0] != null) statusLabel[0].setText("Clearing buffers..."); } });
     try {
         mmc.clearCircularBuffer();
         print("Circular buffer cleared.");
     } catch (Exception e) {}
 
-    // 3c. Reset Arduino Port J pins to LOW (all off) for clean next-run start
+    // 7. Reset Arduino Port J pins to LOW.
     try {
         mmcorej.CharVector cvReset = new mmcorej.CharVector();
-        cvReset.add((char)1);  // Case 1: set digital output
-        cvReset.add((char)0);  // Pattern = 0 (all pins LOW)
+        cvReset.add((char)1);
+        cvReset.add((char)0);
         mmc.writeToSerialPort(config.serialPort, cvReset);
         print("Arduino Port J reset to LOW.");
     } catch (Exception e) {}
 
-    // 4. Restore auto-shutter now that teardown is complete.
-    //    Arduino is already reset (all pins LOW), camera is in snap mode — safe to re-enable.
-    //    The next run's pre-arm (step 3) calls setAutoShutter(false) again before any
-    //    trigger config switch, so there is no risk of corrupting trigger state.
+    // 8. Restore auto-shutter and resume Arduino-Hub.
+    SwingUtilities.invokeLater(new Runnable() { public void run() {
+        if (statusLabel[0] != null) statusLabel[0].setText("Restoring camera settings..."); } });
     try { mmc.setAutoShutter(true); } catch (Exception e) {}
-
-    // Resume Arduino-Hub monitor thread now that LUMETRIC no longer owns the port.
     try {
         mmc.setProperty("Arduino-Hub", "Paused", "0");
         print("Arduino-Hub monitor thread resumed.");
@@ -5622,8 +5685,10 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
         print("NOTE: Could not resume Arduino-Hub: " + e.getMessage());
     }
 
-    // Export switch events log if any events were captured
+    // Export switch events log if any events were captured.
     if (switchEvents.size() > 0) {
+        SwingUtilities.invokeLater(new Runnable() { public void run() {
+            if (statusLabel[0] != null) statusLabel[0].setText("Saving event log..."); } });
         try {
             String switchCsvPath = config.experimentFolder + java.io.File.separator + "SwitchEvents.csv";
             java.io.PrintWriter swWriter = new java.io.PrintWriter(new java.io.FileWriter(switchCsvPath));
@@ -5640,46 +5705,45 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     }
 
     // Final report
-
-
-
     if (approxCapacity > 0) {
         // print("Peak buffer usage: " + (int)((double)maxBufferDepth / approxCapacity * 100) + "%");
     }
-    if (overflowDetected) {
 
-    } else {
-
+    // Convert to stack if requested — this is the potentially long step.
+    if (config.acqSettings.convertToStack || config.acqSettings.stackPerRow) {
+        SwingUtilities.invokeLater(new Runnable() { public void run() {
+            if (statusLabel[0] != null) statusLabel[0].setText("Converting images - please wait..."); } });
+        if (config.acqSettings.convertToStack) {
+            convertTiffsToStack(config.experimentFolder);
+        } else {
+            convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
+        }
     }
 
-    // Convert to stack if requested
-    if (config.acqSettings.convertToStack) {
-        convertTiffsToStack(config.experimentFolder);
-    } else if (config.acqSettings.stackPerRow) {
-        convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
-    }
-
-    // Dispose the acquisition frame after acquisition completes.
-    // The frame may already be invisible (hidden immediately by the Quit handler
-    // for instant user feedback), but dispose() must still be called to release
-    // native window resources.
+    // Dispose the acquisition frame (may already be invisible from quit handler).
     if (acqFrame != null) {
         try {
             SwingUtilities.invokeAndWait(new Runnable() {
-                public void run() {
-                    acqFrame.dispose();
-                }
+                public void run() { acqFrame.dispose(); }
             });
         } catch (Exception ex) {
-            // If the EDT is gone (e.g. MM shutting down), just dispose directly.
             try { acqFrame.dispose(); } catch (Exception ex2) {}
         }
     }
 
-    // Return to main menu with settings from this experiment auto-reloaded
+    // Hand off to main menu — update status text, give the EDT time to render it,
+    // then swap windows.  Without the sleep the two invokeLater calls are queued
+    // back-to-back and the dispose fires before the user ever sees the last message.
+    SwingUtilities.invokeLater(new Runnable() { public void run() {
+        if (statusLabel[0] != null) statusLabel[0].setText("Restarting LUMETRIC..."); } });
+    try { Thread.sleep(600); } catch (Exception e) {}
+
     final String cbExpFolder = config.experimentFolder;
     SwingUtilities.invokeLater(new Runnable() {
-        public void run() { restartMainGUI(cbExpFolder); }
+        public void run() {
+            if (statusFrame[0] != null) statusFrame[0].dispose();
+            restartMainGUI(cbExpFolder);
+        }
     });
 }
 
