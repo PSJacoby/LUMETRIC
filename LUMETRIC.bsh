@@ -5143,10 +5143,11 @@ void createDefaultROIs() {
 ArrayList expandPauseRows(ArrayList originalRows) {
     final int THRESHOLD_MS      = 30000; // keep-alive for pauses > 30 s (camera timeout)
     final int KA_INTERVAL_MS    = 10000; // keep-alive pulse every 10 s
-    final int KA_EXPOSURE_MS    = 10;    // 10 ms dark exposure (camera trigger, no LEDs)
+    final int KA_EXPOSURE_MS    = 1;     // 1 ms — enough to trigger the camera; minimises light
+                                          // dose through constIllum on keep-alive + flush rows
     final int FLUSH_THRESHOLD_MS = 500;  // flush trigger for pauses > 500 ms
-    final int FLUSH_INTERVAL_MS  = 60;   // flush trigger interval: 10 ms exposure + ~50 ms gap
-                                          // → readout (~20 ms) + ~30 ms idle before real frame
+    final int FLUSH_INTERVAL_MS  = 60;   // flush trigger interval: 1 ms exposure + ~59 ms gap
+                                          // → readout (~20 ms) + ~39 ms idle before real frame
 
     int N = originalRows.size();
 
@@ -5321,7 +5322,7 @@ ArrayList expandPauseRows(ArrayList originalRows) {
     }
 
     // Prepend the pre-acquisition flush trigger as expanded row 0 (Arduino row 1).
-    // This fires one short camera trigger (10 ms) with a 60 ms total interval just
+    // This fires one short camera trigger (1 ms) with a 60 ms total interval just
     // before the very first real imaging frame, resetting the sensor and eliminating
     // the bright-first-frame artifact caused by charge accumulated while the camera
     // was armed and waiting.  constIllum = 0 (no prior photoswitching state).
