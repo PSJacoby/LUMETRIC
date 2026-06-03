@@ -1399,6 +1399,10 @@ okButton.addActionListener(new ActionListener() {
                             }
                         }
 
+                        // Expand pause rows before saving the CSV so the Arduino file
+                        // reflects what will actually be uploaded (keep-alive + flush rows).
+                        config.expandedSequenceRows = expandPauseRows(config.acqSettings.sequenceRows);
+
                         if (!exportTableToCSV()) {
                             SwingUtilities.invokeLater(new Runnable() {
                                 public void run() {
@@ -1864,6 +1868,10 @@ vizStartButton.addActionListener(new ActionListener() {
                                 return;
                             }
                         }
+
+                        // Expand pause rows before saving the CSV so the Arduino file
+                        // reflects what will actually be uploaded (keep-alive + flush rows).
+                        config.expandedSequenceRows = expandPauseRows(config.acqSettings.sequenceRows);
 
                         if (!exportTableToCSV()) {
                             SwingUtilities.invokeLater(new Runnable() {
@@ -2766,7 +2774,11 @@ boolean exportTableToCSV() {
 
     String baseName = csvFileReadable.getName().replace(".csv", "");
     File csvFileArduino = new File(saveDirFile, baseName + "_Arduino.csv");
-    ArrayList tableData = config.acqSettings.sequenceRows;
+    // Use the expanded table (with keep-alive / flush rows) when it exists so that
+    // the saved CSV exactly mirrors what was uploaded to the Arduino.  Extra columns
+    // KeepAlive and OrigRowNum are included for debugging.
+    boolean hasExpanded = (config.expandedSequenceRows != null);
+    ArrayList tableData = hasExpanded ? config.expandedSequenceRows : config.acqSettings.sequenceRows;
 
     try {
         // ===== FULL SETTINGS VERSION (loadable via "Load Settings") =====
@@ -2774,7 +2786,9 @@ boolean exportTableToCSV() {
 
         // ===== ARDUINO VERSION =====
         PrintWriter writerArduino = new PrintWriter(new FileWriter(csvFileArduino));
-        writerArduino.println("Channel,Exposure [ms],Frame Interval [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto");
+        String header = "Channel,Exposure [ms],Frame Interval [ms],Frames,Loop Goto,Loop Times,Constant Illum,Loop Switch Goto";
+        if (hasExpanded) header += ",KeepAlive,OrigRowNum";
+        writerArduino.println(header);
         for (int i = 0; i < tableData.size(); i++) {
             StringBuilder row = new StringBuilder();
             ArrayList rowData = (ArrayList) tableData.get(i);
@@ -3702,10 +3716,8 @@ void createInlineAcquisitionWindow() {
     boolean useCircularBufferMode = config.useCircularBuffer && !config.useSimpleSnapMode;
     if (useCircularBufferMode) {
     try {
-        // Expand any long pause/photoswitching rows (exposure=0) with periodic
-        // keep-alive camera triggers so the camera never times out waiting for
-        // an external trigger during a long pause.  constIllum is preserved.
-        config.expandedSequenceRows = expandPauseRows(config.acqSettings.sequenceRows);
+        // expandPauseRows() was already called in the background thread before
+        // exportTableToCSV(), so config.expandedSequenceRows is already set.
         ArrayList tableData = config.expandedSequenceRows;
         int nRows = tableData.size();
         // Firmware limit is MAX_ACQ_ROWS = 32. Exceeding it causes the Arduino to reject
@@ -5225,22 +5237,25 @@ ArrayList expandPauseRows(ArrayList originalRows) {
                 rowA.add(""); rowA.add("keepAlive"); rowA.add("");
                 expanded.add(rowA);
 
-                // Row B': last keep-alive, shortened interval, carries loop/switch refs
+                // Row B': last keep-alive, shortened interval — NO loop refs so the
+                // Arduino falls through to Row C (flush) rather than jumping past it.
                 ArrayList rowB = new ArrayList();
                 rowB.add(row.get(0)); rowB.add(""); rowB.add(String.valueOf(KA_EXPOSURE_MS));
                 rowB.add(String.valueOf((int)rowBIntervalShort)); rowB.add("1");
-                rowB.add(newLg  > 0 ? String.valueOf(newLg)  : "");
-                rowB.add(origLt); rowB.add(constIllum);
-                rowB.add(newLsg > 0 ? String.valueOf(newLsg) : "");
-                rowB.add("keepAlive"); rowB.add("");
+                rowB.add(""); rowB.add(""); rowB.add(constIllum);
+                rowB.add(""); rowB.add("keepAlive"); rowB.add("");
                 expanded.add(rowB);
 
-                // Row C: flush trigger — resets sensor just before first real imaging frame
+                // Row C: flush trigger — fires one short trigger so the sensor is reset;
+                // carries the loop/switch refs from the original pause row so the Arduino
+                // jumps to the correct imaging row after the flush fires.
                 ArrayList rowC = new ArrayList();
                 rowC.add(row.get(0)); rowC.add(""); rowC.add(String.valueOf(KA_EXPOSURE_MS));
                 rowC.add(String.valueOf(FLUSH_INTERVAL_MS)); rowC.add("1");
-                rowC.add(""); rowC.add(""); rowC.add(constIllum);
-                rowC.add(""); rowC.add("keepAlive"); rowC.add("");
+                rowC.add(newLg  > 0 ? String.valueOf(newLg)  : "");
+                rowC.add(origLt); rowC.add(constIllum);
+                rowC.add(newLsg > 0 ? String.valueOf(newLsg) : "");
+                rowC.add("keepAlive"); rowC.add("");
                 expanded.add(rowC);
                 continue;
 
@@ -5271,22 +5286,25 @@ ArrayList expandPauseRows(ArrayList originalRows) {
                         expanded.add(rowA);
                     }
 
-                    // Row B: last pause frame, shortened by FLUSH_INTERVAL_MS, carries loop refs
+                    // Row B: last pause frame, shortened by FLUSH_INTERVAL_MS — NO loop refs
+                    // so the Arduino falls through to Row C (flush) rather than jumping past it.
                     ArrayList rowB = new ArrayList();
                     rowB.add(row.get(0)); rowB.add(""); rowB.add("0");
                     rowB.add(String.valueOf(iMs - FLUSH_INTERVAL_MS)); rowB.add("1");
-                    rowB.add(newLg  > 0 ? String.valueOf(newLg)  : "");
-                    rowB.add(origLt); rowB.add(constIllum);
-                    rowB.add(newLsg > 0 ? String.valueOf(newLsg) : "");
-                    rowB.add(""); rowB.add(String.valueOf(i + 1));
+                    rowB.add(""); rowB.add(""); rowB.add(constIllum);
+                    rowB.add(""); rowB.add(""); rowB.add(String.valueOf(i + 1));
                     expanded.add(rowB);
 
-                    // Row C: flush trigger — resets sensor just before first real imaging frame
+                    // Row C: flush trigger — fires one short trigger so the sensor is reset;
+                    // carries the loop/switch refs from the original pause row so the Arduino
+                    // jumps to the correct imaging row after the flush fires.
                     ArrayList rowC = new ArrayList();
                     rowC.add(row.get(0)); rowC.add(""); rowC.add(String.valueOf(KA_EXPOSURE_MS));
                     rowC.add(String.valueOf(FLUSH_INTERVAL_MS)); rowC.add("1");
-                    rowC.add(""); rowC.add(""); rowC.add(constIllum);
-                    rowC.add(""); rowC.add("keepAlive"); rowC.add("");
+                    rowC.add(newLg  > 0 ? String.valueOf(newLg)  : "");
+                    rowC.add(origLt); rowC.add(constIllum);
+                    rowC.add(newLsg > 0 ? String.valueOf(newLsg) : "");
+                    rowC.add("keepAlive"); rowC.add("");
                     expanded.add(rowC);
                     continue;
                 }
