@@ -3291,6 +3291,12 @@ void createInlineAcquisitionWindow() {
     final ArrayList datasets = new ArrayList();
     boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
 
+    // Apply default full-image ROIs now (before graph series are created)
+    // so numSeries is correct even when the user hasn't drawn any ROIs.
+    if (config.storedROIs == null || config.storedROIs.isEmpty()) {
+        createDefaultROIs();
+    }
+
     for (int i = 0; i < 4; i++) {
         ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
         String graphName = "Graph " + (i + 1);
@@ -5018,6 +5024,48 @@ void convertTiffsToStacksPerRow(String experimentFolder, ArrayList dataRows) {
     }
 }
 
+// Build a default full-image ROI set when the user has not drawn any ROIs.
+// Temporal: one ROI spanning the full sensor area.
+// Spatial:  two ROIs each covering one half — source and mirror — based on
+//           the current splitAxis and roiSourceRegion settings.
+void createDefaultROIs() {
+    int w = (int) mmc.getImageWidth();
+    int h = (int) mmc.getImageHeight();
+    boolean isSpatial = config.acqSettings.processingMode.equals("Spatial");
+    config.storedROIs = new ArrayList();
+
+    if (!isSpatial) {
+        // Temporal: single ROI = entire frame
+        ij.gui.Roi fullRoi = new ij.gui.Roi(0, 0, w, h);
+        config.storedROIs.add(new ROIMetadata(fullRoi, "original", w, h));
+        print("Default ROI: full image (" + w + " x " + h + ").");
+    } else {
+        String splitAxis  = config.acqSettings.spatialConfig.splitAxis;
+        String srcRegion  = config.acqSettings.spatialConfig.roiSourceRegion;
+        String mirRegion;
+        ij.gui.Roi srcRoi, mirRoi;
+
+        if (splitAxis.equals("Horizontal")) {
+            int halfH = h / 2;
+            mirRegion = srcRegion.equals("Upper") ? "Lower" : "Upper";
+            int srcY  = srcRegion.equals("Upper") ? 0    : halfH;
+            int mirY  = srcRegion.equals("Upper") ? halfH : 0;
+            srcRoi = new ij.gui.Roi(0, srcY, w, halfH);
+            mirRoi = new ij.gui.Roi(0, mirY, w, halfH);
+        } else {
+            int halfW = w / 2;
+            mirRegion = srcRegion.equals("Left") ? "Right" : "Left";
+            int srcX  = srcRegion.equals("Left") ? 0     : halfW;
+            int mirX  = srcRegion.equals("Left") ? halfW : 0;
+            srcRoi = new ij.gui.Roi(srcX, 0, halfW, h);
+            mirRoi = new ij.gui.Roi(mirX, 0, halfW, h);
+        }
+        config.storedROIs.add(new ROIMetadata(srcRoi, srcRegion, w, h));
+        config.storedROIs.add(new ROIMetadata(mirRoi, mirRegion, w, h));
+        print("Default ROIs: " + srcRegion + " half + " + mirRegion + " half (" + splitAxis + " split).");
+    }
+}
+
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
 void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents) {
 
@@ -5039,11 +5087,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     }
 
 
-    // Get stored ROIs from config
-    if (config.storedROIs == null || config.storedROIs.isEmpty()) {
-
-        return;
-    }
+    // Get stored ROIs from config (default full-image ROIs already created by caller if needed).
     // print("Using " + config.storedROIs.size() + " stored ROIs");
 
     // Setup circular buffer
@@ -5757,11 +5801,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
         return;
     }
 
-    // Get stored ROIs from config (no need for visible ROI Manager)
-    if (config.storedROIs == null || config.storedROIs.isEmpty()) {
-
-        return;
-    }
+    // Get stored ROIs from config (default full-image ROIs already created by caller if needed).
     // print("Using " + config.storedROIs.size() + " stored ROIs");
 
     // Parse acquisition settings from table
