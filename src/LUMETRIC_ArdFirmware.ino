@@ -330,6 +330,9 @@ void doExposure(byte pinPattern, uint16_t exposureMs, byte constIllum, uint16_t 
 #ifdef CAM_FEEDBACK_BYPASS
       // No feedback wire: fire J0 + LEDs simultaneously.
       setPortJ(pinPattern | 0x01);
+      // Start exposure timer immediately after asserting the trigger so that the
+      // LED-on duration is exactly exposureUs regardless of any serial overhead below.
+      unsigned long expStartUs = micros();
 
       // Check for quit byte immediately after asserting trigger
       if (Serial.available() > 0) {
@@ -339,7 +342,6 @@ void doExposure(byte pinPattern, uint16_t exposureMs, byte constIllum, uint16_t 
       if (!running) { setPortJ(0); return; }
 
       // Busy-wait for exposureMs with µs precision.
-      unsigned long expStartUs = micros();
       while ((unsigned long)(micros() - expStartUs) < exposureUs) {
          checkSerial_acq(running, switchReq);
          if (!running) { setPortJ(0); return; }
