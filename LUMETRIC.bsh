@@ -234,6 +234,11 @@ class MicroscopeConfig {
     ArrayList storedROIs = new ArrayList(); // Store ROIs for acquisition
     String experimentFolder = ""; // Store experiment folder path
     String imagesFolder = ""; // Store images subfolder path (for TIFF files)
+    // Expanded sequence table for the current acquisition run (null = not yet built).
+    // Built by expandPauseRows() just before the Arduino upload; may contain injected
+    // keep-alive rows for long pause/photoswitching rows.  Original sequenceRows is
+    // never modified so Save / Load Settings is unaffected.
+    ArrayList expandedSequenceRows = null;
 
     // Load configuration from file
     boolean loadFromFile(String filePath) {
@@ -834,6 +839,28 @@ class RowTracker {
             return (s.isEmpty() || s.equals("0")) ? 0 : Integer.parseInt(s);
         } catch (Exception e) { return 0; }
     }
+    int getExposure(int r) {
+        try { return Integer.parseInt(((ArrayList)seqRows.get(r)).get(2).toString().trim()); }
+        catch (Exception e) { return 0; }
+    }
+    // True when the CURRENT row is a keep-alive row injected by expandPauseRows().
+    boolean isKeepAliveRow() {
+        if (currentRow < 0 || currentRow >= nRows) return false;
+        try {
+            ArrayList row = (ArrayList) seqRows.get(currentRow);
+            return row.size() > 9 && "keepAlive".equals(row.get(9).toString().trim());
+        } catch (Exception e) { return false; }
+    }
+    // Maps an expanded 1-based row index back to the original (user-visible) 1-based row
+    // number stored in col 10.  Falls back to the expanded index when col 10 is absent.
+    int getOriginalRowNum(int expandedRow) {
+        if (expandedRow < 1 || expandedRow > nRows) return expandedRow;
+        try {
+            ArrayList row = (ArrayList) seqRows.get(expandedRow - 1);
+            String s = row.size() > 10 ? row.get(10).toString().trim() : "";
+            return s.isEmpty() ? expandedRow : Integer.parseInt(s);
+        } catch (Exception e) { return expandedRow; }
+    }
 
     // Returns the 1-based sequence-row number for the CURRENT frame,
     // then advances internal state to the next frame.
@@ -841,7 +868,10 @@ class RowTracker {
     int advanceFrame() {
         if (nRows == 0) return 1;
 
-        int result = currentRow + 1;   // 1-based row for this frame
+        // Return the original (user-visible) row number from col 10 when present
+        // (expandPauseRows stores it there so that shifted imaging rows still report
+        // the correct row number to processFrameData and the graphs).
+        int result = getOriginalRowNum(currentRow + 1);
 
         framesDoneInRow++;
         int frames = getFrames(currentRow);
@@ -875,6 +905,13 @@ class RowTracker {
 
         // Clamp to last row if we run off the end (infinite last row)
         if (currentRow >= nRows) currentRow = nRows - 1;
+
+        // Skip pure-wait / photoswitching rows (exposure=0, finite frame count):
+        // they produce no camera frames, so the tracker must not sit waiting for
+        // frames that will never arrive.  Rows with frames=0 (infinite) are kept.
+        while (currentRow < nRows - 1 && getExposure(currentRow) == 0 && getFrames(currentRow) > 0) {
+            currentRow++;
+        }
     }
 
     // Called when a switch-button notification arrives from the Arduino.
@@ -889,11 +926,14 @@ class RowTracker {
     void patch(int evArdFr, int evDestRow, ArrayList dataRows,
                ArrayList correctedDataRows, ArrayList btCorrDataRows) {
         int firstFrameNewRow = evArdFr + 1;
-        _patchList(dataRows,          firstFrameNewRow, evDestRow);
-        _patchList(correctedDataRows, firstFrameNewRow, evDestRow);
-        _patchList(btCorrDataRows,    firstFrameNewRow, evDestRow);
+        // Patch data with the original (user-visible) row number so graph lookups
+        // stay correct when the expanded table has shifted imaging row indices.
+        int origDest = getOriginalRowNum(evDestRow);
+        _patchList(dataRows,          firstFrameNewRow, origDest);
+        _patchList(correctedDataRows, firstFrameNewRow, origDest);
+        _patchList(btCorrDataRows,    firstFrameNewRow, origDest);
 
-        // Force-sync tracker to new row
+        // Force-sync tracker to the expanded row (internal index)
         currentRow      = evDestRow - 1;
         framesDoneInRow = 0;
         loopCounters[currentRow] = 0;  // firmware resets loop counter on switch
@@ -3662,7 +3702,11 @@ void createInlineAcquisitionWindow() {
     boolean useCircularBufferMode = config.useCircularBuffer && !config.useSimpleSnapMode;
     if (useCircularBufferMode) {
     try {
-        ArrayList tableData = config.acqSettings.sequenceRows;
+        // Expand any long pause/photoswitching rows (exposure=0) with periodic
+        // keep-alive camera triggers so the camera never times out waiting for
+        // an external trigger during a long pause.  constIllum is preserved.
+        config.expandedSequenceRows = expandPauseRows(config.acqSettings.sequenceRows);
+        ArrayList tableData = config.expandedSequenceRows;
         int nRows = tableData.size();
         // Firmware limit is MAX_ACQ_ROWS = 32. Exceeding it causes the Arduino to reject
         // the table header but leave the row bytes in the RX buffer, corrupting the stream.
@@ -5066,6 +5110,226 @@ void createDefaultROIs() {
     }
 }
 
+// ==================== Pause Row Expansion ====================
+// Returns an expanded copy of originalRows that:
+//
+//  A) For every exposure=0 row whose total duration > THRESHOLD_MS (30 s):
+//     Replaces it with keep-alive rows (10 ms dark triggers every 10 s) so the camera
+//     never waits longer than ~20 s for a trigger and does not time out.
+//
+//  B) For every exposure=0 row whose total duration > FLUSH_THRESHOLD_MS (500 ms) AND whose
+//     per-frame interval > FLUSH_INTERVAL_MS (60 ms):
+//     Appends a "flush trigger" row (Row C) immediately before the first real imaging frame,
+//     shortening the last pause repeat by FLUSH_INTERVAL_MS so total pause duration is exact.
+//       fr == 1 → Row B (iMs-60 ms) + Row C (60 ms)           = iMs  ✓
+//       fr >  1 → Row A (fr-1 × iMs) + Row B (iMs-60 ms) + Row C (60 ms)  = fr×iMs  ✓
+//     If per-frame interval <= FLUSH_INTERVAL_MS the flush is skipped (no timing overhead).
+//     Without flush, the first frame after any pause is bright due to charge accumulated in
+//     the sensor while it waited for a trigger.
+//
+//  constIllum IS PRESERVED from the original row in every keep-alive / flush row so that
+//  photoswitching illumination continues uninterrupted throughout the pause.
+//
+//  Row layout (cols 0-10):
+//    0  display row#   1  channel ("")   2  exposureMs   3  intervalMs
+//    4  frames         5  loopGoto       6  loopTimes
+//    7  constIllum (preserved)  8  loopSwitchGoto
+//    9  "keepAlive" or ""       10 original 1-based row# ("" on keep-alive/flush rows)
+//
+//  If no row needs expansion, originalRows is returned as-is (zero overhead).
+ArrayList expandPauseRows(ArrayList originalRows) {
+    final int THRESHOLD_MS      = 30000; // keep-alive for pauses > 30 s (camera timeout)
+    final int KA_INTERVAL_MS    = 10000; // keep-alive pulse every 10 s
+    final int KA_EXPOSURE_MS    = 10;    // 10 ms dark exposure (camera trigger, no LEDs)
+    final int FLUSH_THRESHOLD_MS = 500;  // flush trigger for pauses > 500 ms
+    final int FLUSH_INTERVAL_MS  = 60;   // flush trigger interval: 10 ms exposure + ~50 ms gap
+                                          // → readout (~20 ms) + ~30 ms idle before real frame
+
+    int N = originalRows.size();
+
+    // ---- Pass 1: build orig2exp[1..N] mapping ----
+    // Row index 0 in the expanded table is always the pre-acquisition flush trigger.
+    // Therefore expanded row indices start at 2 (1-based) so that orig2exp shifts all
+    // loopGoto / loopSwitchGoto references by +1 automatically.
+    int[] orig2exp = new int[N + 1]; // 1-based; index 0 unused
+    boolean anyExpansion = false;    // used only to log whether pause rows were found
+    int ei = 2; // 1-based; row 1 is reserved for the pre-acquisition flush trigger
+    for (int i = 0; i < N; i++) {
+        orig2exp[i + 1] = ei;
+        ArrayList row = (ArrayList) originalRows.get(i);
+        int exp = 0;
+        try { exp = Integer.parseInt(row.get(2).toString().trim()); } catch (Exception e) {}
+        if (exp == 0) {
+            int iMs = 0, fr = 0;
+            try { iMs = Integer.parseInt(row.get(3).toString().trim()); } catch (Exception e) {}
+            try { fr  = Integer.parseInt(row.get(4).toString().trim()); } catch (Exception e) {}
+            long totalMs = fr > 0 ? (long)iMs * fr : 0;
+            if (totalMs > THRESHOLD_MS) {
+                // Row A + Row B' (shortened) + Row C (flush) = 3 rows
+                ei += 3; anyExpansion = true; continue;
+            } else if (totalMs > FLUSH_THRESHOLD_MS) {
+                if (iMs > FLUSH_INTERVAL_MS) {
+                    // Timing-precise: shorten last repeat by FLUSH_INTERVAL_MS, append Row C.
+                    // fr==1 → 2 rows; fr>1 → Row A (fr-1 full) + Row B (1 shortened) + Row C = 3 rows
+                    ei += (fr > 1) ? 3 : 2; anyExpansion = true;
+                } else {
+                    // Per-frame interval too short to absorb flush without going invalid;
+                    // fall through — original row copied as-is, no flush, no timing overhead.
+                    ei += 1;
+                }
+                continue;
+            }
+        }
+        ei += 1;
+    }
+
+    // ---- Pass 2: always build expanded list ----
+    // (The pre-acquisition flush row is always prepended, so we never short-circuit.)
+    ArrayList expanded = new ArrayList();
+    for (int i = 0; i < N; i++) {
+        ArrayList row = (ArrayList) originalRows.get(i);
+
+        int expMs = 0;
+        try { expMs = Integer.parseInt(row.get(2).toString().trim()); } catch (Exception e) {}
+
+        String constIllum = "";
+        try { constIllum = row.get(7).toString().trim(); } catch (Exception e) {}
+
+        if (expMs == 0) {
+            int iMs = 0, fr = 0;
+            try { iMs = Integer.parseInt(row.get(3).toString().trim()); } catch (Exception e) {}
+            try { fr  = Integer.parseInt(row.get(4).toString().trim()); } catch (Exception e) {}
+            long totalMs = fr > 0 ? (long)iMs * fr : 0;
+
+            if (totalMs > THRESHOLD_MS) {
+                // ---- Long pause: keep-alive rows + flush trigger ----
+                // kaFrames >= 2 for totalMs > 30 000 ms
+                int kaFrames = (int)((totalMs - KA_INTERVAL_MS) / KA_INTERVAL_MS);
+                long rowBInterval = totalMs - (long)(kaFrames - 1) * KA_INTERVAL_MS;
+                // Shorten Row B by FLUSH_INTERVAL_MS; Row C (flush) provides the
+                // final trigger and absorbs those ms → total timing preserved exactly.
+                long rowBIntervalShort = rowBInterval - FLUSH_INTERVAL_MS;
+
+                int origLg = 0, origLsg = 0; String origLt = "";
+                try { origLg  = Integer.parseInt(row.get(5).toString().trim()); } catch (Exception e) {}
+                try { origLsg = Integer.parseInt(row.get(8).toString().trim()); } catch (Exception e) {}
+                try { origLt  = row.get(6).toString().trim();                   } catch (Exception e) {}
+                int newLg  = (origLg  > 0 && origLg  <= N) ? orig2exp[origLg]  : 0;
+                int newLsg = (origLsg > 0 && origLsg <= N) ? orig2exp[origLsg] : 0;
+
+                // Row A: (kaFrames-1) keep-alive frames @ KA_INTERVAL_MS, no loop
+                ArrayList rowA = new ArrayList();
+                rowA.add(row.get(0)); rowA.add(""); rowA.add(String.valueOf(KA_EXPOSURE_MS));
+                rowA.add(String.valueOf(KA_INTERVAL_MS)); rowA.add(String.valueOf(kaFrames - 1));
+                rowA.add(""); rowA.add(""); rowA.add(constIllum);
+                rowA.add(""); rowA.add("keepAlive"); rowA.add("");
+                expanded.add(rowA);
+
+                // Row B': last keep-alive, shortened interval, carries loop/switch refs
+                ArrayList rowB = new ArrayList();
+                rowB.add(row.get(0)); rowB.add(""); rowB.add(String.valueOf(KA_EXPOSURE_MS));
+                rowB.add(String.valueOf((int)rowBIntervalShort)); rowB.add("1");
+                rowB.add(newLg  > 0 ? String.valueOf(newLg)  : "");
+                rowB.add(origLt); rowB.add(constIllum);
+                rowB.add(newLsg > 0 ? String.valueOf(newLsg) : "");
+                rowB.add("keepAlive"); rowB.add("");
+                expanded.add(rowB);
+
+                // Row C: flush trigger — resets sensor just before first real imaging frame
+                ArrayList rowC = new ArrayList();
+                rowC.add(row.get(0)); rowC.add(""); rowC.add(String.valueOf(KA_EXPOSURE_MS));
+                rowC.add(String.valueOf(FLUSH_INTERVAL_MS)); rowC.add("1");
+                rowC.add(""); rowC.add(""); rowC.add(constIllum);
+                rowC.add(""); rowC.add("keepAlive"); rowC.add("");
+                expanded.add(rowC);
+                continue;
+
+            } else if (totalMs > FLUSH_THRESHOLD_MS) {
+                // ---- Medium pause (500 ms – 30 s) ----
+                // Precise timing: shorten the last pause repeat by FLUSH_INTERVAL_MS, then append
+                // Row C so the total duration is preserved exactly.
+                //   fr==1: Row B (iMs-60 ms pause) + Row C (60 ms flush) = iMs              ✓
+                //   fr>1:  Row A (fr-1 full pauses) + Row B (1 shortened) + Row C = fr*iMs  ✓
+                // If iMs <= FLUSH_INTERVAL_MS the interval is too short to absorb the flush;
+                // fall through to the non-expanded copy path — no flush, no timing overhead.
+
+                if (iMs > FLUSH_INTERVAL_MS) {
+                    int origLg = 0, origLsg = 0; String origLt = "";
+                    try { origLg  = Integer.parseInt(row.get(5).toString().trim()); } catch (Exception e) {}
+                    try { origLsg = Integer.parseInt(row.get(8).toString().trim()); } catch (Exception e) {}
+                    try { origLt  = row.get(6).toString().trim();                   } catch (Exception e) {}
+                    int newLg  = (origLg  > 0 && origLg  <= N) ? orig2exp[origLg]  : 0;
+                    int newLsg = (origLsg > 0 && origLsg <= N) ? orig2exp[origLsg] : 0;
+
+                    if (fr > 1) {
+                        // Row A: (fr-1) full-interval pause frames, no loop refs
+                        ArrayList rowA = new ArrayList();
+                        rowA.add(row.get(0)); rowA.add(""); rowA.add("0");
+                        rowA.add(String.valueOf(iMs)); rowA.add(String.valueOf(fr - 1));
+                        rowA.add(""); rowA.add(""); rowA.add(constIllum);
+                        rowA.add(""); rowA.add(""); rowA.add("");
+                        expanded.add(rowA);
+                    }
+
+                    // Row B: last pause frame, shortened by FLUSH_INTERVAL_MS, carries loop refs
+                    ArrayList rowB = new ArrayList();
+                    rowB.add(row.get(0)); rowB.add(""); rowB.add("0");
+                    rowB.add(String.valueOf(iMs - FLUSH_INTERVAL_MS)); rowB.add("1");
+                    rowB.add(newLg  > 0 ? String.valueOf(newLg)  : "");
+                    rowB.add(origLt); rowB.add(constIllum);
+                    rowB.add(newLsg > 0 ? String.valueOf(newLsg) : "");
+                    rowB.add(""); rowB.add(String.valueOf(i + 1));
+                    expanded.add(rowB);
+
+                    // Row C: flush trigger — resets sensor just before first real imaging frame
+                    ArrayList rowC = new ArrayList();
+                    rowC.add(row.get(0)); rowC.add(""); rowC.add(String.valueOf(KA_EXPOSURE_MS));
+                    rowC.add(String.valueOf(FLUSH_INTERVAL_MS)); rowC.add("1");
+                    rowC.add(""); rowC.add(""); rowC.add(constIllum);
+                    rowC.add(""); rowC.add("keepAlive"); rowC.add("");
+                    expanded.add(rowC);
+                    continue;
+                }
+                // iMs <= FLUSH_INTERVAL_MS: fall through to non-expanded copy path
+            }
+        }
+
+        // Non-expanded row: copy, remap loop references, store original 1-based row# in col 10
+        ArrayList nr = new ArrayList(row);
+        while (nr.size() <= 9) nr.add(""); nr.set(9, "");
+
+        int lg = 0;
+        try { lg = Integer.parseInt(nr.get(5).toString().trim()); } catch (Exception e) {}
+        if (lg > 0 && lg <= N) nr.set(5, String.valueOf(orig2exp[lg]));
+
+        int lsg = 0;
+        try { lsg = Integer.parseInt(nr.get(8).toString().trim()); } catch (Exception e) {}
+        if (lsg > 0 && lsg <= N) nr.set(8, String.valueOf(orig2exp[lsg]));
+
+        while (nr.size() <= 10) nr.add("");
+        nr.set(10, String.valueOf(i + 1));
+        expanded.add(nr);
+    }
+
+    // Prepend the pre-acquisition flush trigger as expanded row 0 (Arduino row 1).
+    // This fires one short camera trigger (10 ms) with a 60 ms total interval just
+    // before the very first real imaging frame, resetting the sensor and eliminating
+    // the bright-first-frame artifact caused by charge accumulated while the camera
+    // was armed and waiting.  constIllum = 0 (no prior photoswitching state).
+    ArrayList flushRow0 = new ArrayList();
+    flushRow0.add(""); flushRow0.add(""); flushRow0.add(String.valueOf(KA_EXPOSURE_MS));
+    flushRow0.add(String.valueOf(FLUSH_INTERVAL_MS)); flushRow0.add("1");
+    flushRow0.add(""); flushRow0.add(""); flushRow0.add(""); flushRow0.add("");
+    flushRow0.add("keepAlive"); flushRow0.add("");
+    expanded.add(0, flushRow0);
+
+    print("expandPauseRows: " + N + " original rows → " + expanded.size()
+        + " expanded rows (pre-acq flush + "
+        + (anyExpansion ? "keep-alive + pause flush triggers" : "no pause expansion")
+        + " injected).");
+    return expanded;
+}
+
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
 void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents) {
 
@@ -5346,7 +5610,11 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     // Shadow state machine: mirrors the Arduino's row-sequencing logic so we know
     // which sequence row is active for every frame without relying on serial packets.
     // Switch-button events (byte 67 packets) patch any retroactive mismatches.
-    RowTracker rowTracker = new RowTracker(config.acqSettings.sequenceRows);
+    // Use the expanded table (with keep-alive rows) so the tracker exactly mirrors
+    // what was uploaded to the Arduino.
+    ArrayList trackerRows = (config.expandedSequenceRows != null)
+        ? config.expandedSequenceRows : config.acqSettings.sequenceRows;
+    RowTracker rowTracker = new RowTracker(trackerRows);
 
     // --- DCAM WATCHDOG THREAD ---
     // Polls isSequenceRunning() every 1 ms and sets dcamNeedsRestart to true the
@@ -5536,6 +5804,16 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                 if (taggedImg != null) {
                     // Decrement drain bound so the safety exit tracks actual pops.
                     if (!running[0] && drainBound > 0) drainBound--;
+
+                    // Silently discard keep-alive frames (short dark camera-trigger-only
+                    // exposures injected by expandPauseRows to prevent camera timeout
+                    // during long pause/photoswitching rows).  Not saved, not graphed,
+                    // not counted in framesProcessed.
+                    if (rowTracker.isKeepAliveRow()) {
+                        rowTracker.advanceFrame();
+                        continue;
+                    }
+
                     framesProcessed++;
                     final int currentFrameCount = framesProcessed;
                     SwingUtilities.invokeLater(new Runnable() {
