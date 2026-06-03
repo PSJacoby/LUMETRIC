@@ -1139,12 +1139,12 @@ simpleSnapMode.setToolTipText("Enable for single-channel acquisition with GUI se
 livePics = new JCheckBox("Live Pictures");
 livePics.setToolTipText("Show live view in GUI during acquisition (images are always saved to disk)");
 
-// Stack conversion checkboxes (mutually exclusive)
+// Stack conversion checkboxes (both can be enabled simultaneously)
 convertToStack = new JCheckBox("Convert to Stack", true);
-convertToStack.setToolTipText("After acquisition, convert individual TIFFs to a single stack and delete originals");
+convertToStack.setToolTipText("After acquisition, convert individual TIFFs to a single full stack and delete originals");
 
 stackPerRow = new JCheckBox("Stack per Row");
-stackPerRow.setToolTipText("After acquisition, create one TIFF stack per sequence row (mutually exclusive with Convert to Stack)");
+stackPerRow.setToolTipText("After acquisition, create one TIFF stack per sequence row (can be combined with Convert to Stack)");
 
 // Processing mode combo boxes (declared at script scope for save/load access)
 processingModeCombo = null;
@@ -1155,23 +1155,6 @@ roiSourceCombo = null;
 btCorrectionCheckbox = null;
 btDirectionCombo = null;
 btFactorField = null;
-
-// Make stack checkboxes mutually exclusive
-convertToStack.addActionListener(new ActionListener() {
-    public void actionPerformed(ActionEvent e) {
-        if (convertToStack.isSelected()) {
-            stackPerRow.setSelected(false);
-        }
-    }
-});
-
-stackPerRow.addActionListener(new ActionListener() {
-    public void actionPerformed(ActionEvent e) {
-        if (stackPerRow.isSelected()) {
-            convertToStack.setSelected(false);
-        }
-    }
-});
 
 // ===== SETTINGS TAB =====
 settingsPanel = new JPanel(new BorderLayout(10, 10));
@@ -1641,6 +1624,7 @@ processingModeCombo.addActionListener(new ActionListener() {
             int rCnt = tableModel.getRowCount();
             if (rCnt < 1) rCnt = 1;
             JComboBox mNumCombo = new JComboBox();
+            mNumCombo.addItem("All Rows");
             mNumCombo.addItem("1");
             for (int r = 1; r <= rCnt; r++) mNumCombo.addItem("Row " + r);
             vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(mNumCombo));
@@ -1774,6 +1758,7 @@ vizTable.getColumnModel().getColumn(1).setPreferredWidth(180);
 int initRowCnt = tableModel.getRowCount();
 if (initRowCnt < 1) initRowCnt = 1;
 JComboBox initNumCombo = new JComboBox();
+initNumCombo.addItem("All Rows");
 initNumCombo.addItem("1");
 for (int r = 1; r <= initRowCnt; r++) initNumCombo.addItem("Row " + r);
 vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(initNumCombo));
@@ -1799,6 +1784,7 @@ tableModel.addTableModelListener(new TableModelListener() {
             int cnt = tableModel.getRowCount();
             if (cnt < 1) cnt = 1;
             JComboBox lNumCombo = new JComboBox();
+            lNumCombo.addItem("All Rows");
             lNumCombo.addItem("1");
             for (int r = 1; r <= cnt; r++) lNumCombo.addItem("Row " + r);
             vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(lNumCombo));
@@ -4010,6 +3996,7 @@ void createInlineAcquisitionWindow() {
 int parseRowNumber(String s) {
     if (s == null || s.trim().equals("1")) return 0;
     String trimmed = s.trim();
+    if (trimmed.equals("All Rows")) return -1; // Special: match every sequence row
     if (trimmed.startsWith("Row ")) {
         try { return Integer.parseInt(trimmed.substring(4).trim()); }
         catch (Exception e) {}
@@ -4032,6 +4019,7 @@ boolean shouldProcessFrame(int seqRow, ArrayList vizRow) {
     int denomRow = parseRowNumber((String) vizRow.get(3));
 
     if (graphType.equals("Intensity")) {
+        if (numerRow == -1) return true; // "All Rows": always accept
         return (numerRow > 0 && seqRow == numerRow);
     }
     if (graphType.equals("Ratio")) {
@@ -4460,7 +4448,7 @@ void updateGraphs(ArrayList datasets, int frameNumber, long currentTime, ArrayLi
 
             // Temporal Intensity: gate on Numerator row
             if (config.acqSettings.processingMode.equals("Temporal")) {
-                if (numerRow == 0 || seqRow != numerRow) continue;
+                if (numerRow != -1 && (numerRow == 0 || seqRow != numerRow)) continue;
             }
 
             int numSeriesToUpdate = 0;
@@ -4945,8 +4933,9 @@ void convertTiffsToStack(String experimentFolder) {
 
 // ==================== Convert TIFFs to Per-Row Stacks ====================
 // Groups Frame_NNNNN.tif files by their sequence row (from dataRows[i][2]) and
-// saves one Stack_Row_N.tif per row.  Individual TIFFs are deleted afterwards.
-void convertTiffsToStacksPerRow(String experimentFolder, ArrayList dataRows) {
+// saves one Stack_Row_N.tif per row.  Individual TIFFs are deleted afterwards
+// unless deleteOriginals is false (used when Convert to Stack will run next).
+void convertTiffsToStacksPerRow(String experimentFolder, ArrayList dataRows, boolean deleteOriginals) {
     import ij.ImageStack;
     import ij.io.FileSaver;
 
@@ -5054,15 +5043,17 @@ void convertTiffsToStacksPerRow(String experimentFolder, ArrayList dataRows) {
         }
 
         // Delete individual TIFF files that were incorporated into stacks
-        for (int i = 0; i < processedFiles.size(); i++) {
-            ((File) processedFiles.get(i)).delete();
-        }
+        if (deleteOriginals) {
+            for (int i = 0; i < processedFiles.size(); i++) {
+                ((File) processedFiles.get(i)).delete();
+            }
 
-        // Remove images subfolder if now empty
-        if (imagesFolder.exists() && imagesFolder.isDirectory()) {
-            File[] remaining = imagesFolder.listFiles();
-            if (remaining == null || remaining.length == 0) {
-                imagesFolder.delete();
+            // Remove images subfolder if now empty
+            if (imagesFolder.exists() && imagesFolder.isDirectory()) {
+                File[] remaining = imagesFolder.listFiles();
+                if (remaining == null || remaining.length == 0) {
+                    imagesFolder.delete();
+                }
             }
         }
 
@@ -5612,7 +5603,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     int framesProcessed = 0;
     boolean overflowDetected = false;
     long lastGuiUpdateTime = 0;
-    final long GUI_UPDATE_INTERVAL_MS = 250;
+    final long GUI_UPDATE_INTERVAL_MS = 100;
 
     // Trigger timeout detection
     long lastFrameTime = System.currentTimeMillis();
@@ -6054,10 +6045,14 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     if (config.acqSettings.convertToStack || config.acqSettings.stackPerRow) {
         SwingUtilities.invokeLater(new Runnable() { public void run() {
             if (statusLabel[0] != null) statusLabel[0].setText("Converting images - please wait..."); } });
-        if (config.acqSettings.convertToStack) {
+        if (config.acqSettings.convertToStack && config.acqSettings.stackPerRow) {
+            // Both enabled: per-row first (keep originals), then full stack (deletes originals)
+            convertTiffsToStacksPerRow(config.experimentFolder, dataRows, false);
+            convertTiffsToStack(config.experimentFolder);
+        } else if (config.acqSettings.convertToStack) {
             convertTiffsToStack(config.experimentFolder);
         } else {
-            convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
+            convertTiffsToStacksPerRow(config.experimentFolder, dataRows, true);
         }
     }
 
@@ -6154,7 +6149,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
 
         int globalFrameNumber = 0;
         long lastGuiUpdateTime = 0;
-        final long GUI_UPDATE_INTERVAL_MS = 250;
+        final long GUI_UPDATE_INTERVAL_MS = 100;
 
         // Track actual frame intervals for performance warning
         long maxActualFrameInterval = 0;
@@ -6418,10 +6413,13 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
         }
 
         // Convert to stack if requested
-        if (config.acqSettings.convertToStack) {
+        if (config.acqSettings.convertToStack && config.acqSettings.stackPerRow) {
+            convertTiffsToStacksPerRow(config.experimentFolder, dataRows, false);
+            convertTiffsToStack(config.experimentFolder);
+        } else if (config.acqSettings.convertToStack) {
             convertTiffsToStack(config.experimentFolder);
         } else if (config.acqSettings.stackPerRow) {
-            convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
+            convertTiffsToStacksPerRow(config.experimentFolder, dataRows, true);
         }
 
         // Return to main menu with settings from this experiment auto-reloaded
@@ -6440,7 +6438,7 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
     int globalFrameNumber = 0; // Total frame counter across all steps
     int currentStepIndex = 0;  // Current step in sequence (0-based)
     long lastGuiUpdateTime = 0;
-    final long GUI_UPDATE_INTERVAL_MS = 250;
+    final long GUI_UPDATE_INTERVAL_MS = 100;
 
 
     // Main acquisition loop with sequence logic
@@ -6611,10 +6609,13 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
     // print("Total data rows: " + dataRows.size());
 
     // Convert to stack if requested
-    if (config.acqSettings.convertToStack) {
+    if (config.acqSettings.convertToStack && config.acqSettings.stackPerRow) {
+        convertTiffsToStacksPerRow(config.experimentFolder, dataRows, false);
+        convertTiffsToStack(config.experimentFolder);
+    } else if (config.acqSettings.convertToStack) {
         convertTiffsToStack(config.experimentFolder);
     } else if (config.acqSettings.stackPerRow) {
-        convertTiffsToStacksPerRow(config.experimentFolder, dataRows);
+        convertTiffsToStacksPerRow(config.experimentFolder, dataRows, true);
     }
 
     // Dispose the acquisition frame after acquisition completes (Advanced Mode)
@@ -6647,6 +6648,7 @@ String computeFrameLogicLabel(ArrayList vizRow, boolean isTemporal) {
     String numerLabel = numer.replace(" ", "");   // e.g. "Row1", "1"
     String denomLabel = denom.replace(" ", "");
     if (type.equals("Ratio")) return numerLabel + "_div_" + denomLabel;
+    if (numer.trim().equals("All Rows")) return "every"; // Intensity: all rows
     return numerLabel; // Intensity: just the numerator row
 }
 
