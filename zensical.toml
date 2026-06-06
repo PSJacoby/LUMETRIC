@@ -1,6 +1,6 @@
 [project]
 site_name= "LUMETRIC"
-site_url = "http://127.0.0.1:8000/"
+site_url = "https://psjacoby.github.io/LUMETRIC" # https://127.0.0.1:8000
 nav = [
     {"Home" = "index.md"},
     {"Configuration" = [
@@ -42,3 +42,9 @@ toogle.name = "Switch to light mode"
 [project.markdown_extensions.pymdownx.caret]
 [project.markdown_extensions.pymdownx.mark]
 [project.markdown_extensions.pymdownx.tilde]
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" }
+]
+[project.markdown_extensions.admonition]
