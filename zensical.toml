@@ -1,6 +1,6 @@
 [project]
 site_name= "LUMETRIC"
-site_url = "http://127.0.0.1:8000/"
+site_url = "https://psjacoby.github.io/LUMETRIC" # https://127.0.0.1:8000
 nav = [
     {"Home" = "index.md"},
     {"Configuration" = [
