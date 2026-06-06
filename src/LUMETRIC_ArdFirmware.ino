@@ -29,6 +29,10 @@
  *     40 -> keep-alive (reply [40][pinStates])
  *     66 -> quit (stop acquisition immediately)
  *     67 -> switch (jump to loopSwitchGoto of the currently active row)
+ *   Unsolicited notifications sent by the Arduino during run:
+ *     [67][destRow_1based][totalFrames_hi][totalFrames_lo]
+ *         Sent immediately after a switch jump is executed.
+ *         destRow is 1-based. totalFrames is the cumulative frame count at the moment of the switch.
  *   Reply when finished or quit: [61] [totalFramesHi] [totalFramesLo]
  *   (For a single frame, load a 1-row table via case 60 first.)
  *
@@ -266,13 +270,14 @@ int32_t readUint16_keepAlive() {
 }
 
 // Check serial port during an active acquisition frame.
-// Handles: 40=keep-alive, 66=quit, 67=switch.
+// Handles: 40=keep-alive (silently ignored during acquisition), 66=quit, 67=switch.
 void checkSerial_acq(bool &running, bool &switchReq) {
    while (Serial.available() > 0) {
       int b = Serial.read();
       if (b == 40) {
-         Serial.write(byte(40));
-         Serial.write(getAnalogPinStates());
+         // Keep-alive: silently consume during acquisition.
+         // No reply sent — avoids polluting the serial RX buffer that
+         // BeanShell reads for switch-event packets.
       } else if (b == 66) {
          running = false;
       } else if (b == 67) {
@@ -325,6 +330,9 @@ void doExposure(byte pinPattern, uint16_t exposureMs, byte constIllum, uint16_t 
 #ifdef CAM_FEEDBACK_BYPASS
       // No feedback wire: fire J0 + LEDs simultaneously.
       setPortJ(pinPattern | 0x01);
+      // Start exposure timer immediately after asserting the trigger so that the
+      // LED-on duration is exactly exposureUs regardless of any serial overhead below.
+      unsigned long expStartUs = micros();
 
       // Check for quit byte immediately after asserting trigger
       if (Serial.available() > 0) {
@@ -334,7 +342,6 @@ void doExposure(byte pinPattern, uint16_t exposureMs, byte constIllum, uint16_t 
       if (!running) { setPortJ(0); return; }
 
       // Busy-wait for exposureMs with µs precision.
-      unsigned long expStartUs = micros();
       while ((unsigned long)(micros() - expStartUs) < exposureUs) {
          checkSerial_acq(running, switchReq);
          if (!running) { setPortJ(0); return; }
@@ -732,6 +739,11 @@ void loop() {
                   if (row.loopSwitchGoto > 0 && row.loopSwitchGoto <= acqRowCount_) {
                      currentRow = row.loopSwitchGoto - 1;
                      loopCounters[currentRow] = 0;  // reset loop counter for new row
+                     // Notify PC: [67][destRow_1based][totalFrames_hi][totalFrames_lo]
+                     Serial.write((byte)67);
+                     Serial.write((byte)row.loopSwitchGoto);  // destination row, 1-based (as in the table)
+                     Serial.write((byte)(totalFrames >> 8));
+                     Serial.write((byte)(totalFrames & 0xFF));
                   }
                   goto nextRow;  // break inner loop, go to outer loop without further logic
                }

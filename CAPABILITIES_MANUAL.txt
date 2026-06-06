@@ -166,6 +166,41 @@ Command bytes sent by BeanShell:
 
   67  Loop-switch (jump to loopSwitchGoto of current row)
 
+Arduino → PC notification bytes:
+  67  Switch-event packet sent by Arduino when a LoopSwitchGoto fires.
+      Payload: [67][destRow_1based][frameCountHi][frameCountLo]
+      BeanShell receives this asynchronously, patches the sequence-row
+      assignment of any already-stored data rows, and re-synchronises
+      the RowTracker state machine.
+
+ROWTRACKER — Software state machine (BeanShell-side):
+  Mirrors the Arduino's acquisition-table sequencing logic exactly.
+  Tracks which sequence row is active for every frame without relying on
+  serial packets, using the same goto/loop/counter rules as the firmware.
+  When a switch-event packet arrives, RowTracker.patch() retroactively
+  corrects all three data lists and re-synchronises its state.
+  This allows per-row graph filtering to be accurate even across
+  loop-switch events.
+
+HUB PAUSE — Serial integrity during acquisition:
+  Micro-Manager's Arduino Hub device adapter sends periodic keep-alive
+  bytes (byte 40) and responds to shutter/switch events on the same
+  serial port that LUMETRIC uses for its binary protocol.  These bytes
+  corrupt the LUMETRIC command stream.
+
+  Solution: a custom property "Paused" added to CArduinoHub
+  (mmgr_dal_Arduino.dll, compiled from the LUMETRIC fork of
+  mmCoreAndDevices).  When set to "1", the Hub monitor thread sleeps
+  50 ms per cycle instead of polling, and shutter/switch writes return
+  immediately without touching the port.
+
+  LUMETRIC sets Paused=1 before uploading the acquisition table and
+  restores Paused=0 after the last frame is processed.  Outside of a
+  LUMETRIC acquisition the Hub operates exactly as in a standard
+  Micro-Manager installation — full keep-alive, shutter control, and
+  switch properties are available as normal.  The custom DLL is a
+  drop-in replacement; no other MM configuration changes are required.
+
 PORT J BIT MAPPING (Arduino Giga R1):
   Bit 0 (0x01)  Camera TTL trigger output
   Bit 1 (0x02)  LED channel assigned to pin 1 in config
@@ -196,11 +231,19 @@ Real-Time Analysis:
   ??? Temporal mode: per-frame ROI intensity over time
   ??? Spatial mode: split-image ratio analysis (Up/Down, Left/Right, inverses)
   ??? Frame ratio: divide odd/even frame intensities element-wise per ROI
+  ??? Live sequence-row tracking: each frame is tagged with its 1-based
+      sequence-row number (via RowTracker); graphs filter automatically
+      so only frames from the configured row are plotted
+  ??? Loop-switch event correction: when the Arduino sends a switch-event
+      packet, row assignments are retroactively patched in all data lists
 
 Visualization:
   ??? Live camera view with zoom/fit panel
   ??? Real-time intensity graphs (up to 4 simultaneous graphs)
   ??? Frame filtering: every frame, odd, even, every Nth (with offset)
+  ??? Per-graph sequence-row selector: each graph plots only frames from
+      the configured numerator/denominator sequence row (e.g. Graph 1 =
+      Row 1 intensity, Graph 2 = Row 2 intensity)
   ??? Multi-ROI plotting on single graph
   ??? Graph types: Intensity, Frame ratio, Split ratio
   ??? Zoom reset per graph or all graphs
@@ -209,6 +252,9 @@ Visualization:
 Event Detection & Control:
   ??? Event button: logs timestamp, draws marker line on all graphs
   ??? Loop Switch button: sends byte 67 to Arduino to trigger row-jump
+  ??? Arduino switch-event notification: Arduino sends [67][row][hi][lo]
+      packet when a LoopSwitchGoto fires; BeanShell logs the event and
+      patches retroactive row assignments via RowTracker.patch()
   ??? Quit button: sends stop command (byte 66) to Arduino, saves all data
   ??? Event timestamps exported to CSV
 
@@ -266,10 +312,6 @@ USE CASE 2: Research Lab - Manual Light Control
    - Single or multi-channel time-lapse
    - When hardware triggers are not available
 
-USE CASE 3: Production - Hardware-Synchronized
-   Mode: Circular buffer mode (circular buffer ON)
-   Hardware: Real camera + Arduino Giga R1 + LED drivers
-   Configuration: config_RealSetup.txt
 
    Perfect for:
    - High-throughput screening
@@ -426,11 +468,29 @@ Loop Switch for Triggered Experiments:
   - Assign loopSwitchGoto to a recovery or imaging row
   - Press the Loop Switch button (or send byte 67) to jump on demand,
     e.g. to switch from a stimulation sequence to an imaging sequence
+  - Arduino sends a [67][row][frameHi][frameLo] notification packet
+    whenever the jump fires; BeanShell patches any already-stored data
+    rows retroactively and keeps the live graphs consistent
 
-Frame Ratio Imaging:
-  - Alternate illumination channels on odd/even frames (two table rows in a loop)
-  - Use "Frame ratio" graph type: odd frame / even frame per ROI
-  - Ratiometric measurement corrects for intensity drift
+Row-Filtered Live Plotting:
+  - Each graph independently selects which sequence row to display
+  - In Temporal mode, set "Numerator" to "Row N" (and "Denominator" for
+    ratio graphs); only frames tagged with that row number are plotted
+  - Row assignment is computed by RowTracker on every frame and
+    corrected automatically if a loop-switch event arrives
+  - Enables simultaneous display of e.g. Row 1 (imaging) and Row 2
+    (photoswitching readout) in separate live graphs during one acquisition
+
+Hub Pause (Serial Integrity):
+  - During circular-buffer acquisition, LUMETRIC sets the Arduino-Hub
+    "Paused" property to "1" before uploading the table
+  - This halts the MM Hub monitor thread, preventing keep-alive bytes
+    from corrupting the LUMETRIC binary protocol
+  - Paused=0 is restored immediately after acquisition finishes,
+    returning the Hub to full standard MM operation
+  - Requires the custom mmgr_dal_Arduino.dll (LUMETRIC fork); outside
+    of LUMETRIC acquisitions the Hub behaves identically to stock MM
+
 
 Split Ratio (Dual-View / Ratiometric):
   - Configure Spatial mode with splitAxis and roiSourceRegion in settings
