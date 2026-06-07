@@ -1,0 +1,32 @@
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build artifact
+        run: |
+          mkdir dist
+          cp -r src dist/
+          cp -r hardware dist/
+          cp LUMETRIC.bsh dist/
+          cp LICENSE dist/
+          cp THIRD_PARTY_LICENSES.md /dist
+          cp config_example.txt dist/
+          zip -r LUMETRIC_${{ github.ref_name }}.zip dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          files: LUMETRIC_${{ github.ref_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
