@@ -1,6 +1,6 @@
 [project]
 site_name= "LUMETRIC"
-site_url = "https://psjacoby.github.io/LUMETRIC" # https://127.0.0.1:8000
+site_url = "https://psjacoby.github.io/LUMETRIC"
 nav = [
     {"Home" = "index.md"},
     {"Configuration" = [
@@ -28,6 +28,7 @@ features = [
     "search.suggest",
     "search.highlight"]
 font = false
+custom_dir = "overrides"
 
 [[project.theme.palette]]
 scheme = "default"
@@ -48,3 +49,6 @@ custom_fences = [
   { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" }
 ]
 [project.markdown_extensions.admonition]
+[project.extra.analytics]
+provider = "custom"
+property = "umami"
