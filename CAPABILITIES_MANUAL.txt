@@ -10,7 +10,7 @@ automated time-lapse fluorescence microscopy with real-time ROI analysis,
 graphical visualization, and event-driven control. It supports both
 hardware-triggered (Arduino) and software-controlled acquisition modes.
 
-Main script: LUMETRIC.bsh (~5800 lines)
+Main script: LUMETRIC.bsh (~6900 lines)
 
 
 ACQUISITION MODES
@@ -230,8 +230,10 @@ Real-Time Analysis:
   ??? ROI data exported to CSV files
   ??? Temporal mode: per-frame ROI intensity over time
   ??? Spatial mode: split-image ratio analysis (Up/Down, Left/Right, inverses)
-  ??? Frame ratio: divide odd/even frame intensities element-wise per ROI
-  ??? Live sequence-row tracking: each frame is tagged with its 1-based
+  ??? Frame ratio: divide odd/even frame intensities element-wise per ROI  ✓ Background correction: subtract a designated BG ROI from all signal ROIs
+  ✓ Bleedthrough correction (Spatial mode): subtract scaled source-half signal
+    from mirror-half to correct for spectral bleedthrough; configurable
+    direction and correction factor  ??? Live sequence-row tracking: each frame is tagged with its 1-based
       sequence-row number (via RowTracker); graphs filter automatically
       so only frames from the configured row are plotted
   ??? Loop-switch event correction: when the Arduino sends a switch-event
@@ -243,7 +245,10 @@ Visualization:
   ??? Frame filtering: every frame, odd, even, every Nth (with offset)
   ??? Per-graph sequence-row selector: each graph plots only frames from
       the configured numerator/denominator sequence row (e.g. Graph 1 =
-      Row 1 intensity, Graph 2 = Row 2 intensity)
+      Row 1 intensity, Graph 2 = Row 2 intensity).
+      Special value "All Rows" (Numerator only) accepts frames from any
+      sequence row — useful for single-row experiments or Intensity graphs
+      where row filtering is not needed.
   ??? Multi-ROI plotting on single graph
   ??? Graph types: Intensity, Frame ratio, Split ratio
   ??? Zoom reset per graph or all graphs
@@ -498,6 +503,47 @@ Split Ratio (Dual-View / Ratiometric):
   - Use "Split ratio" graph type for ratiometric or FRET analysis
 
 
+POST-PROCESSOR
+--------------
+
+Accessible via the "Open Post-Production" button in the Acquisition Settings tab.
+Allows refining ROIs and re-exporting corrected data from an already-acquired
+experiment folder without repeating the acquisition.
+
+Workflow:
+  1. Select an existing experiment folder (must contain AquisitionSettings.csv)
+  2. Settings are automatically loaded from AquisitionSettings.csv
+  3. Image source is resolved in priority order:
+       a) images/ subfolder (Frame_XXXXX.tif files → assembled into one stack)
+       b) Image_Stack.tif (single full stack in experiment folder root)
+       c) Stack_Row_N.tif files (per-row stacks; each loaded as a separate stack
+          with correct per-row timestamps read from the RAW CSV files)
+  4. A reference frame is snapped from the loaded stack and shown for ROI drawing
+  5. User draws ROIs in the ROI Manager; existing ROI sets can be restored via
+     the ROI Manager load function
+  6. "Recalculate" re-measures all stack slices with the current ROI set and
+     refreshes the live graphs
+  7. "Export" saves BG-corrected, BT-corrected, and/or DE-corrected CSVs to a
+     new numbered sub-folder next to the original experiment folder
+
+Correction levels available in the Post-Processor:
+  - RAW            Always exported
+  - BGcorr         Exported when Background Correction is enabled
+  - BTcorr         Exported when Bleedthrough Correction is enabled (Spatial only)
+  - BTDEcorr       Exported when Direct Excitation correction is enabled (see below)
+
+Direct Excitation (DE) Correction (post-processor only, Spatial mode):
+  Subtracts a scaled per-ROI acceptor offset to remove direct excitation
+  of the acceptor fluorophore by the donor excitation laser.
+  - Requires Bleedthrough Correction to be active
+  - User selects a reference stack, from-frame, and to-frame to average
+  - The mean BG-corrected acceptor signal over that range is computed per ROI
+  - Correction applied: acceptor[i] -= deFactor * meanDirEx[i]
+  - deFactor is a scalar set in the post-processor UI
+  - The direction (which half is acceptor) follows the same BT direction setting
+  - Exported as _BTDEcorr CSV files alongside _BTcorr files
+
+
 TECHNICAL SPECIFICATIONS
 -------------------------
 
@@ -512,7 +558,15 @@ Data Output:
   - Images:      Frame_XXXXX.tif (5-digit zero-padded)
   - Settings:    AquisitionSettings.csv (human-readable)
                  AquisitionSettings_Arduino.csv (pin/byte values)
-  - Graph data:  Graph1_<type>.csv, Graph2_<type>.csv ...
+  - Graph data:  Graph{N}_{type}_{frameFilter}_{corrLevel}.csv
+                 Examples:
+                   Graph1_Intensity_every_RAW.csv
+                   Graph1_Intensity_Row1_RAW.csv
+                   Graph1_Intensity_Row1_BGcorr.csv
+                   Graph2_Ratio_Row1_div_Row1_RAW.csv
+                   Graph2_Ratio_Row1_div_Row1_BGcorr.csv
+                   Graph2_Ratio_Row1_div_Row1_BTcorr.csv
+                 corrLevel: RAW, BGcorr, BTcorr, BTDEcorr (post-processor only)
   - Events:      EventTimes.csv
   - ROIs:        RoiSet.zip (ImageJ format)
 
@@ -548,7 +602,7 @@ VERSION INFORMATION
 
 Script:          LUMETRIC.bsh
 Firmware:        LUMETRIC_ArdFirmware.ino
-Last Updated:    March 2026
+Last Updated:    June 2026
 Micro-Manager:   2.0 required
 BeanShell:       2.0b6
 Java:            8+ required
