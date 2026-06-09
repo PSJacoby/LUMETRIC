@@ -1,48 +1,47 @@
 # Welcome to LUMETRIC
 
-LUMETRIC is an acquisition and real‑time analysis system for fluorescence microscopy,
-built on the Micro‑Manager ecosystem. It integrates automated image acquisition,
-region‑of‑interest (ROI)–based analysis, and live visualization of fluorescence
-intensity as well as ratio data within a unified graphical user interface.
+LUMETRIC is a **software tool for fluorescence microscopy** that works together with Micro‑Manager. It lets you automatically capture images, select regions of interest (ROIs), and track fluorescence intensity or intensity ratios (e.g. in FRET experiments) in real time—all in one interface without switching between programs.
 
-The system addresses a common gap in microscopy workflows: the lack of an open,
-configurable tool that combines flexible acquisition protocols, real‑time data
-feedback, and reproducible data handling without relying on proprietary,
-black‑box software.
+LUMETRIC extends fluorescence microscopy workflows by providing integrated, real-time feedback during image acquisition. It enables **live visualization of ROI-based intensity traces and ratio signals** directly during experiments, allowing users to monitor signal dynamics as data are being recorded.
 
-LUMETRIC supports two acquisition backends:
+In addition, LUMETRIC supports **flexible acquisition protocols** such as alternating excitation and photoswitching, enabling experimental designs that are widely used in practice. These capabilities are accessible within a unified graphical interface that combines acquisition control, real-time analysis, and live plotting.
 
-1. Software‑controlled
-2. Hardware‑triggered, while maintaining a shared user interface, analysis pipeline,
-and data model.
+By consolidating these functionalities into a single, open and transparent framework, LUMETRIC facilitates direct, reproducible monitoring of fluorescence signals and reduces reliance on fragmented workflows or external post-processing steps. This integration further enables users to perform advanced experiments independently of commercial, proprietary software environments.
+
+**LUMETRIC offers two ways to run image acquisition**, depending on the required timing precision and hardware setup:
+
+1. Software-controlled mode, which relies on standard Micro‑Manager control and is suitable for simple single wavelenght experiments without additional hardware
+2. Hardware-triggered mode, which uses an external timing device to precisely synchronize camera exposure and illumination, enabling more complex and high-speed experiments
+
+Despite these differences, both modes share the same interface, analysis tools, and data output, allowing users to switch between them without changing their workflow.
 
 ## Intended use and scope
 
-LUMETRIC is intended for researchers performing fluorescence microscopy using
-Micro‑Manager who require live feedback during experiments and transparent,
-reproducible acquisition workflows. It supports experimental designs involving
-real‑time visualization of fluorescence intensity and ratio data, flexible
-multi‑step and multi‑channel imaging protocols, and alternating excitation or
-photoswitching schemes.
+LUMETRIC is designed for fluorescence microscopy experiments where real-time feedback and reproducible data analysis are essential.
+It is particularly suited for workflows that require:
+
+- Live monitoring of fluorescence intensity and intensity ratios (e.g. FRET signals)
+- Multi-channel imaging and sequential acquisition steps
+- Alternating excitation or photoswitching protocols
 
 ## What LUMETRIC provides (independent of acquisition mode)
 
-The following capabilities are available in **all** LUMETRIC installations,
-including LUMETRIC *lite*:
+The following features are available in **all** versions of LUMETRIC, regardless of the selected acquisition mode (including LUMETRIC *lite*):
 
 ### Image acquisition structure
 
-- Configurable exposure times, frame intervals, and frame counts
-- Support for single channel and opto-split setups
-- Automatic saving of acquired frames in TIFF format
+- Set exposure time, frame interval, and number of frames
+- Support for single-channel and split-image (e.g. opto-split) setups
+- Automatic saving of images in TIFF format
+- Automatic saving of acquired raw data
 
 ### Real‑time analysis and visualization
 
-- Live ROI‑based fluorescence intensity measurements
-- Background subtraction using designated background ROIs
+- Live measurement of fluorescence intensity in user-defined ROIs
+- Background correction using dedicated background ROIs
 - Temporal and spatial ratio calculations (including FRET analyses)
-- Simultaneous display of multiple live graphs
-- Event markers during acquisition
+- Simultaneous display of multiple live plots
+- Ability to add event markers during acquisition
 
 ### Data management and reproducibility
 
@@ -57,9 +56,8 @@ depend on the chosen acquisition backend.
 
 ## Acquisition modes
 
-LUMETRIC supports two acquisition modes that differ in **how timing and
-triggering are implemented**, while sharing the same interface, analysis tools,
-and output formats.
+LUMETRIC provides two acquisition modes, which differ in how precisely image timing and device control are handled. This allows users to choose between a simple setup without additional hardware and a more advanced setup for high-speed or complex experiments.
+Both modes share the same interface, live analysis tools, and data output, ensuring a consistent workflow independent of the chosen configuration.
 
 ### Mode comparison
 

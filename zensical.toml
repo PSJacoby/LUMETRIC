@@ -1,11 +1,13 @@
 [project]
 site_name= "LUMETRIC"
-site_url = "https://psjacoby.github.io/LUMETRIC"
+site_url = "https://www.lumetric-imaging.com"
+repo_url = "https://github.com/PSJacoby/LUMETRIC"
+repo_name = "PSJacoby/LUMETRIC"
 nav = [
     {"Home" = "index.md"},
     {"Configuration" = [
         "Configuration/Install.md",
-        "Configuration/Micromanager-Configuration.md"
+        "Configuration/ArduinoAssembly.md"
     ]},
     {"Architecture" = [
         "Architecture/Diagrams.md"
@@ -29,7 +31,8 @@ features = [
     "search.highlight"]
 font = false
 custom_dir = "overrides"
-
+[project.theme.icon]
+repo = "fontawesome/brands/github"
 [[project.theme.palette]]
 scheme = "default"
 toggle.icon = "lucide/sun"
