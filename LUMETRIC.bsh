@@ -9,6 +9,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -486,6 +487,10 @@ config=new MicroscopeConfig();
 
 // Preferences for remembering last config
 prefs=Preferences.userNodeForPackage(MicroscopeConfig.class);
+
+// Held open during acquisition to prevent the experiment folder from being renamed.
+// Windows refuses to rename any directory containing an open file handle.
+acqFolderLock = null;
 
 // Table Model for the acquisition settings
 class AcquisitionTableModel extends DefaultTableModel {
@@ -1375,8 +1380,9 @@ okButton.addActionListener(new ActionListener() {
 
                         if (config.acqSettings.isVisualizationNeeded()) {
                             if (!setupVisualizationROIs()) {
+                                final String abortFolder1 = config.experimentFolder;
                                 SwingUtilities.invokeLater(new Runnable() {
-                                    public void run() { frame.setVisible(true); }
+                                    public void run() { restartMainGUI(abortFolder1); }
                                 });
                                 return;
                             }
@@ -1387,12 +1393,13 @@ okButton.addActionListener(new ActionListener() {
                         config.expandedSequenceRows = expandPauseRows(config.acqSettings.sequenceRows);
 
                         if (!exportTableToCSV()) {
+                            final String abortFolder2 = config.experimentFolder;
                             SwingUtilities.invokeLater(new Runnable() {
                                 public void run() {
                                     JOptionPane.showMessageDialog(null,
                                         "Failed to save acquisition settings.\nPlease check folder permissions.",
                                         "File Write Error", JOptionPane.ERROR_MESSAGE);
-                                    frame.setVisible(true);
+                                    restartMainGUI(abortFolder2);
                                 }
                             });
                             return;
@@ -1412,6 +1419,7 @@ okButton.addActionListener(new ActionListener() {
                         String capturedError = threadEx.getMessage();
                         if (capturedError == null) capturedError = threadEx.getClass().getName();
                         final String errorMsg = capturedError;
+                        final String abortFolder3 = config.experimentFolder;
                         SwingUtilities.invokeLater(new Runnable() {
                             public void run() {
                                 JOptionPane.showMessageDialog(null,
@@ -1421,7 +1429,7 @@ okButton.addActionListener(new ActionListener() {
                                     "- The folder is not on a network drive or read-only location\n" +
                                     "- You're not running in a restricted directory",
                                     "Acquisition Error", JOptionPane.ERROR_MESSAGE);
-                                frame.setVisible(true);
+                                restartMainGUI(abortFolder3);
                             }
                         });
                     }
@@ -1848,8 +1856,9 @@ vizStartButton.addActionListener(new ActionListener() {
 
                         if (config.acqSettings.isVisualizationNeeded()) {
                             if (!setupVisualizationROIs()) {
+                                final String abortFolder1 = config.experimentFolder;
                                 SwingUtilities.invokeLater(new Runnable() {
-                                    public void run() { frame.setVisible(true); }
+                                    public void run() { restartMainGUI(abortFolder1); }
                                 });
                                 return;
                             }
@@ -1860,12 +1869,13 @@ vizStartButton.addActionListener(new ActionListener() {
                         config.expandedSequenceRows = expandPauseRows(config.acqSettings.sequenceRows);
 
                         if (!exportTableToCSV()) {
+                            final String abortFolder2 = config.experimentFolder;
                             SwingUtilities.invokeLater(new Runnable() {
                                 public void run() {
                                     JOptionPane.showMessageDialog(null,
                                         "Failed to save acquisition settings.\nPlease check folder permissions.",
                                         "File Write Error", JOptionPane.ERROR_MESSAGE);
-                                    frame.setVisible(true);
+                                    restartMainGUI(abortFolder2);
                                 }
                             });
                             return;
@@ -1885,6 +1895,7 @@ vizStartButton.addActionListener(new ActionListener() {
                         String capturedError = threadEx.getMessage();
                         if (capturedError == null) capturedError = threadEx.getClass().getName();
                         final String errorMsg = capturedError;
+                        final String abortFolder3 = config.experimentFolder;
                         SwingUtilities.invokeLater(new Runnable() {
                             public void run() {
                                 JOptionPane.showMessageDialog(null,
@@ -1894,7 +1905,7 @@ vizStartButton.addActionListener(new ActionListener() {
                                     "- The folder is not on a network drive or read-only location\n" +
                                     "- You're not running in a restricted directory",
                                     "Acquisition Error", JOptionPane.ERROR_MESSAGE);
-                                frame.setVisible(true);
+                                restartMainGUI(abortFolder3);
                             }
                         });
                     }
@@ -2055,6 +2066,15 @@ String savedDataPath = prefs.get("lastSavePath", "");
 if (!savedDataPath.isEmpty() && new File(savedDataPath).exists()) {
     dataDirPathLabel.setText(savedDataPath);
     dataDirPathLabel.setForeground(Color.BLACK);
+}
+
+// Auto-load last experiment settings on startup (also restores after a crash/script restart)
+String lastExpFolderInit = prefs.get("lastExperimentFolder", "");
+if (!lastExpFolderInit.isEmpty()) {
+    File lastExpSettings = new File(lastExpFolderInit, "AquisitionSettings.csv");
+    if (lastExpSettings.exists()) {
+        applySettingsFromFile(lastExpSettings);
+    }
 }
 
 frame.setVisible(true);
@@ -2365,6 +2385,16 @@ void createExperimentFolder() {
 
     // Store images folder path in config
     config.imagesFolder = imagesFolder.getAbsolutePath();
+
+    // Hold a lock file open so Windows blocks any rename of the experiment folder
+    // while acquisition is running.  Released by releaseExperimentFolderLock().
+    try {
+        File lockFile = new File(experimentFolder, ".lumetric-lock");
+        acqFolderLock = new FileOutputStream(lockFile);
+    } catch (Exception lockEx) {
+        // Non-fatal: acquisition continues, folder just won't be rename-protected
+        System.err.println("WARNING: Could not create folder lock: " + lockEx.getMessage());
+    }
 }
 
 // ==================== Setup Visualization ROIs ====================
@@ -2991,16 +3021,56 @@ void applySettingsFromFile(File csvFile) {
     }
 }
 
-// Reload settings from the last experiment folder and re-show the main GUI.
-// Called after every acquisition completes so the user returns to the main menu
-// with the same settings they used — ready for the next run.
+// Release the open file handle that blocks folder renaming during acquisition.
+void releaseExperimentFolderLock() {
+    if (acqFolderLock != null) {
+        try {
+            acqFolderLock.close();
+        } catch (Exception e) {
+            // Ignore — OS will release it on JVM exit anyway
+        }
+        acqFolderLock = null;
+        // Clean up the sentinel file (best-effort)
+        if (config.experimentFolder != null && !config.experimentFolder.isEmpty()) {
+            new File(config.experimentFolder, ".lumetric-lock").delete();
+        }
+    }
+}
+
+// Reset all acquisition state and re-show the main GUI with last settings restored.
+// Called after every acquisition completes.  Replacing config drops all references
+// to expandedSequenceRows, storedROIs, and acqSettings so the GC can reclaim them
+// before the next experiment starts filling the heap.
 void restartMainGUI(String experimentFolder) {
+    // 0. Release folder lock first — must happen before config is wiped
+    releaseExperimentFolderLock();
+
+    // 1. Persist the experiment folder path before wiping config
+    if (experimentFolder != null && !experimentFolder.isEmpty()) {
+        prefs.put("lastExperimentFolder", experimentFolder);
+    }
+
+    // 2. Drop all acquisition data — allows GC to reclaim large objects
+    config = new MicroscopeConfig();
+    frameCache = new HashMap();
+    Runtime.getRuntime().gc();
+
+    // 3. Restore hardware configuration (camera groups, channels, serial port)
+    String lastCfgPath = prefs.get("lastConfigPath", "");
+    if (!lastCfgPath.isEmpty() && new File(lastCfgPath).exists()) {
+        config.loadFromFile(lastCfgPath);
+        updateSettingsDisplay();
+    }
+
+    // 4. Reload acquisition + visualization settings from last experiment.
+    // Use the parameter directly (prefs write above is only for crash-recovery at startup).
     if (experimentFolder != null && !experimentFolder.isEmpty()) {
         File settingsFile = new File(experimentFolder, "AquisitionSettings.csv");
         if (settingsFile.exists()) {
             applySettingsFromFile(settingsFile);
         }
     }
+
     frame.setVisible(true);
 }
 
