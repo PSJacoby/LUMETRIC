@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.prefs.Preferences;
 
@@ -241,53 +242,43 @@ class MicroscopeConfig {
     // never modified so Save / Load Settings is unaffected.
     ArrayList expandedSequenceRows = null;
 
-    // Load configuration from file
+    // Load configuration from file (.properties or legacy .txt — same key=value format)
     boolean loadFromFile(String filePath) {
         try {
             pinToChannel.clear();
-            BufferedReader reader = new BufferedReader(new FileReader(filePath));
-            String line;
-
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                // Skip comments and empty lines
-                if (line.startsWith("#") || line.isEmpty()) {
-                    continue;
-                }
-
-                // Parse key = value
-                if (line.contains("=")) {
-                    String[] parts = line.split("=", 2);
-                    String key = parts[0].trim();
-                    String value = parts[1].trim();
-
-                    if (key.startsWith("PIN_")) {
-                        try {
-                            int pinNum = Integer.parseInt(key.substring(4));
-                            pinToChannel.put(pinNum, value);
-                        } catch (NumberFormatException e) {
-                            // Ignore malformed PIN_ keys (e.g. PIN_abc)
-                        }
-                    } else if (key.equals("CAMERA_CONFIG_GROUP")) {
-                        cameraConfigGroup = value;
-                    } else if (key.equals("CAMERA_SNAP_CONFIG")) {
-                        cameraSnapConfig = value;
-                    } else if (key.equals("CAMERA_TRIGGER_CONFIG")) {
-                        cameraTriggerConfig = value;
-                    } else if (key.equals("USE_CIRCULAR_BUFFER")) {
-                        useCircularBuffer = value.equalsIgnoreCase("true") || value.equals("1");
-                    } else if (key.equals("SPECTRAL_CONFIG_GROUP")) {
-                        spectralConfigGroup = value;
-                    } else if (key.equals("SPECTRAL_DEFAULT_CONFIG")) {
-                        spectralDefaultConfig = value;
-                    } else if (key.equals("ARDUINO_CONFIG_GROUP")) {
-                        arduinoConfigGroup = value;
-                    } else if (key.equals("SERIAL_PORT")) {
-                        serialPort = value;
+            Properties props = new Properties();
+            FileReader fr = new FileReader(filePath);
+            props.load(fr);
+            fr.close();
+            java.util.Enumeration keys = props.propertyNames();
+            while (keys.hasMoreElements()) {
+                String key = ((String) keys.nextElement()).trim();
+                String value = props.getProperty(key, "").trim();
+                if (key.startsWith("PIN_")) {
+                    try {
+                        int pinNum = Integer.parseInt(key.substring(4));
+                        pinToChannel.put(pinNum, value);
+                    } catch (NumberFormatException e) {
+                        // Ignore malformed PIN_ keys (e.g. PIN_abc)
                     }
+                } else if (key.equals("CAMERA_CONFIG_GROUP")) {
+                    cameraConfigGroup = value;
+                } else if (key.equals("CAMERA_SNAP_CONFIG")) {
+                    cameraSnapConfig = value;
+                } else if (key.equals("CAMERA_TRIGGER_CONFIG")) {
+                    cameraTriggerConfig = value;
+                } else if (key.equals("USE_CIRCULAR_BUFFER")) {
+                    useCircularBuffer = value.equalsIgnoreCase("true") || value.equals("1");
+                } else if (key.equals("SPECTRAL_CONFIG_GROUP")) {
+                    spectralConfigGroup = value;
+                } else if (key.equals("SPECTRAL_DEFAULT_CONFIG")) {
+                    spectralDefaultConfig = value;
+                } else if (key.equals("ARDUINO_CONFIG_GROUP")) {
+                    arduinoConfigGroup = value;
+                } else if (key.equals("SERIAL_PORT")) {
+                    serialPort = value;
                 }
             }
-            reader.close();
             configFilePath = filePath;
             return true;
         } catch (IOException e) {
@@ -475,10 +466,11 @@ class MicroscopeConfig {
 // Simple FileFilter for config files
 class ConfigFileFilter extends javax.swing.filechooser.FileFilter {
     public boolean accept(File f) {
-        return f.isDirectory() || f.getName().toLowerCase().endsWith(".txt");
+        String name = f.getName().toLowerCase();
+        return f.isDirectory() || name.endsWith(".properties") || name.endsWith(".txt");
     }
     public String getDescription() {
-        return "Configuration Files (*.txt)";
+        return "Configuration Files (*.properties, *.txt)";
     }
 }
 
@@ -1177,6 +1169,9 @@ channelsTextArea = new JTextArea(5, 40);
 channelsTextArea.setEditable(false);
 channelsTextArea.setBorder(BorderFactory.createTitledBorder("Available Channels"));
 
+generateConfigButton = new JButton("Generate Config from MM");
+generateConfigButton.setBackground(new Color(255, 230, 100));
+generateConfigButton.setToolTipText("Auto-detect settings from the running Micro-Manager instance and create a new .properties config file");
 loadConfigButton = new JButton("Load Configuration File");
 reloadConfigButton = new JButton("Reload Current Config");
 readFromHubButton = new JButton("Read Channels from Hub");
@@ -1197,6 +1192,7 @@ configInfoPanel.add(new JLabel("Serial Port:"));
 configInfoPanel.add(serialPortLabel);
 
 configButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+configButtonPanel.add(generateConfigButton);
 configButtonPanel.add(loadConfigButton);
 configButtonPanel.add(reloadConfigButton);
 configButtonPanel.add(readFromHubButton);
@@ -1940,8 +1936,11 @@ tabbedPane.addTab("Setup Configuration", settingsPanel);
 tabbedPane.addTab("Acquisition Settings", sequencePanel);
 tabbedPane.addTab("Data Visualization", visualizationPanel);
 
-// Set default tab to Acquisition Settings (middle tab)
-tabbedPane.setSelectedIndex(1);
+// Start on Setup Configuration if no config known yet; otherwise Acquisition Settings
+String _startupCfgPath = prefs.get("lastConfigPath", "");
+tabbedPane.setSelectedIndex(
+    (!_startupCfgPath.isEmpty() && new File(_startupCfgPath).exists()) ? 1 : 0
+);
 
 // Layout
 frame.setLayout(new BorderLayout());
@@ -1992,6 +1991,7 @@ loadConfigButton.addActionListener(new ActionListener() {
                 // Save this path for next time
                 prefs.put("lastConfigPath", selectedFile.getAbsolutePath());
                 updateSettingsDisplay();
+                tabbedPane.setSelectedIndex(1);
                 JOptionPane.showMessageDialog(frame,
                     "Configuration loaded successfully!\nChannels updated in Sequence tab.",
                     "Success", JOptionPane.INFORMATION_MESSAGE);
@@ -2053,6 +2053,239 @@ readFromHubButton.addActionListener(new ActionListener() {
         }
     }
 });
+
+// Generate Config from MM button action
+generateConfigButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        showGenerateConfigDialog();
+    }
+});
+
+// Setup wizard: auto-detect settings from the live MM core, present a verify-and-save dialog.
+// Reads config groups, presets, and the Arduino COM port — no manual typing needed.
+void showGenerateConfigDialog() {
+    List allGroups = new ArrayList();
+    String autoPort = "";
+    try {
+        mmcorej.StrVector grpVec = mmc.getAvailableConfigGroups();
+        for (int i = 0; i < grpVec.size(); i++) allGroups.add(grpVec.get(i));
+        // Auto-detect Arduino COM port from the Switch device Port property
+        mmcorej.StrVector devices = mmc.getLoadedDevices();
+        String switchDev = null;
+        for (int i = 0; i < devices.size(); i++) {
+            String dev = devices.get(i);
+            if (dev.toLowerCase().contains("switch")) { switchDev = dev; break; }
+        }
+        if (switchDev == null) {
+            for (int i = 0; i < devices.size(); i++) {
+                String dev = devices.get(i);
+                try {
+                    if (mmc.getDeviceType(dev) == mmcorej.DeviceType.StateDevice) {
+                        switchDev = dev; break;
+                    }
+                } catch (Exception ex) {}
+            }
+        }
+        if (switchDev != null) {
+            try { autoPort = mmc.getProperty(switchDev, "Port"); } catch (Exception ex) {}
+        }
+    } catch (Exception ex) {}
+
+    if (allGroups.isEmpty()) {
+        JOptionPane.showMessageDialog(frame,
+            "No config groups found in Micro-Manager.\n" +
+            "Please load a hardware configuration in MM first, then try again.\n" +
+            "Alternatively use 'Load Configuration File' to open an existing .properties file.",
+            "Micro-Manager Not Ready", JOptionPane.WARNING_MESSAGE);
+        return;
+    }
+
+    JDialog genDialog = new JDialog(frame, "Generate LUMETRIC Configuration", true);
+    genDialog.setLayout(new BorderLayout(10, 10));
+
+    JPanel formPanel = new JPanel(new GridLayout(0, 2, 8, 6));
+    formPanel.setBorder(BorderFactory.createEmptyBorder(12, 15, 12, 15));
+
+    // Arduino serial port (auto-filled from MM)
+    JTextField portField = new JTextField(autoPort.isEmpty() ? config.serialPort : autoPort, 12);
+    formPanel.add(new JLabel("Arduino Serial Port:"));
+    formPanel.add(portField);
+
+    // Camera config group
+    JComboBox cameraGroupCombo = new JComboBox(allGroups.toArray());
+    if (!config.cameraConfigGroup.isEmpty()) cameraGroupCombo.setSelectedItem(config.cameraConfigGroup);
+    formPanel.add(new JLabel("Camera Config Group:"));
+    formPanel.add(cameraGroupCombo);
+
+    // Camera snap preset (populated from the selected group)
+    JComboBox snapCombo = new JComboBox();
+    formPanel.add(new JLabel("Camera Snap Preset:"));
+    formPanel.add(snapCombo);
+
+    // Camera trigger preset (the hardware-triggered one)
+    JComboBox triggerCombo = new JComboBox();
+    formPanel.add(new JLabel("<html>Camera Trigger Preset<br><font color='gray'>(for hardware-triggered acquisition)</font></html>"));
+    formPanel.add(triggerCombo);
+
+    // Arduino config group (which group contains the channel presets)
+    List ardGroupOptions = new ArrayList();
+    ardGroupOptions.add("-- scan all groups --");
+    ardGroupOptions.addAll(allGroups);
+    JComboBox arduinoGroupCombo = new JComboBox(ardGroupOptions.toArray());
+    if (!config.arduinoConfigGroup.isEmpty()) arduinoGroupCombo.setSelectedItem(config.arduinoConfigGroup);
+    formPanel.add(new JLabel("Arduino Config Group:"));
+    formPanel.add(arduinoGroupCombo);
+
+    // Spectral config group (optional)
+    List specGroupOptions = new ArrayList();
+    specGroupOptions.add("-- none --");
+    specGroupOptions.addAll(allGroups);
+    JComboBox spectralGroupCombo = new JComboBox(specGroupOptions.toArray());
+    if (!config.spectralConfigGroup.isEmpty()) spectralGroupCombo.setSelectedItem(config.spectralConfigGroup);
+    formPanel.add(new JLabel("Spectral Config Group:"));
+    formPanel.add(spectralGroupCombo);
+
+    // Spectral default preset
+    JComboBox spectralPresetCombo = new JComboBox();
+    formPanel.add(new JLabel("Spectral Default Preset:"));
+    formPanel.add(spectralPresetCombo);
+
+    // Circular buffer mode
+    JCheckBox circBufferCheck = new JCheckBox("Use Circular Buffer", config.useCircularBuffer);
+    circBufferCheck.setToolTipText("Enable for real cameras (high-speed acquisition); disable for demo / simple snap mode");
+    formPanel.add(new JLabel("Acquisition Mode:"));
+    formPanel.add(circBufferCheck);
+
+    // Populate camera presets for the initially selected group
+    String initCamGrp = (String) cameraGroupCombo.getSelectedItem();
+    if (initCamGrp != null) {
+        try {
+            mmcorej.StrVector presets = mmc.getAvailableConfigs(initCamGrp);
+            for (int i = 0; i < presets.size(); i++) {
+                snapCombo.addItem(presets.get(i));
+                triggerCombo.addItem(presets.get(i));
+            }
+            if (!config.cameraSnapConfig.isEmpty()) snapCombo.setSelectedItem(config.cameraSnapConfig);
+            if (!config.cameraTriggerConfig.isEmpty()) triggerCombo.setSelectedItem(config.cameraTriggerConfig);
+        } catch (Exception ex) {}
+    }
+
+    // Populate spectral presets for the initially selected group
+    String initSpecGrp = (String) spectralGroupCombo.getSelectedItem();
+    if (initSpecGrp != null && !initSpecGrp.equals("-- none --")) {
+        try {
+            mmcorej.StrVector presets = mmc.getAvailableConfigs(initSpecGrp);
+            for (int i = 0; i < presets.size(); i++) spectralPresetCombo.addItem(presets.get(i));
+            if (!config.spectralDefaultConfig.isEmpty()) spectralPresetCombo.setSelectedItem(config.spectralDefaultConfig);
+        } catch (Exception ex) {}
+    }
+
+    // Camera group change -> repopulate snap/trigger preset combos
+    cameraGroupCombo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            String grp = (String) cameraGroupCombo.getSelectedItem();
+            snapCombo.removeAllItems();
+            triggerCombo.removeAllItems();
+            if (grp == null) return;
+            try {
+                mmcorej.StrVector presets = mmc.getAvailableConfigs(grp);
+                for (int i = 0; i < presets.size(); i++) {
+                    snapCombo.addItem(presets.get(i));
+                    triggerCombo.addItem(presets.get(i));
+                }
+            } catch (Exception ex) {}
+        }
+    });
+
+    // Spectral group change -> repopulate spectral preset combo
+    spectralGroupCombo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            String grp = (String) spectralGroupCombo.getSelectedItem();
+            spectralPresetCombo.removeAllItems();
+            spectralPresetCombo.setEnabled(grp != null && !grp.equals("-- none --"));
+            if (grp == null || grp.equals("-- none --")) return;
+            try {
+                mmcorej.StrVector presets = mmc.getAvailableConfigs(grp);
+                for (int i = 0; i < presets.size(); i++) spectralPresetCombo.addItem(presets.get(i));
+            } catch (Exception ex) {}
+        }
+    });
+
+    JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+    JButton cancelBtn = new JButton("Cancel");
+    JButton saveApplyBtn = new JButton("Save & Apply");
+    saveApplyBtn.setBackground(new Color(150, 255, 150));
+    btnPanel.add(cancelBtn);
+    btnPanel.add(saveApplyBtn);
+
+    cancelBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) { genDialog.dispose(); }
+    });
+
+    saveApplyBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            // Write form values into config
+            config.serialPort = portField.getText().trim();
+            config.cameraConfigGroup = (String) cameraGroupCombo.getSelectedItem();
+            config.cameraSnapConfig = snapCombo.getSelectedItem() != null ? (String) snapCombo.getSelectedItem() : "";
+            config.cameraTriggerConfig = triggerCombo.getSelectedItem() != null ? (String) triggerCombo.getSelectedItem() : "";
+            String ardGrp = (String) arduinoGroupCombo.getSelectedItem();
+            config.arduinoConfigGroup = (ardGrp == null || ardGrp.equals("-- scan all groups --")) ? "" : ardGrp;
+            String specGrp = (String) spectralGroupCombo.getSelectedItem();
+            config.spectralConfigGroup = (specGrp == null || specGrp.equals("-- none --")) ? "" : specGrp;
+            config.spectralDefaultConfig = spectralPresetCombo.getSelectedItem() != null ? (String) spectralPresetCombo.getSelectedItem() : "";
+            config.useCircularBuffer = circBufferCheck.isSelected();
+
+            // Ask where to save the new .properties file
+            JFileChooser saver = new JFileChooser();
+            saver.setDialogTitle("Save Configuration File");
+            saver.setFileFilter(new ConfigFileFilter());
+            String lastPath = prefs.get("lastConfigPath", "");
+            if (!lastPath.isEmpty()) {
+                File parentDir = new File(lastPath).getParentFile();
+                if (parentDir != null && parentDir.exists()) saver.setCurrentDirectory(parentDir);
+            }
+            saver.setSelectedFile(new File("lumetric_config.properties"));
+
+            int res = saver.showSaveDialog(genDialog);
+            if (res != JFileChooser.APPROVE_OPTION) return;
+
+            File saveFile = saver.getSelectedFile();
+            String fname = saveFile.getName();
+            // Append .properties if the user didn't type an extension
+            if (!fname.toLowerCase().endsWith(".properties") && !fname.toLowerCase().endsWith(".txt")) {
+                saveFile = new File(saveFile.getParentFile(), fname + ".properties");
+            }
+            config.configFilePath = saveFile.getAbsolutePath();
+
+            // Save skeleton config (no PIN_ entries yet)
+            if (!config.saveToFile(config.configFilePath)) return;
+
+            // Auto-detect channels from Hub and re-save with PIN_ entries included
+            config.loadFromHub(mmc);
+            config.saveToFile(config.configFilePath);
+
+            prefs.put("lastConfigPath", config.configFilePath);
+            updateSettingsDisplay();
+            tabbedPane.setSelectedIndex(1);
+            genDialog.dispose();
+        }
+    });
+
+    JLabel infoLabel = new JLabel("<html><div style='padding:5px'>"
+        + "Values auto-detected from Micro-Manager. Verify each field, then click <b>Save &amp; Apply</b>.<br>"
+        + "<font color='gray'>Channels will be auto-read from the Arduino Config Group on save.</font>"
+        + "</div></html>");
+    infoLabel.setBorder(BorderFactory.createEmptyBorder(5, 10, 0, 10));
+
+    genDialog.add(infoLabel, BorderLayout.NORTH);
+    genDialog.add(new JScrollPane(formPanel), BorderLayout.CENTER);
+    genDialog.add(btnPanel, BorderLayout.SOUTH);
+    genDialog.pack();
+    genDialog.setMinimumSize(new Dimension(520, 420));
+    genDialog.setLocationRelativeTo(frame);
+    genDialog.setVisible(true);
+}
 
 // Try to load last used config on startup
 String lastConfigPath = prefs.get("lastConfigPath", "");
