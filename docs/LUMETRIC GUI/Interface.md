@@ -1,85 +1,85 @@
-# Graphical User Interface
+# Interface Overview
 
 The LUMETRIC interface is a single window titled **LUMETRIC – Hardware control**, organized into three tabs. The first tab configures hardware, the second builds the acquisition sequence, and the third defines live visualization. Starting an acquisition hides this window and opens a separate live **Acquisition Window**. A **Post-Production** window is available for re-analyzing finished experiments.
 
 The same interface drives both operating modes:
 
-- **LUMETRIC** (full system) — hardware-triggered acquisition through the Arduino timing unit. Supports multi-channel sequences, alternating excitation, photoswitching, looping, and sub-millisecond timing.
-- **LUMETRIC *lite*** — software-controlled (snap) acquisition with no Arduino. Captures one channel using only the GUI exposure and interval settings.
-
-The **LUMETRIC Lite** checkbox at the top of the Acquisition Settings tab switches between them. When ticked, acquisition runs in snap mode with no serial communication and no channel switching; when unticked, the full hardware-triggered path is used.
-
-!!! Note "Mode terminology"
-    *LUMETRIC lite* corresponds internally to snap mode (`USE_CIRCULAR_BUFFER = false` / simple snap). The full system corresponds to circular-buffer, hardware-triggered acquisition.
-
----
+- **LUMETRIC** (full system) - hardware-triggered acquisition through the Acquisition control box.
+- **LUMETRIC *lite*** - software-controlled acquisition with no extra hardware. Captures one channel only using only the GUI exposure and interval settings.
 
 ## Window structure
 
-- **Tab 1 — Setup Configuration:** load, generate, reload, and save the `.properties` configuration; inspect the available channels.
-- **Tab 2 — Acquisition Settings:** select the operating mode, build the sequence table, choose the save folder, set post-acquisition stack options, and start the run.
-- **Tab 3 — Data Visualization:** choose the processing mode, configure up to four live graphs, enable corrections, and start the run.
+The following windows will be explained here:
+
+- **Tab 1 - Setup Configuration:** load, generate, reload, and save the `.properties` configuration; inspect the available channels.
+- **Tab 2 - Acquisition Settings:** select the operating mode, build the sequence table, choose the save folder, set post-acquisition stack options, and start the run.
+- **Tab 3 - Data Visualization:** choose the data processing mode (Spatial/ Temporal), configure up to four live graphs, enable corrections, and start the run.
 - **Acquisition Window:** live camera view and graphs shown during a run, with event, loop-switch, zoom-reset, and quit controls.
 - **Post-Production Window:** reopen a finished experiment folder to refine ROIs and re-export corrected data.
+- **Data Export Folder**
 
-On startup, the interface opens on the Acquisition Settings tab if a configuration was used previously, or on the Setup Configuration tab otherwise.
+On startup, the interface opens on the Acquisition Settings tab if a configuration was used previously, or on the Setup Configuration tab in case of a fresh installation.
 
----
-
-## Tab 1 — Setup Configuration
+## Tab 1 - Setup Configuration
 
 This tab displays the active configuration and the channel list, and provides the configuration management buttons. The **Current Configuration** panel shows the config file path, camera group, Arduino config group, and serial port. The **Available Channels** panel lists each `PIN_n = channel` mapping.
+
+![Configuration](../assets/images/ConfigTab.png)
+/// caption
+**Fig.1:** Tab 1 - Setup Configuration.
+///
 
 ### Buttons
 
 - **Generate Config from MM** — auto-detects settings from the running Micro-Manager instance (config groups, presets, and the Arduino COM port) and opens a verify-and-save dialog to write a new `.properties` file. Use this to create a configuration without editing text by hand.
-- **Load Configuration File** — opens a file chooser to load an existing `.properties` configuration. On success the channel list updates and the interface switches to the Acquisition Settings tab.
+- **Load Configuration File** — opens a file chooser to load an existing `.properties` configuration. On success the channel list updates and the interface switches to the Acquisition Settings tab. Useful if you run your setup with different device combinations.
 - **Reload Current Config** — re-reads the currently loaded configuration file from disk, picking up any external edits.
-- **Read Channels from Hub** — queries the Micro-Manager Arduino Switch device and populates the channel list automatically from its presets. Each preset that sets the switch state to a power-of-two value becomes a channel mapped to the corresponding pin.
+- **Read Channels from Hub** — queries the Micro-Manager Arduino Switch device and populates the channel list automatically from its presets. Each preset that corresponds to an individual BNC connection is loaded as channel.
 - **Save Config** — writes the current channel/pin configuration back to the loaded config file (asks for confirmation before overwriting).
 
 !!! Note "LUMETRIC vs LUMETRIC *lite*"
-    The Arduino config group, serial port, and **Read Channels from Hub** apply to the full system only. In *lite* mode, only the camera configuration is required; the channel list and Arduino fields are not used during acquisition.
-
----
+    The Arduino config group, serial port, and **Read Channels from Hub** apply to the full system only. In *lite* mode, the configuration is not required.
 
 ## Tab 2 — Acquisition Settings
 
-This tab builds the acquisition sequence and starts the run.
+This tab is the main control. It builds the acquisition sequence,starts the run and grands access to post-processing.
+
+![Acquisition Setting](../assets/images/AcquTab.png)
+/// caption
+**Fig.2:** Tab 2 - Acquisition Setting.
+///
 
 ### Mode selection
 
-- **LUMETRIC Lite** (checkbox) — when ticked, runs single-channel snap acquisition using only the GUI exposure settings, with no Arduino and no multi-channel automation. When unticked, runs the full hardware-triggered sequence. A label beside it reads *"← No Arduino or multi-channel setup required."*
+- **LUMETRIC Lite** (checkbox) — when ticked, runs single-channel snap acquisition using only the GUI exposure and frame Interval settings of Row 1, with no Arduino and no multi-channel automation. When unticked, runs the full hardware-triggered sequence.
 
 ### Sequence table
 
-Each row defines one acquisition step. Up to 32 rows are supported. A **Row** number column (bold, not editable) labels each step.
+Each row defines one acquisition step. Up to 20 rows are supported. A **Row** number column (bold, not editable) labels each step.
 
 | Column | Purpose |
 |--------|---------|
-| **Channel** | Illumination channel(s) for the step. Clicking the cell opens a checkbox dialog listing the available channels; select one or several. Empty means a photoswitching row. |
-| **Exposure [ms]** | LED on-time and camera exposure per frame (0–60000). `0` creates a photoswitching row (no camera trigger). |
-| **Frame Interval [ms]** | Full frame period including exposure and the inter-frame gap (0–60000). Must be ≥ exposure. |
-| **Frames** | Number of frames to capture (0–60000). `0` runs until a loop ends or Quit is pressed. |
-| **Loop Goto** | 1-based row to jump back to once the frame count is reached. Auto-filled to the next row; the last row defaults to looping back to the first. Editing a cell marks it as user-set and stops auto-updates. |
-| **Loop Times** | Number of loop repetitions. Empty or `0` means infinite (shown as `0`). |
-| **Constant Illum** | Channel(s) held on during the inter-frame gap. The camera trigger bit is masked out automatically, and a channel already in the row's Channel list cannot also be a constant-illumination channel. |
-| **Loop Switch Goto** | 1-based row to jump to when the **Loop Switch** button is pressed during acquisition. Empty means disabled (shown as `none`). |
-
-Numeric fields are clamped to the 0–60000 range as they are entered.
+| **Channel** | Illumination channel(s) during exposure for the step. Clicking the cell opens a checkbox dialog listing the available channels; select one or several.|
+| **Exposure [ms]** | LED on-time and camera exposure per frame (0–60000). Be aware that the true exposure times are curbed by the cameras. Typical limits are around 2000 ms. 0 ms creates a pause row (no camera trigger). Helpful for additions or incubation times. |
+| **Frame Interval [ms]** | Full frame period including exposure and the inter-frame gap (0–60000). Must be > exposure. |
+| **Frames** | Number of frames to capture with these settings (0–60000) before triggering a switch to the "Loop Goto". 0 works as infinity (no looping to Loop Goto). Stops only if Quit is pressed or Loop Switch if configured. |
+| **Loop Goto** | Row to jump back to once the frame count is reached. Auto-filled to the next row; the last row defaults to looping back to the first. |
+| **Loop Times** | Number of loop repetitions. It will jump these many times to the Row set in Loop Goto. Empty or 0 means infinite (shown as 0 ). After the number of Loop Times is reached, the acquisition jumps to the row underneath it. |
+| **Constant Illum** | Channel(s) held on during the inter-frame gap and the Exposure time. A channel already in the Exposure Channel list cannot also be a constant-illumination channel. |
+| **Loop Switch Goto** | Row to jump to when the **Loop Switch** button is pressed during acquisition. Empty means disabled (shown as none). |
 
 !!! Note "LUMETRIC vs LUMETRIC *lite*"
-    Channel switching, Constant Illum, Loop Goto / Loop Times, Loop Switch Goto, and photoswitching rows are hardware features executed by the Arduino. In *lite* (snap) mode the run uses the GUI exposure and interval only; multi-row channel automation does not apply.
+    Channel switching, Constant Illum, Loop Goto / Loop Times, Loop Switch Goto, and constant illumination are hardware features executed by the Arduino. In *lite* mode the run uses the GUI exposure and interval only; multi-row channel automation does not apply.
 
-### Sequence controls
+### Sequence control buttons
 
-- **Add Row** — appends a new sequence row with default values.
-- **Remove Row** — deletes the currently selected row (prompts if no row is selected).
-- **Validate Sequence** — checks the table for errors before starting; the same validation runs automatically when an acquisition is started.
-- **Save Settings** — exports the current acquisition table and visualization settings to a CSV file.
+- **Add Row** — appends a new sequence row.
+- **Remove Row** — deletes the currently selected row.
+- **Validate Sequence** — checks the table for logic errors before starting; the same validation runs automatically when an acquisition is started.
+- **Save Settings** — exports the current acquisition table and visualization settings to a re-loadable CSV file.
 - **Load Settings** — restores acquisition and visualization settings from a previously saved CSV file.
 - **Use hardcoded test table (case 69)** (checkbox) — bypasses the serial table upload and loads a fixed test pattern directly on the Arduino (one LED, 100 ms exposure, 1000 ms interval). Intended for hardware bring-up and diagnostics.
-- **OK – Start Acquisition** — validates the sequence, asks for a save folder if none is set, captures all GUI settings, hides the main window, and launches the acquisition.
+- **OK – Start Acquisition** — validates the sequence, asks for a save folder if none is set, saves all GUI settings, hides the main window, and launches the acquisition.
 - **Cancel** — closes the interface without starting.
 - **Open Post-Production** — opens a finished experiment folder to refine ROIs and re-export data (see [Post-Production](#post-production-window)).
 
@@ -90,9 +90,7 @@ Numeric fields are clamped to the 0–60000 range as they are entered.
 - **Stack per Row** (checkbox) — after acquisition, creates one TIFF stack per sequence row. Can be combined with **Convert to Stack**.
 
 !!! Tip "Images are always saved"
-    Every acquired frame is written to disk regardless of the stack options or the **Live Pictures** checkbox.
-
----
+    Every acquired frame is written to disk regardless of the stack options or the **Live Pictures** checkbox. If you uncheck everything regarding that you will have a folder with each frame as individual file.
 
 ## Tab 3 — Data Visualization
 
@@ -100,13 +98,23 @@ This tab configures the real-time analysis and graphs. Up to four graphs can be 
 
 ### Processing mode
 
-- **Mode** (combo: Temporal / Spatial)
-    - **Temporal** — compares ROI intensities across frames over time. Graph types: **Intensity** and **Ratio** (frame ratio, e.g. odd/even frames).
-    - **Spatial** — compares two halves of the same frame (dual-view / split-image). ROIs are drawn on one half and mirrored to the other. Graph types: **Split ratio** and region intensities.
+- **Mode** (Temporal / Spatial)
+  - **Temporal** — compares ROI intensities across frames over time. Graph types: **Intensity** and **Ratio** (frame ratio).
+  - **Spatial** — compares two halves of the same frame (dual-view / split-image). ROIs are drawn on one half and mirrored to the other. Graph types: **Split ratio** and **Intensity**.
 
-Selecting Spatial reveals the **Spatial Configuration** and **Bleedthrough Correction** panels.
+### Temporal mode
 
-### Spatial configuration (Spatial mode only)
+![Temporal mode](../assets/images/TemporalMode.png)
+/// caption
+**Fig.3:** Tab 3 - Temporal mode.
+///
+
+### Spatial mode
+
+![Spatial mode](../assets/images/SpatialMode.png)
+/// caption
+**Fig.4:** Tab 3 - Spatial mode.
+///
 
 - **Split Axis** (combo: Horizontal / Vertical) — the axis along which each frame is split.
 - **ROI Region** (combo) — which half the ROIs are drawn on. Options follow the split axis: Upper/Lower for Horizontal, Left/Right for Vertical.
@@ -126,8 +134,8 @@ The Numerator/Denominator dropdowns list the available sequence rows and update 
 
 - **Enable Background Correction** (checkbox) — subtracts a designated background ROI from all measured ROIs. The background ROI is selected after starting, during ROI setup. Available in both modes.
 - **Enable Bleedthrough Correction** (checkbox, Spatial mode only) — subtracts a scaled source-half signal from the mirror half to correct spectral bleedthrough. Enabled only when Background Correction is also active.
-    - **Direction** (combo) — the physical bleedthrough direction (e.g. Upper → Lower), independent of where ROIs are drawn.
-    - **Factor** (text field) — the bleedthrough correction factor; accepts `,` or `.` as the decimal separator.
+  - **Direction** (combo) — the physical bleedthrough direction (e.g. Upper → Lower), independent of where ROIs are drawn.
+  - **Factor** (text field) — the bleedthrough correction factor; accepts `,` or `.` as the decimal separator.
 
 ### Start
 
@@ -137,11 +145,18 @@ The Numerator/Denominator dropdowns list the available sequence rows and update 
 !!! Note "LUMETRIC vs LUMETRIC *lite*"
     Temporal/Spatial analysis, live graphs, background and bleedthrough correction, and post-processing are available in **all** modes. Per-row graph filtering is most useful for multi-row (full-system) sequences; in *lite* mode a single row is used, so `All Rows` is the natural Numerator setting.
 
----
+## ROI Selection
+
+If no ROIs are defined, the calculations are made as one ROI over the whole field of view.
 
 ## Acquisition Window
 
 Starting an acquisition opens an inline window containing the live camera view (if **Live Pictures** is enabled) and the configured graphs. ROIs drawn at the start are overlaid on the live image. Graphs update in real time, throttled to roughly 250 ms.
+
+![Temporal mode](../assets/images/Acquisition.png)
+/// caption
+**Fig.4:** Aquisition Window.
+///
 
 ### Controls
 
@@ -173,7 +188,7 @@ Correction levels exported depend on what is enabled:
 
 ---
 
-## Output files
+## Data Export folder
 
 Each run creates a timestamped experiment folder containing:
 

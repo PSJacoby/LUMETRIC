@@ -19,7 +19,7 @@ The LUMETRIC acquisition control box provides hardware-level synchronization and
 ### Optional components
 
 - TTL logic level converter **IF** you have devices that **do NOT work at 3.3 V** (FREI ST1167 or similar)
-- 5 x M3 screws (5 mm)
+- 5 x M3 screws (6 mm)
 - Heat-set threaded inserts (e.g., RUTHEX GE-M3X5X4)
 - 3D-printed enclosure parts
 
@@ -53,7 +53,7 @@ Both parts are secured using screws at the four corners with reinforced mounting
 
 Refer to the wiring scheme (Figure 1) and the image of a example box (Figure 2).
 
-![Wiring scheme of the Arduino](../assets/images/Arduino-wiring.svg){ align=left }
+![Wiring scheme of the Arduino](../assets/images/Arduino-wiring.svg)
 /// caption
 **Fig.1:** Wiring scheme of the Arduino to the BNC connectors.
 ///
@@ -138,7 +138,7 @@ Before proceeding here, make sure you completed the installing stapes described 
         You find the COM Port also via the Arduino IDE (but always open either MM or Arduino IDE) or in your Windows Device Manager.
 
 4. Add **Arduino (Arduino Hub)** from the list. Choose "**Scan Ports**".
-5. Add the Arduino as shutter and switch.
+5. Add the Arduino as hub, shutter and switch.
 6. Connect your lamp to the BNC ports of your LUMETRIC box. A good order is increasing wavelength.
 7. In MM, define a new group for Presets. Choose the Arduino switch states as single property.
 8. Define one Preset per BNC Channel you use. See the table below for the state number to choose.
@@ -175,8 +175,4 @@ TODO Include Image of config 1 and 2
 
 ## First test experiment of the full LUMETRIC System
 
-1. Open LUMETRIC via your predefined Quick-Access Button
-2. Choose: "**LUMETRIC Lite**"
-
-A introduction in how to set-up an experiment with LUMETRIC *lite*  can be found in [LUMETRIC lite](../LUMETRIC%20GUI/Singlechannel). If you would like to start with a concise overview of all options you are offered by LUMETRIC, check out [LUMETRIC GUI](../LUMETRIC%20GUI/Interface).
-If you want to set up a full LUMETRIC system, continue with [Aquisition Control Box](./ArduinoAssembly).
+A introduction in how to set-up an experiment with LUMETRIC can be found in [LUMETRIC](../LUMETRIC%20GUI/Multichannel). If you would like to start with a concise overview of all options you are offered by LUMETRIC, check out [LUMETRIC GUI](../LUMETRIC%20GUI/Interface).

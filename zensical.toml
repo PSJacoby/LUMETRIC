@@ -9,13 +9,13 @@ nav = [
         "Configuration/Install.md",
         "Configuration/ArduinoAssembly.md"
     ]},
-    {"Architecture" = [
-        "Architecture/Diagrams.md"
-    ]},
     {"LUMETRIC GUI" = [
         "LUMETRIC GUI/Interface.md",
         "LUMETRIC GUI/Singlechannel.md",
         "LUMETRIC GUI/Multichannel.md"
+    ]},
+    {"Architecture" = [
+        "Architecture/Diagrams.md"
     ]},
     {"FAQ" = "FAQ.md"}
 ]
