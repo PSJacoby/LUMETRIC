@@ -37,7 +37,9 @@ The enclosure is a two-part design:
 - Top cover
 - Optional: plugs for unused BNC ports
 
-TODO Add picture of the box model (or video)
+<video controls>
+  <source src="../assets/videos/demo.mp4">
+</video>
 
 Both parts are secured using screws at the four corners with reinforced mounting stems and support for heat-set inserts.
 
@@ -51,7 +53,9 @@ Both parts are secured using screws at the four corners with reinforced mounting
 
 Refer to the wiring scheme (Figure X) and reference images (Figure Y).
 
-TODO add both images
+![Wiring scheme of the Arduino](../assets/imagesArduino-wiring.svg)
+
+![Picture of the open box so one sees the wiring inside](../assets/images/photo-wiring.jpg)
 
 ### Soldering Steps
 
