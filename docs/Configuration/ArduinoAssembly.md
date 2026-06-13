@@ -51,16 +51,16 @@ Both parts are secured using screws at the four corners with reinforced mounting
 
 ## Wiring-up the Arduino
 
-Refer to the wiring scheme (Figure X) and reference images (Figure Y).
+Refer to the wiring scheme (Figure 1) and the image of a example box (Figure 2).
 
 ![Wiring scheme of the Arduino](../assets/images/Arduino-wiring.svg){ align=left }
 /// caption
-Wiring scheme of the Arduino to the BNC connectors.
+**Fig.1:** Wiring scheme of the Arduino to the BNC connectors.
 ///
 
 ![Picture of the open box so one sees the wiring inside](../assets/images/photo-wiring.jpeg){ align=right }
 /// caption
-Picture of the open box, so that the wiring can be seen.
+**Fig.2:** Picture of the open box, so that the wiring can be seen.
 ///
 
 ### Soldering Steps
@@ -173,20 +173,10 @@ TODO Include Image of config 1 and 2
     !!! Tip "COM Port detection of your Arduino"
         In most cases the detected Arduino Serial Port will be the correct one. In the special case of you having multiple Arduinos attached and integrated into MM, it might choose falsely. Double check the Port.
 
-## System Validation
-
 ## First test experiment of the full LUMETRIC System
 
-1. Start MicroManager
-2. Load configuration
-3. Initialize devices
-4. Run a test acquisition
+1. Open LUMETRIC via your predefined Quick-Access Button
+2. Choose: "**LUMETRIC Lite**"
 
-Verify:
-
-- Trigger signal output
-- Camera synchronization
-- Stable acquisition timing
-
-> **Success criteria:** Correct triggering and synchronized device operation.
-``
+A introduction in how to set-up an experiment with LUMETRIC *lite*  can be found in [LUMETRIC lite](../LUMETRIC%20GUI/Singlechannel). If you would like to start with a concise overview of all options you are offered by LUMETRIC, check out [LUMETRIC GUI](../LUMETRIC%20GUI/Interface).
+If you want to set up a full LUMETRIC system, continue with [Aquisition Control Box](./ArduinoAssembly).
