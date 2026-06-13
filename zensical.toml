@@ -13,6 +13,7 @@ nav = [
         "Architecture/Diagrams.md"
     ]},
     {"LUMETRIC GUI" = [
+        "LUMETRIC GUI/Interface.md",
         "LUMETRIC GUI/Singlechannel.md",
         "LUMETRIC GUI/Multichannel.md"
     ]},
