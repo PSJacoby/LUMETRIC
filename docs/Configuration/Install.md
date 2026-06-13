@@ -68,6 +68,5 @@ require compilation or modification of Micro-Manager installation files.
 
 1. Open LUMETRIC via your predefined Quick-Access Button
 2. Choose: "**LUMETRIC Lite**"
-3. You will see a dialog as depicted in figure x. Be sure to choose the correct Groups and Presets.
-   1. Make sure the "**Camera Snap Preset**" uses the internal Trigger while for the "**Camera Trigger Preset**" you have set the Global Shutter + Level Mode + External Trigger mode. A introduction of all options you have when using LUMETRIC **lite** can be found in TODO Link GUI Manual.
-If you want to set up a full LUMETRIC system, continue with [Aquisition Control Box](./ArduinoAssembly).
+
+A introduction in how to set-up an experiment with LUMETRIC *lite*  can be found in [LUMETRIC GUI](../LUMETRIC%20GUI/Interface). If you want to set up a full LUMETRIC system, continue with [Aquisition Control Box](./ArduinoAssembly).
