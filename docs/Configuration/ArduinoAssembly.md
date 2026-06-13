@@ -58,7 +58,7 @@ Refer to the wiring scheme (Figure X) and reference images (Figure Y).
 Wiring scheme of the Arduino to the BNC connectors.
 ///
 
-![Picture of the open box so one sees the wiring inside](../assets/images/photo-wiring.jpg){ align=right }
+![Picture of the open box so one sees the wiring inside](../assets/images/photo-wiring.jpeg){ align=right }
 /// caption
 Picture of the open box, so that the wiring can be seen.
 ///
