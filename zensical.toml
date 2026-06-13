@@ -49,13 +49,13 @@ toogle.name = "Switch to light mode"
 [project.markdown_extensions.pymdownx.tilde]
 [project.markdown_extensions.pymdownx.details]
 [project.markdown_extensions.pymdownx.superfences]
-[project.markdown_extensions.attr_list]
-[project.markdown_extensions.md_in_html]
-[project.markdown_extensions.pymdownx.blocks.caption]
 custom_fences = [
   { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" }
 ]
 [project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.pymdownx.blocks.caption]
 [project.extra.analytics]
 provider = "custom"
 property = "umami"

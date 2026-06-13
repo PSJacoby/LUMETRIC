@@ -69,4 +69,5 @@ require compilation or modification of Micro-Manager installation files.
 1. Open LUMETRIC via your predefined Quick-Access Button
 2. Choose: "**LUMETRIC Lite**"
 
-A introduction in how to set-up an experiment with LUMETRIC *lite*  can be found in [LUMETRIC GUI](../LUMETRIC%20GUI/Interface). If you want to set up a full LUMETRIC system, continue with [Aquisition Control Box](./ArduinoAssembly).
+A introduction in how to set-up an experiment with LUMETRIC *lite*  can be found in [LUMETRIC lite](../LUMETRIC%20GUI/Singlechannel). If you would like to start with a concise overview of all options you are offered by LUMETRIC, check out [LUMETRIC GUI](../LUMETRIC%20GUI/Interface).
+If you want to set up a full LUMETRIC system, continue with [Aquisition Control Box](./ArduinoAssembly).
