@@ -37,8 +37,8 @@ The enclosure is a two-part design:
 - Top cover
 - Optional: plugs for unused BNC ports
 
-<video controls>
-  <source src="../assets/videos/demo.mp4">
+<video controls width="250">
+  <source src="../assets/videos/demo.mp4" type="video/mp4"/>
 </video>
 
 Both parts are secured using screws at the four corners with reinforced mounting stems and support for heat-set inserts.
