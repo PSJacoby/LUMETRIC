@@ -9,6 +9,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.prefs.Preferences;
 
@@ -217,8 +219,6 @@ class MicroscopeConfig {
     String cameraConfigGroup = "Hamamatsu";
     String cameraSnapConfig = "Snapping_and_Live";
     String cameraTriggerConfig = "GlobalResetLevelTriggerArduinoMode";
-    String spectralConfigGroup = "Spectra";
-    String spectralDefaultConfig = "Triggered";
     String arduinoConfigGroup = "";
     String serialPort = "COM4";
     String configFilePath = "";
@@ -240,53 +240,39 @@ class MicroscopeConfig {
     // never modified so Save / Load Settings is unaffected.
     ArrayList expandedSequenceRows = null;
 
-    // Load configuration from file
+    // Load configuration from .properties file
     boolean loadFromFile(String filePath) {
         try {
             pinToChannel.clear();
-            BufferedReader reader = new BufferedReader(new FileReader(filePath));
-            String line;
-
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                // Skip comments and empty lines
-                if (line.startsWith("#") || line.isEmpty()) {
-                    continue;
-                }
-
-                // Parse key = value
-                if (line.contains("=")) {
-                    String[] parts = line.split("=", 2);
-                    String key = parts[0].trim();
-                    String value = parts[1].trim();
-
-                    if (key.startsWith("PIN_")) {
-                        try {
-                            int pinNum = Integer.parseInt(key.substring(4));
-                            pinToChannel.put(pinNum, value);
-                        } catch (NumberFormatException e) {
-                            // Ignore malformed PIN_ keys (e.g. PIN_abc)
-                        }
-                    } else if (key.equals("CAMERA_CONFIG_GROUP")) {
-                        cameraConfigGroup = value;
-                    } else if (key.equals("CAMERA_SNAP_CONFIG")) {
-                        cameraSnapConfig = value;
-                    } else if (key.equals("CAMERA_TRIGGER_CONFIG")) {
-                        cameraTriggerConfig = value;
-                    } else if (key.equals("USE_CIRCULAR_BUFFER")) {
-                        useCircularBuffer = value.equalsIgnoreCase("true") || value.equals("1");
-                    } else if (key.equals("SPECTRAL_CONFIG_GROUP")) {
-                        spectralConfigGroup = value;
-                    } else if (key.equals("SPECTRAL_DEFAULT_CONFIG")) {
-                        spectralDefaultConfig = value;
-                    } else if (key.equals("ARDUINO_CONFIG_GROUP")) {
-                        arduinoConfigGroup = value;
-                    } else if (key.equals("SERIAL_PORT")) {
-                        serialPort = value;
+            Properties props = new Properties();
+            FileReader fr = new FileReader(filePath);
+            props.load(fr);
+            fr.close();
+            java.util.Enumeration keys = props.propertyNames();
+            while (keys.hasMoreElements()) {
+                String key = ((String) keys.nextElement()).trim();
+                String value = props.getProperty(key, "").trim();
+                if (key.startsWith("PIN_")) {
+                    try {
+                        int pinNum = Integer.parseInt(key.substring(4));
+                        pinToChannel.put(pinNum, value);
+                    } catch (NumberFormatException e) {
+                        // Ignore malformed PIN_ keys (e.g. PIN_abc)
                     }
+                } else if (key.equals("CAMERA_CONFIG_GROUP")) {
+                    cameraConfigGroup = value;
+                } else if (key.equals("CAMERA_SNAP_CONFIG")) {
+                    cameraSnapConfig = value;
+                } else if (key.equals("CAMERA_TRIGGER_CONFIG")) {
+                    cameraTriggerConfig = value;
+                } else if (key.equals("USE_CIRCULAR_BUFFER")) {
+                    useCircularBuffer = value.equalsIgnoreCase("true") || value.equals("1");
+                } else if (key.equals("ARDUINO_CONFIG_GROUP")) {
+                    arduinoConfigGroup = value;
+                } else if (key.equals("SERIAL_PORT")) {
+                    serialPort = value;
                 }
             }
-            reader.close();
             configFilePath = filePath;
             return true;
         } catch (IOException e) {
@@ -349,12 +335,6 @@ class MicroscopeConfig {
             writer.println("# true = Use circular buffer (for real cameras with high-speed acquisition)");
             writer.println("# false = Use simple snap mode (for demo cameras or single frame capture)");
             writer.println("USE_CIRCULAR_BUFFER = " + useCircularBuffer);
-            writer.println();
-
-            // Spectral settings
-            writer.println("# Spectral Configuration Settings");
-            writer.println("SPECTRAL_CONFIG_GROUP = " + spectralConfigGroup);
-            writer.println("SPECTRAL_DEFAULT_CONFIG = " + spectralDefaultConfig);
             writer.println();
 
             // Arduino config group
@@ -474,10 +454,11 @@ class MicroscopeConfig {
 // Simple FileFilter for config files
 class ConfigFileFilter extends javax.swing.filechooser.FileFilter {
     public boolean accept(File f) {
-        return f.isDirectory() || f.getName().toLowerCase().endsWith(".txt");
+        String name = f.getName().toLowerCase();
+        return f.isDirectory() || name.endsWith(".properties");
     }
     public String getDescription() {
-        return "Configuration Files (*.txt)";
+        return "LUMETRIC Configuration Files (*.properties)";
     }
 }
 
@@ -486,6 +467,10 @@ config=new MicroscopeConfig();
 
 // Preferences for remembering last config
 prefs=Preferences.userNodeForPackage(MicroscopeConfig.class);
+
+// Held open during acquisition to prevent the experiment folder from being renamed.
+// Windows refuses to rename any directory containing an open file handle.
+acqFolderLock = null;
 
 // Table Model for the acquisition settings
 class AcquisitionTableModel extends DefaultTableModel {
@@ -1133,8 +1118,8 @@ frame.setSize(1300, 600);
 tabbedPane = new JTabbedPane();
 
 // Create checkboxes at higher scope so both buttons can access them
-simpleSnapMode = new JCheckBox("Simple Snap Mode", false);
-simpleSnapMode.setToolTipText("Enable for single-channel acquisition with GUI settings only (safe & simple)");
+simpleSnapMode = new JCheckBox("LUMETRIC Lite", false);
+simpleSnapMode.setToolTipText("Single-channel acquisition using only GUI exposure settings — no Arduino or multi-channel setup required");
 
 livePics = new JCheckBox("Live Pictures");
 livePics.setToolTipText("Show live view in GUI during acquisition (images are always saved to disk)");
@@ -1165,13 +1150,15 @@ configInfoPanel.setBorder(BorderFactory.createTitledBorder("Current Configuratio
 
 configFileLabel = new JLabel("Config File: Not loaded");
 cameraGroupLabel = new JLabel("Camera Group: -");
-spectralGroupLabel = new JLabel("Spectral Group: -");
 arduinoGroupLabel = new JLabel("-");
 serialPortLabel = new JLabel("Serial Port: -");
 channelsTextArea = new JTextArea(5, 40);
 channelsTextArea.setEditable(false);
 channelsTextArea.setBorder(BorderFactory.createTitledBorder("Available Channels"));
 
+generateConfigButton = new JButton("Generate Config from MM");
+generateConfigButton.setBackground(new Color(255, 230, 100));
+generateConfigButton.setToolTipText("Auto-detect settings from the running Micro-Manager instance and create a new .properties config file");
 loadConfigButton = new JButton("Load Configuration File");
 reloadConfigButton = new JButton("Reload Current Config");
 readFromHubButton = new JButton("Read Channels from Hub");
@@ -1184,14 +1171,13 @@ configInfoPanel.add(new JLabel("Config File:"));
 configInfoPanel.add(configFileLabel);
 configInfoPanel.add(new JLabel("Camera Group:"));
 configInfoPanel.add(cameraGroupLabel);
-configInfoPanel.add(new JLabel("Spectral Group:"));
-configInfoPanel.add(spectralGroupLabel);
 configInfoPanel.add(new JLabel("Arduino Config Group:"));
 configInfoPanel.add(arduinoGroupLabel);
 configInfoPanel.add(new JLabel("Serial Port:"));
 configInfoPanel.add(serialPortLabel);
 
 configButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+configButtonPanel.add(generateConfigButton);
 configButtonPanel.add(loadConfigButton);
 configButtonPanel.add(reloadConfigButton);
 configButtonPanel.add(readFromHubButton);
@@ -1208,7 +1194,7 @@ sequencePanel = new JPanel(new BorderLayout());
 sequenceTopPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 sequenceTopPanel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 sequenceTopPanel.add(simpleSnapMode);
-simpleSnapInfoLabel = new JLabel(" ← Use for single-channel acquisition with GUI settings (no multi-channel automation)");
+simpleSnapInfoLabel = new JLabel(" ← No Arduino or multi-channel setup required");
 simpleSnapInfoLabel.setForeground(Color.DARK_GRAY);
 sequenceTopPanel.add(simpleSnapInfoLabel);
 sequencePanel.add(sequenceTopPanel, BorderLayout.NORTH);
@@ -1375,8 +1361,9 @@ okButton.addActionListener(new ActionListener() {
 
                         if (config.acqSettings.isVisualizationNeeded()) {
                             if (!setupVisualizationROIs()) {
+                                final String abortFolder1 = config.experimentFolder;
                                 SwingUtilities.invokeLater(new Runnable() {
-                                    public void run() { frame.setVisible(true); }
+                                    public void run() { restartMainGUI(abortFolder1); }
                                 });
                                 return;
                             }
@@ -1387,12 +1374,13 @@ okButton.addActionListener(new ActionListener() {
                         config.expandedSequenceRows = expandPauseRows(config.acqSettings.sequenceRows);
 
                         if (!exportTableToCSV()) {
+                            final String abortFolder2 = config.experimentFolder;
                             SwingUtilities.invokeLater(new Runnable() {
                                 public void run() {
                                     JOptionPane.showMessageDialog(null,
                                         "Failed to save acquisition settings.\nPlease check folder permissions.",
                                         "File Write Error", JOptionPane.ERROR_MESSAGE);
-                                    frame.setVisible(true);
+                                    restartMainGUI(abortFolder2);
                                 }
                             });
                             return;
@@ -1412,6 +1400,7 @@ okButton.addActionListener(new ActionListener() {
                         String capturedError = threadEx.getMessage();
                         if (capturedError == null) capturedError = threadEx.getClass().getName();
                         final String errorMsg = capturedError;
+                        final String abortFolder3 = config.experimentFolder;
                         SwingUtilities.invokeLater(new Runnable() {
                             public void run() {
                                 JOptionPane.showMessageDialog(null,
@@ -1421,7 +1410,7 @@ okButton.addActionListener(new ActionListener() {
                                     "- The folder is not on a network drive or read-only location\n" +
                                     "- You're not running in a restricted directory",
                                     "Acquisition Error", JOptionPane.ERROR_MESSAGE);
-                                frame.setVisible(true);
+                                restartMainGUI(abortFolder3);
                             }
                         });
                     }
@@ -1848,8 +1837,9 @@ vizStartButton.addActionListener(new ActionListener() {
 
                         if (config.acqSettings.isVisualizationNeeded()) {
                             if (!setupVisualizationROIs()) {
+                                final String abortFolder1 = config.experimentFolder;
                                 SwingUtilities.invokeLater(new Runnable() {
-                                    public void run() { frame.setVisible(true); }
+                                    public void run() { restartMainGUI(abortFolder1); }
                                 });
                                 return;
                             }
@@ -1860,12 +1850,13 @@ vizStartButton.addActionListener(new ActionListener() {
                         config.expandedSequenceRows = expandPauseRows(config.acqSettings.sequenceRows);
 
                         if (!exportTableToCSV()) {
+                            final String abortFolder2 = config.experimentFolder;
                             SwingUtilities.invokeLater(new Runnable() {
                                 public void run() {
                                     JOptionPane.showMessageDialog(null,
                                         "Failed to save acquisition settings.\nPlease check folder permissions.",
                                         "File Write Error", JOptionPane.ERROR_MESSAGE);
-                                    frame.setVisible(true);
+                                    restartMainGUI(abortFolder2);
                                 }
                             });
                             return;
@@ -1885,6 +1876,7 @@ vizStartButton.addActionListener(new ActionListener() {
                         String capturedError = threadEx.getMessage();
                         if (capturedError == null) capturedError = threadEx.getClass().getName();
                         final String errorMsg = capturedError;
+                        final String abortFolder3 = config.experimentFolder;
                         SwingUtilities.invokeLater(new Runnable() {
                             public void run() {
                                 JOptionPane.showMessageDialog(null,
@@ -1894,7 +1886,7 @@ vizStartButton.addActionListener(new ActionListener() {
                                     "- The folder is not on a network drive or read-only location\n" +
                                     "- You're not running in a restricted directory",
                                     "Acquisition Error", JOptionPane.ERROR_MESSAGE);
-                                frame.setVisible(true);
+                                restartMainGUI(abortFolder3);
                             }
                         });
                     }
@@ -1929,8 +1921,11 @@ tabbedPane.addTab("Setup Configuration", settingsPanel);
 tabbedPane.addTab("Acquisition Settings", sequencePanel);
 tabbedPane.addTab("Data Visualization", visualizationPanel);
 
-// Set default tab to Acquisition Settings (middle tab)
-tabbedPane.setSelectedIndex(1);
+// Start on Setup Configuration if no config known yet; otherwise Acquisition Settings
+String _startupCfgPath = prefs.get("lastConfigPath", "");
+tabbedPane.setSelectedIndex(
+    (!_startupCfgPath.isEmpty() && new File(_startupCfgPath).exists()) ? 1 : 0
+);
 
 // Layout
 frame.setLayout(new BorderLayout());
@@ -1941,14 +1936,12 @@ void updateSettingsDisplay() {
     if (config.configFilePath.isEmpty()) {
         configFileLabel.setText("Not loaded");
         cameraGroupLabel.setText("-");
-        spectralGroupLabel.setText("-");
         arduinoGroupLabel.setText("-");
         serialPortLabel.setText("-");
         channelsTextArea.setText("No configuration loaded.\nPlease load a configuration file.");
     } else {
         configFileLabel.setText(config.configFilePath);
         cameraGroupLabel.setText(config.cameraConfigGroup);
-        spectralGroupLabel.setText(config.spectralConfigGroup);
         arduinoGroupLabel.setText(config.arduinoConfigGroup.isEmpty() ? "(not set - will scan all groups)" : config.arduinoConfigGroup);
         serialPortLabel.setText(config.serialPort);
 
@@ -1981,6 +1974,7 @@ loadConfigButton.addActionListener(new ActionListener() {
                 // Save this path for next time
                 prefs.put("lastConfigPath", selectedFile.getAbsolutePath());
                 updateSettingsDisplay();
+                tabbedPane.setSelectedIndex(1);
                 JOptionPane.showMessageDialog(frame,
                     "Configuration loaded successfully!\nChannels updated in Sequence tab.",
                     "Success", JOptionPane.INFORMATION_MESSAGE);
@@ -2043,6 +2037,263 @@ readFromHubButton.addActionListener(new ActionListener() {
     }
 });
 
+// Generate Config from MM button action
+generateConfigButton.addActionListener(new ActionListener() {
+    public void actionPerformed(ActionEvent e) {
+        showGenerateConfigDialog();
+    }
+});
+
+// Setup wizard: auto-detect settings from the live MM core, present a verify-and-save dialog.
+// Reads config groups, presets, and the Arduino COM port — no manual typing needed.
+void showGenerateConfigDialog() {
+    List allGroups = new ArrayList();
+    String autoPort = "";
+    try {
+        mmcorej.StrVector grpVec = mmc.getAvailableConfigGroups();
+        for (int i = 0; i < grpVec.size(); i++) allGroups.add(grpVec.get(i));
+        // Auto-detect Arduino COM port: look for any loaded device whose name
+        // contains "arduino" (case-insensitive) and exposes a "Port" property.
+        // The Arduino Hub is always such a device; the Switch sub-device is not.
+        mmcorej.StrVector devices = mmc.getLoadedDevices();
+        for (int i = 0; i < devices.size(); i++) {
+            String dev = devices.get(i);
+            if (dev.toLowerCase().contains("arduino")) {
+                try {
+                    String port = mmc.getProperty(dev, "Port");
+                    if (port != null && !port.isEmpty()) {
+                        autoPort = port;
+                        break;
+                    }
+                } catch (Exception ex) {}
+            }
+        }
+    } catch (Exception ex) {}
+
+    if (allGroups.isEmpty()) {
+        JOptionPane.showMessageDialog(frame,
+            "No config groups found in Micro-Manager.\n" +
+            "Please load a hardware configuration in MM first, then try again.\n" +
+            "Alternatively use 'Load Configuration File' to open an existing .properties file.",
+            "Micro-Manager Not Ready", JOptionPane.WARNING_MESSAGE);
+        return;
+    }
+
+    JDialog genDialog = new JDialog(frame, "Generate LUMETRIC Configuration", true);
+    genDialog.setLayout(new BorderLayout(10, 10));
+
+    JPanel formPanel = new JPanel(new GridLayout(0, 2, 8, 6));
+    formPanel.setBorder(BorderFactory.createEmptyBorder(12, 15, 12, 15));
+
+    // Arduino serial port (auto-filled from MM)
+    JTextField portField = new JTextField(autoPort.isEmpty() ? config.serialPort : autoPort, 12);
+    formPanel.add(new JLabel("Arduino Serial Port:"));
+    formPanel.add(portField);
+
+    // Camera config group
+    JComboBox cameraGroupCombo = new JComboBox(allGroups.toArray());
+    if (!config.cameraConfigGroup.isEmpty()) cameraGroupCombo.setSelectedItem(config.cameraConfigGroup);
+    formPanel.add(new JLabel("Camera Config Group:"));
+    formPanel.add(cameraGroupCombo);
+
+    // Camera snap preset (populated from the selected group)
+    JComboBox snapCombo = new JComboBox();
+    formPanel.add(new JLabel("Camera Snap Preset:"));
+    formPanel.add(snapCombo);
+
+    // Camera trigger preset (the hardware-triggered one)
+    JComboBox triggerCombo = new JComboBox();
+    formPanel.add(new JLabel("<html>Camera Trigger Preset<br><font color='gray'>(for hardware-triggered acquisition)</font></html>"));
+    formPanel.add(triggerCombo);
+
+    // Arduino config group (which group contains the channel presets)
+    List ardGroupOptions = new ArrayList();
+    ardGroupOptions.add("-- scan all groups --");
+    ardGroupOptions.addAll(allGroups);
+    JComboBox arduinoGroupCombo = new JComboBox(ardGroupOptions.toArray());
+    if (!config.arduinoConfigGroup.isEmpty()) arduinoGroupCombo.setSelectedItem(config.arduinoConfigGroup);
+    formPanel.add(new JLabel("Arduino Config Group:"));
+    formPanel.add(arduinoGroupCombo);
+
+    // Circular buffer mode
+    JCheckBox circBufferCheck = new JCheckBox("Use Circular Buffer", config.useCircularBuffer);
+    circBufferCheck.setToolTipText("Enable for real cameras (high-speed acquisition); disable for demo / simple snap mode");
+    formPanel.add(new JLabel("Acquisition Mode:"));
+    formPanel.add(circBufferCheck);
+
+    // Populate camera presets for the initially selected group
+    String initCamGrp = (String) cameraGroupCombo.getSelectedItem();
+    if (initCamGrp != null) {
+        try {
+            mmcorej.StrVector presets = mmc.getAvailableConfigs(initCamGrp);
+            for (int i = 0; i < presets.size(); i++) {
+                snapCombo.addItem(presets.get(i));
+                triggerCombo.addItem(presets.get(i));
+            }
+            if (!config.cameraSnapConfig.isEmpty()) snapCombo.setSelectedItem(config.cameraSnapConfig);
+            if (!config.cameraTriggerConfig.isEmpty()) triggerCombo.setSelectedItem(config.cameraTriggerConfig);
+        } catch (Exception ex) {}
+    }
+
+    // Camera group change -> repopulate snap/trigger preset combos
+    cameraGroupCombo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            String grp = (String) cameraGroupCombo.getSelectedItem();
+            snapCombo.removeAllItems();
+            triggerCombo.removeAllItems();
+            if (grp == null) return;
+            try {
+                mmcorej.StrVector presets = mmc.getAvailableConfigs(grp);
+                for (int i = 0; i < presets.size(); i++) {
+                    snapCombo.addItem(presets.get(i));
+                    triggerCombo.addItem(presets.get(i));
+                }
+            } catch (Exception ex) {}
+        }
+    });
+
+    JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+    JButton cancelBtn = new JButton("Cancel");
+    JButton saveApplyBtn = new JButton("Save & Apply");
+    saveApplyBtn.setBackground(new Color(150, 255, 150));
+    btnPanel.add(cancelBtn);
+    btnPanel.add(saveApplyBtn);
+
+    cancelBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) { genDialog.dispose(); }
+    });
+
+    saveApplyBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            // Write form values into config
+            config.serialPort = portField.getText().trim();
+            config.cameraConfigGroup = (String) cameraGroupCombo.getSelectedItem();
+            config.cameraSnapConfig = snapCombo.getSelectedItem() != null ? (String) snapCombo.getSelectedItem() : "";
+            config.cameraTriggerConfig = triggerCombo.getSelectedItem() != null ? (String) triggerCombo.getSelectedItem() : "";
+            String ardGrp = (String) arduinoGroupCombo.getSelectedItem();
+            config.arduinoConfigGroup = (ardGrp == null || ardGrp.equals("-- scan all groups --")) ? "" : ardGrp;
+            config.useCircularBuffer = circBufferCheck.isSelected();
+
+            // Ask where to save the new .properties file
+            JFileChooser saver = new JFileChooser();
+            saver.setDialogTitle("Save Configuration File");
+            saver.setFileFilter(new ConfigFileFilter());
+            String lastPath = prefs.get("lastConfigPath", "");
+            if (!lastPath.isEmpty()) {
+                File parentDir = new File(lastPath).getParentFile();
+                if (parentDir != null && parentDir.exists()) saver.setCurrentDirectory(parentDir);
+            }
+            saver.setSelectedFile(new File("lumetric_config.properties"));
+
+            int res = saver.showSaveDialog(genDialog);
+            if (res != JFileChooser.APPROVE_OPTION) return;
+
+            File saveFile = saver.getSelectedFile();
+            String fname = saveFile.getName();
+            // Append .properties if the user didn't type an extension
+            if (!fname.toLowerCase().endsWith(".properties")) {
+                saveFile = new File(saveFile.getParentFile(), fname + ".properties");
+            }
+            config.configFilePath = saveFile.getAbsolutePath();
+
+            // Save skeleton config (no PIN_ entries yet)
+            if (!config.saveToFile(config.configFilePath)) return;
+
+            // Auto-detect channels from Hub and re-save with PIN_ entries included
+            config.loadFromHub(mmc);
+            config.saveToFile(config.configFilePath);
+
+            prefs.put("lastConfigPath", config.configFilePath);
+            updateSettingsDisplay();
+            tabbedPane.setSelectedIndex(1);
+            genDialog.dispose();
+        }
+    });
+
+    JLabel infoLabel = new JLabel("<html><div style='padding:5px'>"
+        + "Values auto-detected from Micro-Manager. Verify each field, then click <b>Save &amp; Apply</b>.<br>"
+        + "<font color='gray'>Channels will be auto-read from the Arduino Config Group on save.</font>"
+        + "</div></html>");
+    infoLabel.setBorder(BorderFactory.createEmptyBorder(5, 10, 0, 10));
+
+    genDialog.add(infoLabel, BorderLayout.NORTH);
+    genDialog.add(new JScrollPane(formPanel), BorderLayout.CENTER);
+    genDialog.add(btnPanel, BorderLayout.SOUTH);
+    genDialog.pack();
+    genDialog.setMinimumSize(new Dimension(520, 320));
+    genDialog.setLocationRelativeTo(frame);
+    genDialog.setVisible(true);
+}
+
+// Startup choice dialog — shown when no config file is known.
+// Offers three paths: generate config from MM, load an existing file, or run as LUMETRIC Lite.
+void showStartupChoiceDialog() {
+    JDialog d = new JDialog(frame, "Welcome to LUMETRIC", true);
+    d.setLayout(new BorderLayout(12, 12));
+    d.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+
+    JLabel titleLabel = new JLabel("No configuration file found", SwingConstants.CENTER);
+    titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, 14f));
+    titleLabel.setBorder(BorderFactory.createEmptyBorder(15, 15, 4, 15));
+
+    JLabel infoLabel = new JLabel(
+        "<html><div style='text-align:center'>How would you like to proceed?</div></html>",
+        SwingConstants.CENTER);
+    infoLabel.setBorder(BorderFactory.createEmptyBorder(0, 15, 8, 15));
+
+    JPanel headerPanel = new JPanel(new BorderLayout());
+    headerPanel.add(titleLabel, BorderLayout.NORTH);
+    headerPanel.add(infoLabel, BorderLayout.CENTER);
+
+    JPanel btnPanel = new JPanel(new GridLayout(1, 3, 12, 0));
+    btnPanel.setBorder(BorderFactory.createEmptyBorder(8, 20, 20, 20));
+
+    JButton generateBtn = new JButton(
+        "<html><center><b>Generate Config</b><br><font size='2' color='gray'>Auto-detect from Micro-Manager</font></center></html>");
+    generateBtn.setBackground(new Color(255, 230, 100));
+
+    JButton loadBtn = new JButton(
+        "<html><center><b>Load Config File</b><br><font size='2' color='gray'>Open existing .properties file</font></center></html>");
+    loadBtn.setBackground(new Color(200, 220, 255));
+
+    JButton liteBtn = new JButton(
+        "<html><center><b>LUMETRIC Lite</b><br><font size='2' color='gray'>Single-channel, no Arduino</font></center></html>");
+    liteBtn.setBackground(new Color(180, 255, 180));
+
+    btnPanel.add(generateBtn);
+    btnPanel.add(loadBtn);
+    btnPanel.add(liteBtn);
+
+    generateBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            d.dispose();
+            showGenerateConfigDialog();
+        }
+    });
+
+    loadBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            d.dispose();
+            loadConfigButton.doClick();
+        }
+    });
+
+    liteBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            d.dispose();
+            simpleSnapMode.setSelected(true);
+            tabbedPane.setSelectedIndex(1);
+        }
+    });
+
+    d.add(headerPanel, BorderLayout.NORTH);
+    d.add(btnPanel, BorderLayout.CENTER);
+    d.pack();
+    d.setMinimumSize(new Dimension(520, 160));
+    d.setLocationRelativeTo(frame);
+    d.setVisible(true);
+}
+
 // Try to load last used config on startup
 String lastConfigPath = prefs.get("lastConfigPath", "");
 if (!lastConfigPath.isEmpty() && new File(lastConfigPath).exists()) {
@@ -2057,7 +2308,26 @@ if (!savedDataPath.isEmpty() && new File(savedDataPath).exists()) {
     dataDirPathLabel.setForeground(Color.BLACK);
 }
 
+// Auto-load last experiment settings on startup (also restores after a crash/script restart).
+// Deferred via invokeLater so applySettingsFromFile() is fully defined before the call executes.
+String lastExpFolderInit = prefs.get("lastExperimentFolder", "");
+if (!lastExpFolderInit.isEmpty()) {
+    File lastExpSettings = new File(lastExpFolderInit, "AquisitionSettings.csv");
+    if (lastExpSettings.exists()) {
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() { applySettingsFromFile(lastExpSettings); }
+        });
+    }
+}
+
 frame.setVisible(true);
+
+// Show startup choice dialog if no config has been set up yet
+if (_startupCfgPath.isEmpty() || !new File(_startupCfgPath).exists()) {
+    SwingUtilities.invokeLater(new Runnable() {
+        public void run() { showStartupChoiceDialog(); }
+    });
+}
 
 // Validation function
     boolean validateSequence() {
@@ -2365,6 +2635,16 @@ void createExperimentFolder() {
 
     // Store images folder path in config
     config.imagesFolder = imagesFolder.getAbsolutePath();
+
+    // Hold a lock file open so Windows blocks any rename of the experiment folder
+    // while acquisition is running.  Released by releaseExperimentFolderLock().
+    try {
+        File lockFile = new File(experimentFolder, ".lumetric-lock");
+        acqFolderLock = new FileOutputStream(lockFile);
+    } catch (Exception lockEx) {
+        // Non-fatal: acquisition continues, folder just won't be rename-protected
+        System.err.println("WARNING: Could not create folder lock: " + lockEx.getMessage());
+    }
 }
 
 // ==================== Setup Visualization ROIs ====================
@@ -2991,16 +3271,56 @@ void applySettingsFromFile(File csvFile) {
     }
 }
 
-// Reload settings from the last experiment folder and re-show the main GUI.
-// Called after every acquisition completes so the user returns to the main menu
-// with the same settings they used — ready for the next run.
+// Release the open file handle that blocks folder renaming during acquisition.
+void releaseExperimentFolderLock() {
+    if (acqFolderLock != null) {
+        try {
+            acqFolderLock.close();
+        } catch (Exception e) {
+            // Ignore — OS will release it on JVM exit anyway
+        }
+        acqFolderLock = null;
+        // Clean up the sentinel file (best-effort)
+        if (config.experimentFolder != null && !config.experimentFolder.isEmpty()) {
+            new File(config.experimentFolder, ".lumetric-lock").delete();
+        }
+    }
+}
+
+// Reset all acquisition state and re-show the main GUI with last settings restored.
+// Called after every acquisition completes.  Replacing config drops all references
+// to expandedSequenceRows, storedROIs, and acqSettings so the GC can reclaim them
+// before the next experiment starts filling the heap.
 void restartMainGUI(String experimentFolder) {
+    // 0. Release folder lock first — must happen before config is wiped
+    releaseExperimentFolderLock();
+
+    // 1. Persist the experiment folder path before wiping config
+    if (experimentFolder != null && !experimentFolder.isEmpty()) {
+        prefs.put("lastExperimentFolder", experimentFolder);
+    }
+
+    // 2. Drop all acquisition data — allows GC to reclaim large objects
+    config = new MicroscopeConfig();
+    frameCache = new HashMap();
+    Runtime.getRuntime().gc();
+
+    // 3. Restore hardware configuration (camera groups, channels, serial port)
+    String lastCfgPath = prefs.get("lastConfigPath", "");
+    if (!lastCfgPath.isEmpty() && new File(lastCfgPath).exists()) {
+        config.loadFromFile(lastCfgPath);
+        updateSettingsDisplay();
+    }
+
+    // 4. Reload acquisition + visualization settings from last experiment.
+    // Use the parameter directly (prefs write above is only for crash-recovery at startup).
     if (experimentFolder != null && !experimentFolder.isEmpty()) {
         File settingsFile = new File(experimentFolder, "AquisitionSettings.csv");
         if (settingsFile.exists()) {
             applySettingsFromFile(settingsFile);
         }
     }
+
     frame.setVisible(true);
 }
 
@@ -3098,6 +3418,13 @@ void writeSettingsToFile(File csvFile) {
             writer.println("# ROI Region: " + roiSourceCombo.getSelectedItem());
         }
 
+        // BG / BT correction settings (must be before # Visualization Settings so the
+        // loader can read them as header comments before entering the viz section)
+        writer.println("# BG Correction Enabled: " + bgCorrectionCheckbox.isSelected());
+        writer.println("# BT Correction Enabled: " + btCorrectionCheckbox.isSelected());
+        writer.println("# BT Direction: " + btDirectionCombo.getSelectedItem());
+        writer.println("# BT Factor: " + btFactorField.getText().trim().replace(",", "."));
+
         // Visualization settings
         writer.println("");
         writer.println("# Visualization Settings");
@@ -3124,13 +3451,6 @@ void writeSettingsToFile(File csvFile) {
                 writer.println(vizRow.toString());
             }
         }
-
-        // BG / BT correction settings
-        writer.println("");
-        writer.println("# BG Correction Enabled: " + bgCorrectionCheckbox.isSelected());
-        writer.println("# BT Correction Enabled: " + btCorrectionCheckbox.isSelected());
-        writer.println("# BT Direction: " + btDirectionCombo.getSelectedItem());
-        writer.println("# BT Factor: " + btFactorField.getText().trim().replace(",", "."));
 
         writer.close();
     } catch (Exception e) {
@@ -3818,49 +4138,49 @@ void createInlineAcquisitionWindow() {
         }
 
         // --- DEBUG: dump cv60 byte-by-byte to file so we can verify what is sent ---
-        try {
-            String dbgDir = (config.experimentFolder != null && !config.experimentFolder.isEmpty())
-                ? config.experimentFolder
-                : System.getProperty("user.home");
-            String dbgPath = dbgDir + "\\cv60_debug.txt";
-            PrintWriter dbgWriter = new PrintWriter(new FileWriter(dbgPath));
-            print("cv60 debug path: " + dbgPath);
-            dbgWriter.println("cv60 total bytes: " + cv60.size());
-            dbgWriter.println("Byte[0] cmd  = " + ((int)(char)cv60.get(0) & 0xFF));
-            int dbgNRows = (int)(char)cv60.get(1) & 0xFF;
-            dbgWriter.println("Byte[1] nRows= " + dbgNRows);
-            String[] fNames = {"pinPattern","exposureMs","intervalMs","frames",
-                               "loopGoto","loopTimes","constIllum","loopSwitchGoto"};
-            for (int dbgR = 0; dbgR < dbgNRows; dbgR++) {
-                int dbgBase = 2 + dbgR * 16;
-                dbgWriter.println("--- Row " + (dbgR+1)
-                    + "  (raw bytes " + dbgBase + ".." + (dbgBase+15) + ") ---");
-                for (int dbgF = 0; dbgF < 8; dbgF++) {
-                    int dbgIdx = dbgBase + dbgF * 2;
-                    int dbgHi  = (int)(char)cv60.get(dbgIdx)     & 0xFF;
-                    int dbgLo  = (int)(char)cv60.get(dbgIdx + 1) & 0xFF;
-                    int dbgVal;
-                    if      (dbgHi == 235) dbgVal = (40     << 8) | dbgLo;
-                    else if (dbgHi == 236) dbgVal = (dbgLo  << 8) | 40;
-                    else if (dbgHi == 237) dbgVal = (dbgLo  << 8) | 251;
-                    else if (dbgHi == 238) dbgVal = (40     << 8) | 40;
-                    else if (dbgHi == 239) dbgVal = (40     << 8) | 251;
-                    else                   dbgVal = (dbgHi  << 8) | dbgLo;
-                    dbgWriter.println("  " + fNames[dbgF]
-                        + ":  hi=" + dbgHi + "  lo=" + dbgLo + "  => " + dbgVal);
-                }
-            }
-            dbgWriter.println("--- raw bytes (all) ---");
-            for (int dbgI = 0; dbgI < cv60.size(); dbgI++) {
-                dbgWriter.print((int)(char)cv60.get(dbgI) & 0xFF);
-                dbgWriter.print(' ');
-            }
-            dbgWriter.println();
-            dbgWriter.close();
-            print("cv60 debug dump written.");
-        } catch (Exception dbgEx) {
-            print("cv60 debug dump FAILED: " + dbgEx.getMessage());
-        }
+//        try {
+//            String dbgDir = (config.experimentFolder != null && !config.experimentFolder.isEmpty())
+//                ? config.experimentFolder
+//                : System.getProperty("user.home");
+//            String dbgPath = dbgDir + "\\cv60_debug.txt";
+//            PrintWriter dbgWriter = new PrintWriter(new FileWriter(dbgPath));
+//            print("cv60 debug path: " + dbgPath);
+//            dbgWriter.println("cv60 total bytes: " + cv60.size());
+//            dbgWriter.println("Byte[0] cmd  = " + ((int)(char)cv60.get(0) & 0xFF));
+//            int dbgNRows = (int)(char)cv60.get(1) & 0xFF;
+//            dbgWriter.println("Byte[1] nRows= " + dbgNRows);
+//            String[] fNames = {"pinPattern","exposureMs","intervalMs","frames",
+//                               "loopGoto","loopTimes","constIllum","loopSwitchGoto"};
+//            for (int dbgR = 0; dbgR < dbgNRows; dbgR++) {
+//                int dbgBase = 2 + dbgR * 16;
+//                dbgWriter.println("--- Row " + (dbgR+1)
+//                    + "  (raw bytes " + dbgBase + ".." + (dbgBase+15) + ") ---");
+//                for (int dbgF = 0; dbgF < 8; dbgF++) {
+//                    int dbgIdx = dbgBase + dbgF * 2;
+//                    int dbgHi  = (int)(char)cv60.get(dbgIdx)     & 0xFF;
+//                    int dbgLo  = (int)(char)cv60.get(dbgIdx + 1) & 0xFF;
+//                    int dbgVal;
+//                    if      (dbgHi == 235) dbgVal = (40     << 8) | dbgLo;
+//                    else if (dbgHi == 236) dbgVal = (dbgLo  << 8) | 40;
+//                    else if (dbgHi == 237) dbgVal = (dbgLo  << 8) | 251;
+//                    else if (dbgHi == 238) dbgVal = (40     << 8) | 40;
+//                    else if (dbgHi == 239) dbgVal = (40     << 8) | 251;
+//                    else                   dbgVal = (dbgHi  << 8) | dbgLo;
+//                    dbgWriter.println("  " + fNames[dbgF]
+//                        + ":  hi=" + dbgHi + "  lo=" + dbgLo + "  => " + dbgVal);
+//                }
+//            }
+//            dbgWriter.println("--- raw bytes (all) ---");
+//            for (int dbgI = 0; dbgI < cv60.size(); dbgI++) {
+//                dbgWriter.print((int)(char)cv60.get(dbgI) & 0xFF);
+//                dbgWriter.print(' ');
+//            }
+//            dbgWriter.println();
+//            dbgWriter.close();
+//            print("cv60 debug dump written.");
+//        } catch (Exception dbgEx) {
+//            print("cv60 debug dump FAILED: " + dbgEx.getMessage());
+//        }
         // --- END DEBUG ---
 
         if (config.useTestTable) {
@@ -6487,25 +6807,12 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
 
             // print("\n--- Step " + (currentStepIndex + 1) + ": " + channelName + " ---");
 
-            // Set channel configuration
+            // Set camera config and exposure for this channel
             if (!channelName.isEmpty()) {
                 try {
-                    // Find spectral config for this channel
-                    for (int i = 0; i < 8; i++) {
-                        String specName = (String) config.acqSettings.spectralRows.get(i).get(0);
-                        if (specName.equals(channelName)) {
-                            // Set camera config (was erroneously using undefined cameraSnappingConfig)
-                            mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
-                            Thread.sleep(50);
-
-                            // Set exposure
-                            mmc.setExposure(exposureMs);
-
-                            // Additional channel-specific settings could go here
-                            // print("Configured for channel: " + channelName + " (" + exposureMs + "ms exposure)");
-                            break;
-                        }
-                    }
+                    mmc.setConfig(config.cameraConfigGroup, config.cameraSnapConfig);
+                    Thread.sleep(50);
+                    mmc.setExposure(exposureMs);
                 } catch (Exception e) {
                     // print("WARNING: Failed to set channel config: " + e.getMessage());
                 }

@@ -6,7 +6,6 @@ The firmware and system-level control logic are documented separately in the LUM
 
 This README describes only the **mechanical housing (case)**.
 
-
 ## Overview
 
 The enclosure is a two-part 3D-printable case (top and bottom shell) designed for laboratory use in a modular microscopy setup. It provides structured access to:
@@ -17,17 +16,17 @@ The enclosure is a two-part 3D-printable case (top and bottom shell) designed fo
 - Secure mechanical mounting of electronics
 
 The design is optimized for:
+
 - modular optical setups
 - reproducible lab integration
 - robust cable management
-
-
 
 ## Hardware Structure
 
 ### Case Design
 
 The enclosure consists of:
+
 - **Bottom shell**
 - **Top cover**
 - **Plugs to seal unused BNC holes**
@@ -35,17 +34,16 @@ The enclosure consists of:
 Both parts are secured using screws in all four corners.
 
 Each corner includes:
+
 - Reinforced mounting stems
 - Heat-set insert compatibility (metal threaded inserts recommended)
 - Screw holes aligned between top and bottom shell
-
 
 #### Level Shifter Placement
 
 Inside the case, there is a dedicated rectangular area designed to accommodate a level shifter module. This space allows the level shifter to be mounted upside down, providing a convenient way to shift voltage levels from 3.3V to 5V. This feature is especially useful for driving cameras or other peripherals that require 5V logic, ensuring compatibility.
 
 The level shifter area is positioned for easy access to both the Arduino and camera trigger lines, supporting flexible wiring and reliable operation in multi-voltage environments.
-
 
 ## Arduino Mounting
 
@@ -58,81 +56,88 @@ Inside the enclosure, the Arduino GIGA R1 is mounted on four internal standoffs:
 
 This ensures stable alignment under repeated cable insertion/removal.
 
-
 ## Front Panel – Laser / Light Source Outputs
 
 The front side of the enclosure contains:
 
 ### BNC Output Array
+
 - **2 rows × 7 BNC connectors (14 total)**
 - Individually labeled:
   - `1–7` (top row)
   - `8–14` (bottom row)
 
 These outputs are intended for:
+
 - laser / light source control
 - electrophysiology modules
 - external modulation signals
-
 
 ## Right Side Panel – Arduino & Camera Interface
 
 The right side provides access to Arduino and camera trigger-out  (LUMETRIC in) signals.
 
 ### Arduino I/O Access
+
 - Central cutout for Arduino GIGA R1 connectors
 
 ### Camera Trigger Outputs
+
 - 2 BNC connectors:
   - **3V trigger output**
   - **5V trigger output**
 
 These allow:
+
 - compatibility with different camera trigger voltage requirements
 - support for multiple camera systems in the same lab
 
 ### Camera Trigger Input
+
 - 1 BNC connector labeled:
   - **TTL**
 
 This signal is:
+
 - incoming camera trigger feedback
 - routed to Arduino input for synchronization
-
 
 ## Materials & Assembly Notes
 
 ### Recommended Assembly Hardware
+
 - Heat-set threaded inserts (RUTHEX GE-M3X5X4-001 or similar.)
-- M3 screws (5mm) for case closure
-- M3 screw (5mm) for Arduino fixation
+- M3 screws (6mm) for case closure
+- M3 screw (6mm) for Arduino fixation
 - TTL Logic Level Converter, 3,3V / 5V (FREI ST1167 or similar)
 - Standard BNC connector
 
 ### 3D Printing Recommendations
+
 - Material: PETG or PLA+
 - Layer height: 0.2 mm recommended
 - Ensure dimensional accuracy for BNC connector tolerances
 
-
 ## Design Files
 
 ### CAD Source Files
-- `cad/`  
+
+- `cad/`
   Native FreeCAD project files (`.FCStd`)
 
 ### Printable Files
-- `stl/`  
-  Ready-to-print STL files for enclosure parts
 
+- `stl/`
+  Ready-to-print STL files for enclosure parts
 
 ## License
 
 This hardware design is licensed under:
 
-**CERN Open Hardware Licence Version 2 – Permissive (CERN-OHL-P-2.0)**
+CERN Open Hardware Licence Version 2 – Permissive (CERN-OHL-P-2.0)
 
 You are free to:
+
 - use
 - modify
 - manufacture
@@ -148,7 +153,7 @@ See `LICENSE` and `NOTICE` files for details.
 
 If you use or modify this design in research, publications, or derivative hardware, please attribute:
 
-**LUMETRIC Project**  
-https://github.com/PSJacoby/LUMETRIC
+**LUMETRIC Project**
+<https://github.com/PSJacoby/LUMETRIC>
 
 ---
