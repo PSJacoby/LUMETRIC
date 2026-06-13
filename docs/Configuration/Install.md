@@ -37,7 +37,7 @@ If you already operate your Microscope using MicroManager (2.0.3 or higher), you
 4. **Configure your Presets:**
    It is recommended to at least define individual groups for camera and light source. Depending on your hardware, MM allows also integration of microscope bodies, stages and more.
    **Include as many settings as needed** in your groups and presets but **as little as possible**. Over-defining presets on shared microscopes may lead to silent setting changes.
-   If you use a TTL-controlled (Arduino controlled) light source, you will find further information in [Setting up the Arduino](TODO).
+   If you use a TTL-controlled (Arduino controlled) light source, you will find further information in [Acquisition Control Box](../Configuration/ArduinoAssembly).
    For the camera, it is recommended to define a "Snapping and live" mode, where you use the internal trigger mode (thus controlled via serial connection to MM).
    If the full LUMETRIC-Version is to be used, configure a second camera preset "LUMETRIC" that allows TTL-triggering via Arduino. Example camera presets can be found in table X below. Depending on the camera, the nomenclature might differ. If uncertain which settings to use for TTL-triggering mode, check the camera manual for a behavior as depicted in figure X.
 
