@@ -53,9 +53,15 @@ Both parts are secured using screws at the four corners with reinforced mounting
 
 Refer to the wiring scheme (Figure X) and reference images (Figure Y).
 
-![Wiring scheme of the Arduino](../assets/images/Arduino-wiring.svg)
+![Wiring scheme of the Arduino](../assets/images/Arduino-wiring.svg){ align=left }
+/// caption
+Wiring scheme of the Arduino to the BNC connectors.
+///
 
-![Picture of the open box so one sees the wiring inside](../assets/images/photo-wiring.jpg)
+![Picture of the open box so one sees the wiring inside](../assets/images/photo-wiring.jpg){ align=right }
+/// caption
+Picture of the open box, so that the wiring can be seen.
+///
 
 ### Soldering Steps
 
