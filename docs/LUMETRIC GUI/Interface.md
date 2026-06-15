@@ -24,43 +24,43 @@ On startup, the interface opens on the Acquisition Settings tab if a configurati
 
 This tab displays the active configuration and the channel list, and provides the configuration management buttons. The **Current Configuration** panel shows the config file path, camera group, Arduino config group, and serial port. The **Available Channels** panel lists each `PIN_n = channel` mapping.
 
-![Configuration](../assets/images/ConfigTab.png)
+![Configuration](../assets/images/ConfigTab.png){width=750}
 /// caption
 **Fig.1:** Tab 1 - Setup Configuration.
 ///
 
 ### Buttons
 
-- **Generate Config from MM** — auto-detects settings from the running Micro-Manager instance (config groups, presets, and the Arduino COM port) and opens a verify-and-save dialog to write a new `.properties` file. Use this to create a configuration without editing text by hand.
-- **Load Configuration File** — opens a file chooser to load an existing `.properties` configuration. On success the channel list updates and the interface switches to the Acquisition Settings tab. Useful if you run your setup with different device combinations.
+- **Generate Config from MM** — auto-detects settings from the running Micro-Manager instance (config groups, presets, and the Arduino COM port) and opens a verify-and-save dialog to write a new `.properties` file. Use this to create a configuration.
+- **Load Configuration File** — opens a file chooser to load an existing `.properties` configuration. On success, the channel list updates, and the interface switches to the Acquisition Settings tab. Useful if you run your setup with different device combinations.
 - **Reload Current Config** — re-reads the currently loaded configuration file from disk, picking up any external edits.
 - **Read Channels from Hub** — queries the Micro-Manager Arduino Switch device and populates the channel list automatically from its presets. Each preset that corresponds to an individual BNC connection is loaded as channel.
 - **Save Config** — writes the current channel/pin configuration back to the loaded config file (asks for confirmation before overwriting).
 
 !!! Note "LUMETRIC vs LUMETRIC *lite*"
-    The Arduino config group, serial port, and **Read Channels from Hub** apply to the full system only. In *lite* mode, the configuration is not required.
+    The Arduino config group, serial port, and **Read Channels from Hub** apply to the full system only. In *lite* mode, the configuration is **not** required.
 
 ## Tab 2 — Acquisition Settings
 
 This tab is the main control. It builds the acquisition sequence,starts the run and grands access to post-processing.
 
-![Acquisition Setting](../assets/images/AcquTab.png)
+![Acquisition Setting](../assets/images/AcquTab.png){width=750}
 /// caption
 **Fig.2:** Tab 2 - Acquisition Setting.
 ///
 
 ### Mode selection
 
-- **LUMETRIC Lite** (checkbox) — when ticked, runs single-channel snap acquisition using only the GUI exposure and frame Interval settings of Row 1, with no Arduino and no multi-channel automation. When unticked, runs the full hardware-triggered sequence.
+- **LUMETRIC *Lite*** (checkbox) — when ticked, runs single-channel snap acquisition using only the GUI exposure and frame Interval settings of Row 1, without Acquisition-Control-Box or multi-channel automation. When unticked, runs the full hardware-triggered sequence.
 
 ### Sequence table
 
-Each row defines one acquisition step. Up to 20 rows are supported. A **Row** number column (bold, not editable) labels each step.
+Each row defines one acquisition setting. Up to 20 rows are supported.
 
 | Column | Purpose |
 |--------|---------|
-| **Channel** | Illumination channel(s) during exposure for the step. Clicking the cell opens a checkbox dialog listing the available channels; select one or several.|
-| **Exposure [ms]** | LED on-time and camera exposure per frame (0–60000). Be aware that the true exposure times are curbed by the cameras. Typical limits are around 2000 ms. 0 ms creates a pause row (no camera trigger). Helpful for additions or incubation times. |
+| **Channel** | Illumination channel(s) during exposure for the step. Clicking the cell opens a checkbox dialog listing the available channels. Select one or several.|
+| **Exposure [ms]** | LED on-time and camera exposure per frame. Be aware that the true exposure times are curbed by the cameras. Typical limits are around 2000 ms. 0 ms creates a pause row (no camera trigger). Helpful for additions or incubation times. |
 | **Frame Interval [ms]** | Full frame period including exposure and the inter-frame gap (0–60000). Must be > exposure. |
 | **Frames** | Number of frames to capture with these settings (0–60000) before triggering a switch to the "Loop Goto". 0 works as infinity (no looping to Loop Goto). Stops only if Quit is pressed or Loop Switch if configured. |
 | **Loop Goto** | Row to jump back to once the frame count is reached. Auto-filled to the next row; the last row defaults to looping back to the first. |
@@ -85,7 +85,7 @@ Each row defines one acquisition step. Up to 20 rows are supported. A **Row** nu
 
 ### Save folder and post-acquisition options
 
-- **Data Directory / Select Folder** — chooses the directory where experiment data is written. The selected path is remembered between sessions; a folder is required before acquisition can start.
+- **Data Directory / Select Folder** — chooses the directory where experiment data is written. The selected path is remembered between sessions. A folder is required before acquisition can start.
 - **Convert to Stack** (checkbox, on by default) — after acquisition, combines the individual `Frame_XXXXX.tif` files into a single stack and deletes the originals.
 - **Stack per Row** (checkbox) — after acquisition, creates one TIFF stack per sequence row. Can be combined with **Convert to Stack**.
 
@@ -104,14 +104,14 @@ This tab configures the real-time analysis and graphs. Up to four graphs can be 
 
 ### Temporal mode
 
-![Temporal mode](../assets/images/TemporalMode.png)
+![Temporal mode](../assets/images/TemporalMode.png){width=750}
 /// caption
 **Fig.3:** Tab 3 - Temporal mode.
 ///
 
 ### Spatial mode
 
-![Spatial mode](../assets/images/SpatialMode.png)
+![Spatial mode](../assets/images/SpatialMode.png){width=750}
 /// caption
 **Fig.4:** Tab 3 - Spatial mode.
 ///
@@ -124,9 +124,9 @@ This tab configures the real-time analysis and graphs. Up to four graphs can be 
 | Column | Purpose |
 |--------|---------|
 | **Graph** | Graph number (1–4). |
-| **Type** | Graph type for this row. In Temporal mode: `none`, `Intensity`, `Ratio`. In Spatial mode: `none`, split-ratio directions (e.g. Upper/Lower), and region intensities (e.g. Intensity Upper). |
-| **Numerator** | (Temporal only) Sequence row whose frames feed the graph. `All Rows` accepts frames from any row — useful for single-row experiments or plain intensity graphs. |
-| **Denominator** | (Temporal only) Sequence row used as the divisor for `Ratio` graphs. Locked to `1` for `Intensity`. |
+| **Type** | Graph type for this row. In Temporal mode: Intensity or temporal ratio. In Spatial mode: split-ratio directions (e.g. Upper/Lower) and intensities (e.g. Intensity Upper). |
+| **Numerator** | (Temporal only) Sequence row whose frames feed the graph. All Rows accepts frames from any row — useful for single-row experiments or plain intensity graphs. |
+| **Denominator** | (Temporal only) Sequence row used as the divisor for ratio graphs. Locked to 1 for Intensity. |
 
 The Numerator/Denominator dropdowns list the available sequence rows and update automatically when rows are added or removed.
 
@@ -143,7 +143,7 @@ The Numerator/Denominator dropdowns list the available sequence rows and update 
 - **OK – Start Acquisition** — same as on the Acquisition Settings tab: validates, asks for a save folder if needed, captures all settings, and launches the run. If validation fails, the interface switches to the Acquisition Settings tab to show the errors.
 
 !!! Note "LUMETRIC vs LUMETRIC *lite*"
-    Temporal/Spatial analysis, live graphs, background and bleedthrough correction, and post-processing are available in **all** modes. Per-row graph filtering is most useful for multi-row (full-system) sequences; in *lite* mode a single row is used, so `All Rows` is the natural Numerator setting.
+    Temporal/ Spatial analysis, live graphs, background and bleedthrough correction, and post-processing are available in **all** modes. Per-row graph filtering is most useful for multi-row (full-system) sequences; in *lite* mode a single row is used, so `All Rows` is the natural Numerator setting.
 
 ## ROI Selection
 
@@ -153,7 +153,7 @@ If no ROIs are defined, the calculations are made as one ROI over the whole fiel
 
 Starting an acquisition opens an inline window containing the live camera view (if **Live Pictures** is enabled) and the configured graphs. ROIs drawn at the start are overlaid on the live image. Graphs update in real time, throttled to roughly 250 ms.
 
-![Temporal mode](../assets/images/Acquisition.png)
+![Temporal mode](../assets/images/Acquisition.png){width=750}
 /// caption
 **Fig.4:** Aquisition Window.
 ///
@@ -165,29 +165,6 @@ Starting an acquisition opens an inline window containing the live camera view (
 - **Reset X / Reset All** — restores automatic axis bounds for one graph or for all graphs.
 - **Quit Acquisition** — stops the Arduino (full system), stops the run, exports all graph data and event timestamps to CSV, optionally assembles the image stack, and returns to the main interface.
 
----
-
-## Post-Production Window
-
-Opened via **Open Post-Production**, this window re-analyzes a completed experiment without re-acquiring. It loads settings from the experiment's `AquisitionSettings.csv`, resolves the image source (the `images/` folder, a single `Image_Stack.tif`, or per-row stacks), and shows a reference frame for ROI drawing.
-
-### Workflow and controls
-
-1. Select an existing experiment folder containing `AquisitionSettings.csv`.
-2. Settings load automatically.
-3. Draw ROIs in the ROI Manager, or restore a previously saved ROI set.
-4. **Recalculate** — re-measures all stack slices with the current ROIs and refreshes the graphs.
-5. **Export** — writes corrected data to a new numbered sub-folder beside the original experiment.
-
-Correction levels exported depend on what is enabled:
-
-- **RAW** — always exported.
-- **BGcorr** — when Background Correction is enabled.
-- **BTcorr** — when Bleedthrough Correction is enabled (Spatial only).
-- **BTDEcorr** — when **Direct Excitation correction** is enabled. This post-processor-only correction subtracts a scaled acceptor offset to remove direct excitation of the acceptor by the donor laser. It requires Bleedthrough Correction, uses a reference stack and a frame range to compute the per-ROI offset, and follows the same direction setting as bleedthrough.
-
----
-
 ## Data Export folder
 
 Each run creates a timestamped experiment folder containing:
@@ -198,22 +175,20 @@ Each run creates a timestamped experiment folder containing:
 - Event timestamps as CSV
 - `RoiSet.zip` (ImageJ format)
 
----
+## Post-Production Window
 
-## Capabilities summary
+Opened via **Open Post-Production**, this window re-analyzes a completed experiment without re-acquiring.
 
-| Capability | LUMETRIC *lite* (Snap) | LUMETRIC (Hardware-triggered) |
-|-----------|------------------------|-------------------------------|
-| Additional hardware | None | Arduino GIGA R1 + wiring |
-| Camera triggering | Software-controlled | TTL-triggered |
-| Timing precision | ≈10–50 ms | <1 ms |
-| Fast imaging (<150 ms interval) | No | Yes |
-| Multi-step sequence table (up to 32 rows) | No | Yes |
-| Multi-channel / alternating excitation | No | Yes |
-| Constant illumination during gaps | No | Yes |
-| Photoswitching / pause rows | No | Yes |
-| Looping (goto / repeat) and Loop Switch | No | Yes |
-| Live ROI intensity, ratio, and FRET plots | Yes | Yes |
-| Background and bleedthrough correction | Yes | Yes |
-| Automatic TIFF saving and stack assembly | Yes | Yes |
-| Post-processing and re-export | Yes | Yes |
+### Workflow and controls
+
+1. Select an existing experiment folder. Settings and imaging data load automatically.
+2. Draw ROIs in the ROI Manager, or restore a previously saved ROI set.
+3. **Recalculate** — re-measures all stack slices with the current ROIs and refreshes the graphs.
+4. **Export** — writes corrected data to a new numbered sub-folder beside the original experiment.
+
+Correction levels exported depend on what is enabled:
+
+- **RAW** — always exported.
+- **BGcorr** — when Background Correction is enabled.
+- **BTcorr** — when Bleedthrough Correction is enabled (Spatial only).
+- **BTDEcorr** — when **Direct Excitation correction** is enabled. This post-processor-only correction subtracts a scaled acceptor offset to remove direct excitation of the acceptor by the donor laser. It requires Bleedthrough Correction, uses a reference stack and a frame range to compute the per-ROI offset, and follows the same correction direction setting as bleedthrough.

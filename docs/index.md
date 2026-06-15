@@ -1,8 +1,6 @@
 # Welcome to LUMETRIC
 
-LUMETRIC is a **software tool for fluorescence microscopy** that works together with Micro‑Manager. It lets you automatically capture images, select regions of interest (ROIs), and track fluorescence intensity or intensity ratios (e.g. in FRET experiments) in real time—all in one interface without switching between programs.
-
-LUMETRIC extends fluorescence microscopy workflows by providing integrated, real-time feedback during image acquisition. It enables **live visualization of ROI-based intensity traces and ratio signals** directly during experiments, allowing users to monitor signal dynamics as data are being recorded.
+LUMETRIC is a **software tool for fluorescence microscopy** that works together with Micro‑Manager. It combines automated image acquisition, ROI selection, and real-time analysis of intensity and ratio signals (e.g., FRET). It enables live visualization of ROI-based traces during experiments, allowing immediate assessment of signal dynamics in a single interface.
 
 In addition, LUMETRIC supports **flexible acquisition protocols** such as alternating excitation and photoswitching, enabling experimental designs that are widely used in practice. These capabilities are accessible within a unified graphical interface that combines acquisition control, real-time analysis, and live plotting.
 
@@ -10,8 +8,8 @@ By consolidating these functionalities into a single, open and transparent frame
 
 **LUMETRIC offers two ways to run image acquisition**, depending on the required timing precision and hardware setup:
 
-1. Software-controlled mode, which relies on standard Micro‑Manager control and is suitable for simple single wavelenght experiments without additional hardware
-2. Hardware-triggered mode, which uses an external timing device to precisely synchronize camera exposure and illumination, enabling more complex and high-speed experiments
+1. **Software-controlled mode**, which relies on standard Micro‑Manager control and is suitable for simple single wavelenght experiments without additional hardware
+2. **Hardware-triggered mode**, which uses an external timing device to precisely synchronize camera exposure and illumination, enabling more complex and high-speed experiments
 
 Despite these differences, both modes share the same interface, analysis tools, and data output, allowing users to switch between them without changing their workflow.
 
@@ -61,7 +59,7 @@ Both modes share the same interface, live analysis tools, and data output, ensur
 
 ### Mode comparison
 
-|  | LUMETRIC *lite* (Snap mode) | LUMETRIC Imaging System (TTL / Circular Buffer mode) |
+|  | LUMETRIC *lite* | LUMETRIC Imaging System |
 |------|------|------|
 | Additional hardware required | No | Yes (Arduino + wiring) |
 | Camera triggering | Software‑controlled | TTL‑triggered |

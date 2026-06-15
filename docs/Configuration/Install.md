@@ -6,7 +6,7 @@
 
 ## MicroManager and LUMETRIC *lite*
 
-If you already operate your Microscope using MicroManager (2.0.3 or higher), you may skip ahead to [Implementing LUMETRIC](#implementing-lumetric-as-quick-access-button)
+If you already operate your Microscope using MicroManager (2.0.3 or higher (2026 or younger)), you may skip ahead to [Implementing LUMETRIC](#implementing-lumetric-as-quick-access-button)
 
 ### Installing MicroManager and integrating your devices
 
@@ -18,17 +18,17 @@ If you already operate your Microscope using MicroManager (2.0.3 or higher), you
         documentation: [MM Installation](https://micro-manager.org/Micro-Manager_Installation_Notes)
 
 3. **Connect your hardware** to Micromanager:
-   **A quick summary:**
+    A quick summary:
    i. Open Devices > Hardware Configuration Wizard ...
    ii. Create a new configuration file
    iii. Add the camera and light source by selecting the appropriate device adapters from the list of available devices.
 
     !!! Tip "Documentation"
         Official Micro-Manager documentation for these steps: [Hardware Configuration Wizard](https://micro-manager.org/Micro-Manager_Configuration_Guide)
-        For the individual device adapters: [Device Support](https://micro-manager.org/Micro-Manager_Configuration_Guide)
+        For the individual device adapters: [Device Support](https://micro-manager.org/Device_Support)
 
     ??? Tip "Troubleshooting: If device detection is unsuccessful"
-        The port detection and standard settings are largely automated in MM. You will find device adapters for the most common devices. Check out the individual docs of the adapters [Device Support](https://micro-manager.org/Micro-Manager_Configuration_Guide). If this does not work out:
+        The port detection and standard settings are largely automated in MM. You will find device adapters for the most common devices. Check out the individual docs of the adapters [Device Support](https://micro-manager.org/Device_Support). If this does not work out:
         - Verify that the correct manufacturer drivers are installed
         - Check the Windows Device Manager for device visibility
         - Confirm correct COM port assignment for serial devices
@@ -56,8 +56,8 @@ Most likely called something like: Global reset Level trigger mode.
 ///
 
 1. Before continuing, acquire some test images using the configured "Snapping and live" camera mode and illumination presets.
-2. When you close MM using the File > close option, it shuts down orderly and will remember your window positioning the next time.
-Also, it will ask you if you want to save your Hardware configuration. Please do so.
+2. When you close MM using the **File > close** option, it shuts down orderly and will remember your window positioning the next time.
+Also, it will ask you if you want to **save your Hardware configuration**. Please do so.
 
     !!! Tip "Getting started with MicroManager"
         A detailed description of the Micro-Manager user interface and basic workflows is available in the official user guide: [MM User Guide](https://micro-manager.org/Version_2.0_Users_Guide)
@@ -68,7 +68,7 @@ LUMETRIC *lite* is distributed as a Micro-Manager BeanShell script and does not
 require compilation or modification of Micro-Manager installation files.
 
 1. Download the LUMETRIC-Repository ([LUMETRIC](https://github.com/PSJacoby/LUMETRIC))  using the `<> Code` button and select *Download ZIP*. After unpacking, you will find LUMETRIC.bsh inside.  This is all you need to run LUMETRIC *lite*.
-2. In MM, go to **Tools > Quick Access Panel > Create New Panel**. In the left corner of the new pop-up window, click on the wheel-symbol. Here, you will add LUMETRIC in the next step, but it also possible to e.g. add presets or other commodities like often used light source channels or similar.
+2. In MM, go to **Tools > Quick Access Panel > Create New Panel**. In the left corner of the new pop-up window, click on the wheel-symbol. Here, you will add LUMETRIC in the next step, but it also possible to e.g. add presets of other commodities like often used light source channels or similar.
 3. Drag-and-drop the "**Run Script**" control button on a free green rectangle. This will open a file-browser. Select the **LUMETRIC.bsh** script.
 4. By clicking the wheel symbol again, you finish the process.
 5. MM will open the Quick access panel automatically again when opening the program, as long as you do not close the panel itself. To avoid accidental panel loss, I recommend to save it via **Tools > Quick Access Panel > Save Settings**.
@@ -79,7 +79,12 @@ require compilation or modification of Micro-Manager installation files.
 ### Run your first test experiment on LUMETRIC *lite*
 
 1. Open LUMETRIC via your predefined Quick-Access Button
-2. Choose: "**LUMETRIC Lite**"
+2. Choose: '**LUMETRIC Lite**'
+
+![Conf1](../assets/images/Conf1.png){width=500}
+/// caption
+**Fig.1:** User dialog if no LUMETRIC Configuration is available.
+///
 
 A introduction in how to set-up an experiment with LUMETRIC *lite*  can be found in [LUMETRIC lite](../LUMETRIC%20GUI/Singlechannel). If you would like to start with a concise overview of all options you are offered by LUMETRIC, check out [LUMETRIC GUI](../LUMETRIC%20GUI/Interface).
 If you want to set up a full LUMETRIC system, continue with [Aquisition Control Box](./ArduinoAssembly).
