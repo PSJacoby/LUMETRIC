@@ -1,6 +1,6 @@
 # Acquisition Control Box
 
-The LUMETRIC acquisition control box provides hardware-level synchronization and triggering for fluorescence microscopy experiments. It integrates an Arduino GIGA R1 running the LUMETRIC firmware and interfaces with MicroManager, light sources, and camera systems.
+The LUMETRIC acquisition control box provides hardware-level synchronization for fluorescence microscopy experiments. It integrates an Arduino GIGA R1 running the LUMETRIC firmware and interfaces with MicroManager, light sources, and camera systems.
 
 ## Bill of Materials
 
@@ -95,15 +95,15 @@ It is recommended to use consistent cable color coding to the scheme to simplify
 5. Perform a final connection check before closing the box.
 
 | Function   | Arduino Pin |
-|------------|------------|
-| Camera     | D25        |
-| Channel 1  | D27        |
-| Channel 2  | D29        |
-| Channel 3  | D31        |
-| Channel 4  | D33        |
-| Channel 5  | D35        |
-| Channel 6  | D37        |
-| Channel 7  | D38        |
+|------------|-------------|
+| Camera     | D25         |
+| Channel 1  | D27         |
+| Channel 2  | D29         |
+| Channel 3  | D31         |
+| Channel 4  | D33         |
+| Channel 5  | D35         |
+| Channel 6  | D37         |
+| Channel 7  | D38         |
 
 ### Optional: Level Shifter Integration
 
@@ -122,15 +122,15 @@ Suggested component:  FREI ST1167 or similar
 
 1. Download and install the Arduino IDE: [Arduino IDE](https://docs.arduino.cc/software/ide/).
 2. Open the Arduino IDE and navigate to **File > Open**, then select 'LUMETRIC_ArdFirmware.ino' from the LUMETRIC folder.
-3. Connect the assembled LUMETRIC control box to your computer via USB-C. The Arduino IDE should automatically detect the board as **Arduino GIGA R1**. Select it from the "**Select board**" dropdown menu.
-4. Click the **Upload** button (arrow icon in the top toolbar, left side) to flash the firmware to the Arduino. The console will display a "**Done uploading**" message upon successful completion.
+3. Connect the assembled LUMETRIC control box to your computer via USB. The Arduino IDE should automatically detect the board as **Arduino GIGA R1**. Select it from the '**Select board**' dropdown menu.
+4. Click the **Upload** button (arrow icon in the top toolbar, left side) to flash the firmware to the Arduino. The console will display a '**Done uploading**' message upon successful completion.
 5. Close the Arduino IDE.
 
 ## Adding the Arduino as Device in MicroManager
 
 Before proceeding here, make sure you completed the installing stapes described in [Installing MicroManager and integrating your devices](./Install).
 
-1. Make sure MM is **not** running. In the file explorer go to: **programms > MicroManager2.0**. From the LUMETRIC.zip folder you downloaded and unpacked earlier, drag and drop the "**mmgr_dal_Arduino.dll**" into this folder and choose "**replace file**".
+1. Make sure MM is **not** running. In the file explorer go to: **programms > MicroManager2.0**. From the LUMETRIC.zip folder you downloaded and unpacked earlier, drag and drop the '**mmgr_dal_Arduino.dll**' into this folder and choose '**replace file**'.
 2. Open MicroManager and in the **Startup Configuration** Window choose as 'Hardware Configuration File' the LUMETRIC Configuration you generated during [Installing MicroManager and integrating your devices](Install.md).
 3. **Devices > Hardware Configuration Wizard**. Choose '**Modify or explore existing configuration**' and make sure its the **LUMETRIC** configuration.
 
@@ -146,7 +146,7 @@ Before proceeding here, make sure you completed the installing stapes described 
     !!! Tip "Example: 2 = BNC connector 1"
         You can also define Presets for illumination with two wavelength at the same time. Lets say you want Channel 1 and 2 together: 2 + 4 = 6. Therefore, you choose switch label 6.
 
-9. Check via Live view or simple "shutter open" that each Preset does turn on the wavelength you expect and thus, that your settings are correct.
+9. Check via Live view or simple 'shutter open' that each Preset does turn on the wavelength you expect and thus, that your settings are correct.
 
 | Function   | Arduino state |
 |------------|------------   |
@@ -160,19 +160,28 @@ Before proceeding here, make sure you completed the installing stapes described 
 
 ## Completing and saving the Configuration of LUMETRIC
 
-TODO Include Image of config 1 and 2
-
 1. Open LUMETRIC via your predefined Quick-Access Button
-2. This time, choose: "**Generate Config**"
-3. You will see a dialog as depicted in figure x. Be sure to choose the correct Groups and Presets.
-   1. Make sure the "**Camera Snap Preset**" uses the internal Trigger while for the "**Camera Trigger Preset**" you have set the Global Shutter + Level Mode + External Trigger mode. If uncertain, recheck [Integrating your devices](./Install).
-   2. The Arduino Config Group needs to be the one you used when defining your channels in the previous section. LUMETRIC will draw these automatically from your presets.
-4. Leave the Circular Buffer mode checked.
-5. Save and apply your settings.
+2. This time, choose: '**Generate Config**' (Fig. 1 below)
+3. You will see a dialog as depicted in figure 2 below. Be sure to choose the correct Groups and Presets.
+      1. Make sure the "**Camera Snap Preset**" uses the internal Trigger while for the "**Camera Trigger Preset**" you have set the Global Shutter + Level Mode + External Trigger mode. If uncertain, recheck [Integrating your devices](./Install).
+      2. The Arduino Config Group needs to be the one you used when defining your channels in the previous section. LUMETRIC will draw these automatically from your presets.
 
     !!! Tip "COM Port detection of your Arduino"
         In most cases the detected Arduino Serial Port will be the correct one. In the special case of you having multiple Arduinos attached and integrated into MM, it might choose falsely. Double check the Port.
 
+4. Leave the Circular Buffer mode checked.
+5. Save and apply your settings.
+
+![Conf1](../assets/images/Conf1.png){width=500}
+/// caption
+**Fig.1:** User dialog if no LUMETRIC Configuration is available.
+///
+
+![Conf2](../assets/images/Conf2.png){width=500}
+/// caption
+**Fig.1:** User dialog of the LUMETRIC Configuration wizard.
+///
+
 ## First test experiment of the full LUMETRIC System
 
-A introduction in how to set-up an experiment with LUMETRIC can be found in [LUMETRIC](../LUMETRIC%20GUI/Multichannel). If you would like to start with a concise overview of all options you are offered by LUMETRIC, check out [LUMETRIC GUI](../LUMETRIC%20GUI/Interface).
+If you would like to start with a concise overview of all options you are offered by LUMETRIC, check out [LUMETRIC GUI](../LUMETRIC%20GUI/Interface). A quick introduction in how to set-up an experiment with LUMETRIC can be found in [LUMETRIC](../LUMETRIC%20GUI/Multichannel).
