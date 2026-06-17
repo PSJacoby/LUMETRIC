@@ -121,6 +121,7 @@ class AcquisitionSettings {
     boolean convertToStack = true; // Convert individual TIFFs to stack after acquisition (default: true)
     boolean stackPerRow = false; // Create one stack per sequence row (not yet implemented)
     String saveDirectory = "";
+    String experimentName = ""; // Optional user-provided prefix for experiment folder
     ArrayList sequenceRows = new ArrayList(); // Each row is ArrayList of column values
     ArrayList visualizationRows = new ArrayList();
 
@@ -149,7 +150,8 @@ class AcquisitionSettings {
                        JCheckBox convertToStackCheckbox, JCheckBox stackPerRowCheckbox, String savePath,
                        JComboBox processingModeCombo, JComboBox splitAxisCombo, JComboBox roiSourceCombo,
                        JCheckBox bgCorrectionCheckbox,
-                       JCheckBox btCorrectionCheckbox, JComboBox btDirectionCombo, JTextField btFactorField) {
+                       JCheckBox btCorrectionCheckbox, JComboBox btDirectionCombo, JTextField btFactorField,
+                       JTextField experimentNameField) {
         // Capture mode
         config.useSimpleSnapMode = simpleSnapModeCheckbox.isSelected();
         bgCorrectionEnabled = bgCorrectionCheckbox.isSelected();
@@ -199,6 +201,14 @@ class AcquisitionSettings {
             }
             visualizationRows.add(row);
         }
+
+        // Capture and sanitize experiment name
+        String rawName = (experimentNameField != null) ? experimentNameField.getText() : "";
+        rawName = rawName.trim().replace(" ", "_");
+        rawName = rawName.replaceAll("[^A-Za-z0-9_\\-]", "");
+        rawName = rawName.replaceAll("[_\\-]{2,}", "_");
+        rawName = rawName.replaceAll("^[_\\-]+|[_\\-]+$", "");
+        experimentName = rawName;
     }
 
     boolean isVisualizationNeeded() {
@@ -836,6 +846,15 @@ class RowTracker {
             return row.size() > 9 && "keepAlive".equals(row.get(9).toString().trim());
         } catch (Exception e) { return false; }
     }
+    // True when the CURRENT row is the end-sentinel row injected by expandPauseRows().
+    // When a frame from this row is popped, BeanShell should initiate auto-quit.
+    boolean isEndSentinelRow() {
+        if (currentRow < 0 || currentRow >= nRows) return false;
+        try {
+            ArrayList row = (ArrayList) seqRows.get(currentRow);
+            return row.size() > 9 && "endSentinel".equals(row.get(9).toString().trim());
+        } catch (Exception e) { return false; }
+    }
     // Maps an expanded 1-based row index back to the original (user-visible) 1-based row
     // number stored in col 10.  Falls back to the expanded index when col 10 is absent.
     int getOriginalRowNum(int expandedRow) {
@@ -988,7 +1007,7 @@ class VisualizationTableModel extends DefaultTableModel {
     String currentMode = "Temporal";  // Track current processing mode
     // Temporal columns: Graph | Type | Numerator (row) | Denominator (row)
     String[] temporalColumns = {"Graph", "Type", "Numerator", "Denominator"};
-    String[] spatialColumns = {"Graph", "Type"};  // Spatial mode: no extra columns
+    String[] spatialColumns = {"Graph", "Type", "Row Filter"};  // Spatial mode: graph type + row filter
 
     public VisualizationTableModel() {
         super(new Object[][]{
@@ -1011,7 +1030,7 @@ class VisualizationTableModel extends DefaultTableModel {
             if (mode.equals("Temporal")) {
                 addRow(new Object[]{String.valueOf(i), "none", "Row 1", "1"});
             } else {
-                addRow(new Object[]{String.valueOf(i), "none"});
+                addRow(new Object[]{String.valueOf(i), "none", "All Rows"});
             }
         }
     }
@@ -1023,11 +1042,12 @@ class VisualizationTableModel extends DefaultTableModel {
     public boolean isCellEditable(int row, int col) {
         if (col == 0) return false;
         if (col == 1) return true;
+        String type = (String) getValueAt(row, 1);
+        if (type.equals("none")) return false;
+        if (col == 2 && currentMode.equals("Spatial")) return true; // Row Filter
         if (currentMode.equals("Spatial")) return false;
 
         // Numerator always editable when type != none
-        String type = (String) getValueAt(row, 1);
-        if (type.equals("none")) return false;
         if (col == 2) return true; // Numerator
 
         // Denominator locked to "1" for Intensity; editable for Ratio
@@ -1050,12 +1070,16 @@ class VisualizationTableModel extends DefaultTableModel {
                     super.setValueAt("1", row, 3);
                 }
                 // For "Ratio": leave existing numerator/denominator as-is
+            } else if (currentMode.equals("Spatial")) {
+                if (newType.equals("none")) {
+                    super.setValueAt("All Rows", row, 2);
+                }
             }
             fireTableRowsUpdated(row, row);
             return;
         }
 
-        // Cols 2 (Numerator) and 3 (Denominator): accept any string value
+        // Cols 2 (Numerator/Row Filter) and 3 (Denominator): accept any string value
         super.setValueAt(value, row, col);
     }
 }
@@ -1140,6 +1164,9 @@ roiSourceCombo = null;
 btCorrectionCheckbox = null;
 btDirectionCombo = null;
 btFactorField = null;
+
+// Experiment name field (declared at script scope so restartMainGUI can clear it)
+experimentNameField = null;
 
 // ===== SETTINGS TAB =====
 settingsPanel = new JPanel(new BorderLayout(10, 10));
@@ -1346,7 +1373,7 @@ okButton.addActionListener(new ActionListener() {
             }
 
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField, experimentNameField);
 
             config.useTestTable = useTestTableCheckbox.isSelected();
             // Hide GUI (not dispose — will be restored after acquisition)
@@ -1473,6 +1500,18 @@ dataDirPanel.add(dataDirLabel);
 dataDirPanel.add(dataDirPathLabel);
 dataDirPanel.add(selectFolderButton);
 
+// Experiment name panel
+experimentNamePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+JLabel experimentNameLabel = new JLabel("Experiment Name (optional):");
+experimentNameLabel.setFont(experimentNameLabel.getFont().deriveFont(Font.BOLD));
+experimentNameField = new JTextField(20);
+experimentNameField.setToolTipText("Custom prefix for the experiment folder (replaces 'Experiment'). Invalid characters are stripped automatically.");
+JLabel experimentNameHint = new JLabel("  leave blank for default");
+experimentNameHint.setForeground(Color.GRAY);
+experimentNamePanel.add(experimentNameLabel);
+experimentNamePanel.add(experimentNameField);
+experimentNamePanel.add(experimentNameHint);
+
 // Mode panel with stack conversion options
 modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 stackLabel = new JLabel("Post-Acquisition:");
@@ -1484,6 +1523,7 @@ modePanel.add(stackPerRow);
 bottomPanel = new JPanel(new BorderLayout());
 topBottomPanel = new JPanel(new BorderLayout());
 topBottomPanel.add(dataDirPanel, BorderLayout.NORTH);
+topBottomPanel.add(experimentNamePanel, BorderLayout.CENTER);
 topBottomPanel.add(modePanel, BorderLayout.SOUTH);
 bottomPanel.add(topBottomPanel, BorderLayout.NORTH);
 bottomPanel.add(controlPanel, BorderLayout.SOUTH);
@@ -1623,6 +1663,15 @@ processingModeCombo.addActionListener(new ActionListener() {
             for (int r = 1; r <= rCnt; r++) mDenCombo.addItem("Row " + r);
             vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(mDenCombo));
             vizTable.getColumnModel().getColumn(3).setPreferredWidth(120);
+        } else if (mode.equals("Spatial")) {
+            // Build Row Filter combo for Spatial mode
+            int rCnt = tableModel.getRowCount();
+            if (rCnt < 1) rCnt = 1;
+            JComboBox mRowFilterCombo = new JComboBox();
+            mRowFilterCombo.addItem("All Rows");
+            for (int r = 1; r <= rCnt; r++) mRowFilterCombo.addItem("Row " + r);
+            vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(mRowFilterCombo));
+            vizTable.getColumnModel().getColumn(2).setPreferredWidth(120);
         }
     }
 });
@@ -1768,19 +1817,25 @@ tableModel.addTableModelListener(new TableModelListener() {
         if (evType != TableModelEvent.INSERT && evType != TableModelEvent.DELETE) return;
         if (vizTable == null || processingModeCombo == null) return;
         String curMode = (String) processingModeCombo.getSelectedItem();
-        if (!"Temporal".equals(curMode)) return;
         try {
             int cnt = tableModel.getRowCount();
             if (cnt < 1) cnt = 1;
-            JComboBox lNumCombo = new JComboBox();
-            lNumCombo.addItem("All Rows");
-            lNumCombo.addItem("1");
-            for (int r = 1; r <= cnt; r++) lNumCombo.addItem("Row " + r);
-            vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(lNumCombo));
-            JComboBox lDenCombo = new JComboBox();
-            lDenCombo.addItem("1");
-            for (int r = 1; r <= cnt; r++) lDenCombo.addItem("Row " + r);
-            vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(lDenCombo));
+            if ("Temporal".equals(curMode)) {
+                JComboBox lNumCombo = new JComboBox();
+                lNumCombo.addItem("All Rows");
+                lNumCombo.addItem("1");
+                for (int r = 1; r <= cnt; r++) lNumCombo.addItem("Row " + r);
+                vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(lNumCombo));
+                JComboBox lDenCombo = new JComboBox();
+                lDenCombo.addItem("1");
+                for (int r = 1; r <= cnt; r++) lDenCombo.addItem("Row " + r);
+                vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(lDenCombo));
+            } else if ("Spatial".equals(curMode)) {
+                JComboBox lRowFilterCombo = new JComboBox();
+                lRowFilterCombo.addItem("All Rows");
+                for (int r = 1; r <= cnt; r++) lRowFilterCombo.addItem("Row " + r);
+                vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(lRowFilterCombo));
+            }
         } catch (Exception ex) { /* ignore if columns not yet available */ }
     }
 });
@@ -1824,7 +1879,7 @@ vizStartButton.addActionListener(new ActionListener() {
             }
 
             // Capture all data from GUI before hiding
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField, experimentNameField);
             // Hide GUI (not dispose — will be restored after acquisition)
             frame.setVisible(false);
 
@@ -2609,7 +2664,10 @@ void createExperimentFolder() {
         throw new IOException("No write permission for save directory");
     }
 
-    File experimentFolder = new File(saveDir, "Experiment_" + timestamp);
+    String expPrefix = (config.acqSettings.experimentName != null && !config.acqSettings.experimentName.isEmpty())
+        ? config.acqSettings.experimentName
+        : "Experiment";
+    File experimentFolder = new File(saveDir, expPrefix + "_" + timestamp);
     boolean created = experimentFolder.mkdir();
 
     if (!created) {
@@ -3014,6 +3072,102 @@ boolean setupVisualizationROIs() {
 }
 
     // Export table to CSV with auto-incrementing filename - uses captured data
+// Write a supplementary Micro-Manager state snapshot to the experiment folder.
+// Lists all config groups with their currently active preset, plus camera device,
+// binning, and pixel size.  The file is intentionally NOT reloadable by LUMETRIC.
+void saveMicroscopeStateLog() {
+    if (config.experimentFolder == null || config.experimentFolder.isEmpty()) return;
+    File logFile = new File(config.experimentFolder, "MicroscopeState_Log.csv");
+    try {
+        import java.text.SimpleDateFormat;
+        import java.util.Date;
+        PrintWriter pw = new PrintWriter(new FileWriter(logFile));
+        String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        pw.println("# LUMETRIC - Micro-Manager State Log");
+        pw.println("# Experiment start: " + timestamp);
+        pw.println("# NOTE: This file is for reference only and is NOT reloadable by LUMETRIC.");
+        pw.println("#");
+
+        // --- Config groups ---
+        // Use getCurrentConfigFromCache to avoid querying hardware (which can block).
+        pw.println("[Config Groups]");
+        pw.println("Group,Active Preset");
+        try {
+            mmcorej.StrVector groups = mmc.getAvailableConfigGroups();
+            for (int gi = 0; gi < groups.size(); gi++) {
+                String grp = groups.get(gi);
+                String preset = "";
+                try { preset = mmc.getCurrentConfigFromCache(grp); } catch (Exception ex) { preset = "?"; }
+                pw.println(escapeCSV(grp) + "," + escapeCSV(preset));
+            }
+        } catch (Exception ex) {
+            pw.println("(error reading config groups: " + ex.getMessage() + ")");
+        }
+        pw.flush();
+
+        // --- Camera ---
+        pw.println("#");
+        pw.println("[Camera]");
+        pw.println("Property,Value");
+        String camDev = "";
+        try { camDev = mmc.getCameraDevice(); } catch (Exception ex) {}
+        pw.println("Device," + escapeCSV(camDev.isEmpty() ? "(none)" : camDev));
+        pw.flush();
+        if (!camDev.isEmpty()) {
+            try {
+                String binning = mmc.getPropertyFromCache(camDev, "Binning");
+                pw.println("Binning," + escapeCSV(binning));
+            } catch (Exception ex) {
+                pw.println("Binning,(not available)");
+            }
+            pw.flush();
+        }
+
+        pw.close();
+    } catch (Exception e) {
+        // Silent failure — log is supplementary, never blocks acquisition
+    }
+
+    // Screenshot of the MM main window — must run on the EDT for printAll() to work.
+    // Rendered entirely in memory so it captures the window even if LUMETRIC is on top.
+    try {
+        import java.awt.Frame;
+        import java.awt.Graphics2D;
+        import java.awt.image.BufferedImage;
+        import javax.imageio.ImageIO;
+        final String expFolderPath = config.experimentFolder;
+        SwingUtilities.invokeAndWait(new Runnable() {
+            public void run() {
+                try {
+                    Frame mmFrame = null;
+                    Frame[] frames = Frame.getFrames();
+                    for (int fi = 0; fi < frames.length; fi++) {
+                        String title = frames[fi].getTitle();
+                        if (title != null && title.contains("Micro-Manager")
+                                && frames[fi].getWidth() > 0 && frames[fi].getHeight() > 0) {
+                            mmFrame = frames[fi];
+                            break;
+                        }
+                    }
+                    if (mmFrame == null) {
+                        print("[Screenshot] No visible Micro-Manager frame found — skipping.");
+                        return;
+                    }
+                    BufferedImage img = new BufferedImage(
+                        mmFrame.getWidth(), mmFrame.getHeight(), BufferedImage.TYPE_INT_RGB);
+                    Graphics2D g = img.createGraphics();
+                    mmFrame.printAll(g);
+                    g.dispose();
+                    File outFile = new File(expFolderPath, "MMState_Screenshot.png");
+                    ImageIO.write(img, "png", outFile);
+                } catch (Exception ex) {}
+            }
+        });
+    } catch (Exception e) {
+        // Silent failure
+    }
+}
+
 boolean exportTableToCSV() {
     // Get save directory from captured settings
     String saveDir = config.acqSettings.saveDirectory;
@@ -3128,6 +3282,8 @@ boolean exportTableToCSV() {
         writerArduino.println("# Live Pictures: " + config.acqSettings.livePics);
         writerArduino.close();
 
+        // Save supplementary Micro-Manager state snapshot (non-reloadable)
+        saveMicroscopeStateLog();
 
         // print("  Readable: " + csvFileReadable.getAbsolutePath());
         // print("  Arduino:  " + csvFileArduino.getAbsolutePath());
@@ -3201,7 +3357,11 @@ void applySettingsFromFile(File csvFile) {
                         vizRowIndex++;
                     }
                 } else {
-                    if (vizParts.length >= 2 && vizRowIndex < vizTableModel.getRowCount()) {
+                    if (vizParts.length >= 3 && vizRowIndex < vizTableModel.getRowCount()) {
+                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
+                        vizTableModel.setValueAt(vizParts[2], vizRowIndex, 2);
+                        vizRowIndex++;
+                    } else if (vizParts.length >= 2 && vizRowIndex < vizTableModel.getRowCount()) {
                         vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
                         vizRowIndex++;
                     }
@@ -3321,6 +3481,7 @@ void restartMainGUI(String experimentFolder) {
         }
     }
 
+    if (experimentNameField != null) experimentNameField.setText("");
     frame.setVisible(true);
 }
 
@@ -3442,12 +3603,14 @@ void writeSettingsToFile(File csvFile) {
                 writer.println(vizRow.toString());
             }
         } else {
-            writer.println("Graph,Type");
+            writer.println("Graph,Type,Row Filter");
             for (int i = 0; i < vizTableModel.getRowCount(); i++) {
                 StringBuilder vizRow = new StringBuilder();
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString()));
                 vizRow.append(",");
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString()));
+                vizRow.append(",");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 2).toString()));
                 writer.println(vizRow.toString());
             }
         }
@@ -3566,7 +3729,7 @@ void createInlineAcquisitionWindow() {
         }
     });
 
-    JButton resetAllButton = new JButton("Reset All Zooms");
+    JButton resetAllButton = new JButton("Rescale All Axes");
     resetAllButton.setFont(new Font("SansSerif", Font.BOLD, 11));
     resetAllButton.setBackground(new Color(200, 200, 200));
     resetAllButton.setPreferredSize(new java.awt.Dimension(130, 28));
@@ -3582,7 +3745,7 @@ void createInlineAcquisitionWindow() {
         }
     });
 
-    JButton resetXButton = new JButton("Reset X-Axis");
+    JButton resetXButton = new JButton("Rescale X-Axis");
     resetXButton.setFont(new Font("SansSerif", Font.BOLD, 11));
     resetXButton.setBackground(new Color(200, 200, 200));
     resetXButton.setPreferredSize(new java.awt.Dimension(130, 28));
@@ -4330,7 +4493,17 @@ int parseRowNumber(String s) {
 // For Ratio:     accept frames matching either Numerator or Denominator (both needed for caching).
 // Spatial mode:  always true (unchanged).
 boolean shouldProcessFrame(int seqRow, ArrayList vizRow) {
-    if (config.acqSettings.processingMode.equals("Spatial")) return true;
+    if (config.acqSettings.processingMode.equals("Spatial")) {
+        // Apply Row Filter if set (col 2 exists and is not "All Rows")
+        if (vizRow.size() > 2) {
+            String rowFilter = (String) vizRow.get(2);
+            if (rowFilter != null && !rowFilter.trim().equals("All Rows")) {
+                int filterRow = parseRowNumber(rowFilter);
+                return (filterRow > 0 && seqRow == filterRow);
+            }
+        }
+        return true;
+    }
 
     String graphType = (String) vizRow.get(1);
     if (graphType == null || graphType.equals("none")) return false;
@@ -5641,6 +5814,19 @@ ArrayList expandPauseRows(ArrayList originalRows) {
         expanded.add(nr);
     }
 
+    // Append end-sentinel row (always last, before the flush prepend).
+    // The Arduino loops this row indefinitely (frames=0, exposure=1ms, interval=500ms),
+    // keeping the camera receiving triggers after all real imaging rows are done.
+    // When BeanShell's frame-pop detects a frame from this row (col9="endSentinel")
+    // it sets running[0]=false while the Arduino is still active, so
+    // stopSequenceAcquisition() returns immediately instead of blocking for ~40s.
+    ArrayList sentinelRow = new ArrayList();
+    sentinelRow.add(""); sentinelRow.add(""); sentinelRow.add(String.valueOf(KA_EXPOSURE_MS));
+    sentinelRow.add("500"); sentinelRow.add("0"); // frames=0: infinite until byte 66
+    sentinelRow.add(""); sentinelRow.add(""); sentinelRow.add("0"); sentinelRow.add("");
+    sentinelRow.add("endSentinel"); sentinelRow.add("");
+    expanded.add(sentinelRow);
+
     // Prepend the pre-acquisition flush trigger as expanded row 0 (Arduino row 1).
     // This fires one short camera trigger (1 ms) with a 60 ms total interval just
     // before the very first real imaging frame, resetting the sensor and eliminating
@@ -5654,7 +5840,7 @@ ArrayList expandPauseRows(ArrayList originalRows) {
     expanded.add(0, flushRow0);
 
     print("expandPauseRows: " + N + " original rows → " + expanded.size()
-        + " expanded rows (pre-acq flush + "
+        + " expanded rows (pre-acq flush + end-sentinel + "
         + (anyExpansion ? "keep-alive + pause flush triggers" : "no pause expansion")
         + " injected).");
     return expanded;
@@ -6140,6 +6326,16 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                     // during long pause/photoswitching rows).  Not saved, not graphed,
                     // not counted in framesProcessed.
                     if (rowTracker.isKeepAliveRow()) {
+                        rowTracker.advanceFrame();
+                        continue;
+                    }
+
+                    // End-sentinel frame: all real imaging rows are done.
+                    // Set running[0]=false while the Arduino is still actively triggering
+                    // so stopSequenceAcquisition() in the drain block returns immediately.
+                    if (rowTracker.isEndSentinelRow()) {
+                        print("End-sentinel reached - auto-quitting.");
+                        running[0] = false;
                         rowTracker.advanceFrame();
                         continue;
                     }
@@ -6949,7 +7145,16 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
 
 // Helper: compute the frame-selection label used in CSV filenames.
 String computeFrameLogicLabel(ArrayList vizRow, boolean isTemporal) {
-    if (!isTemporal) return "every";
+    if (!isTemporal) {
+        // Spatial mode: use Row Filter value for label
+        if (vizRow.size() > 2) {
+            String rowFilter = (String) vizRow.get(2);
+            if (rowFilter != null && !rowFilter.trim().equals("All Rows")) {
+                return rowFilter.replace(" ", ""); // e.g. "Row1"
+            }
+        }
+        return "every";
+    }
     String type  = (String) vizRow.get(1);
     String numer = (String) vizRow.get(2);
     String denom = (String) vizRow.get(3);
@@ -7840,7 +8045,7 @@ void openPostProcessor() {
     config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics,
         convertToStack, stackPerRow, prefs.get("lastSavePath", ""),
         processingModeCombo, splitAxisCombo, roiSourceCombo,
-        bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
+        bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField, experimentNameField);
     config.experimentFolder = expFolder.getAbsolutePath();
 
     // 4. Find image source (images/ subfolder → Image_Stack.tif → Stack_Row_N.tif)
