@@ -1,4 +1,4 @@
-# Acquisition Control Box
+# Hardware: Acquisition Control Box
 
 The LUMETRIC acquisition control box provides hardware-level synchronization for fluorescence microscopy experiments. It integrates an Arduino GIGA R1 running the LUMETRIC firmware and interfaces with MicroManager, light sources, and camera systems.
 
@@ -18,7 +18,7 @@ The LUMETRIC acquisition control box provides hardware-level synchronization for
 
 ### Optional components
 
-- TTL logic level converter **IF** you have devices that **do NOT work at 3.3 V** (FREI ST1167 or similar)
+- TTL logic level converter **IF** you have devices that **do NOT work at 3.3 V** (FREI ST1167 or similar). For this: make sure to check the manual of your camera and light sources!
 - 5 x M3 screws (6 mm)
 - Heat-set threaded inserts (e.g., RUTHEX GE-M3X5X4)
 - 3D-printed enclosure parts
@@ -51,6 +51,10 @@ Both parts are secured using screws at the four corners with reinforced mounting
 
 ## Wiring-up the Arduino
 
+### Soldering Steps
+
+It is recommended to use consistent cable color coding to the scheme to simplify debugging and verification.
+
 Refer to the wiring scheme (Figure 1) and the image of a example box (Figure 2).
 
 ![Wiring scheme of the Arduino](../assets/images/Arduino-wiring.svg)
@@ -62,10 +66,6 @@ Refer to the wiring scheme (Figure 1) and the image of a example box (Figure 2).
 /// caption
 **Fig.2:** Picture of the open box, so that the wiring can be seen.
 ///
-
-### Soldering Steps
-
-It is recommended to use consistent cable color coding to the scheme to simplify debugging and verification.
 
 1. **Signal Connections** (BNC center pins)
       1. Cut the jumper wire at one end. Leave an intact male pin at the other side.
@@ -80,30 +80,30 @@ It is recommended to use consistent cable color coding to the scheme to simplify
       4. Of one extra Jumper cable: Strip the isolation from one end and tin it.
       5. Insert all ground wires into a lever connector.
       6. The male end of the Jumper cable will connect to an Arduino GND pin.
-3. Installing Heat-Set Inserts
-   1. Place the threaded inserts into the 5 screw sockets.
-   2. Use the tip of a soldering iron to heat the threaded insert.
-   3. Press it slowly into the designated hole.
-   4. Ensure vertical alignment before cooling (e.g. by pressing the last bit with a flat piece of metal).
+3. **Installing Heat-Set Inserts**
+      1. Place the threaded inserts into the 5 screw sockets.
+      2. Use the tip of a soldering iron to heat the threaded insert.
+      3. Press it slowly into the designated hole.
+      4. Ensure vertical alignment before cooling (e.g. by pressing the last bit with a flat piece of metal).
 
 ### Assembly
 
-1. Mount the Arduino onto the internal standoffs and secure it with one M3 screw.
-2. Install the BNC connectors into the enclosure (Ensure ring terminals are correctly placed for ground connections).
+1. Install the BNC connectors into the enclosure (Ensure ring terminals are correctly placed for ground connections).
+2. Mount the Arduino onto the internal standoffs and secure it with one M3 screw.
 3. Connect the ground line to the Arduino GND pin (see scheme).
 4. Connect the BNC signal wires to Arduino pins (Connector bank J):
 5. Perform a final connection check before closing the box.
 
 | Function   | Arduino Pin |
 |------------|-------------|
-| Camera     | D25         |
-| Channel 1  | D27         |
-| Channel 2  | D29         |
-| Channel 3  | D31         |
-| Channel 4  | D33         |
-| Channel 5  | D35         |
-| Channel 6  | D37         |
-| Channel 7  | D38         |
+| Camera     | 25          |
+| Channel 1  | 27          |
+| Channel 2  | 29          |
+| Channel 3  | 31          |
+| Channel 4  | 33          |
+| Channel 5  | 35          |
+| Channel 6  | 37          |
+| Channel 7  | 38          |
 
 ### Optional: Level Shifter Integration
 
@@ -118,70 +118,6 @@ Suggested component:  FREI ST1167 or similar
 
 !!! Tip "Always verify the resulting voltage levels using a multimeter **before connecting any 5 V-dependent devices**."
 
-## Flashing the Firmware
+### Continue to installing the LUMETRIC System
 
-1. Download and install the Arduino IDE: [Arduino IDE](https://docs.arduino.cc/software/ide/).
-2. Open the Arduino IDE and navigate to **File > Open**, then select 'LUMETRIC_ArdFirmware.ino' from the LUMETRIC folder.
-3. Connect the assembled LUMETRIC control box to your computer via USB. The Arduino IDE should automatically detect the board as **Arduino GIGA R1**. Select it from the '**Select board**' dropdown menu.
-4. Click the **Upload** button (arrow icon in the top toolbar, left side) to flash the firmware to the Arduino. The console will display a '**Done uploading**' message upon successful completion.
-5. Close the Arduino IDE.
-
-## Adding the Arduino as Device in MicroManager
-
-Before proceeding here, make sure you completed the installing stapes described in [Installing MicroManager and integrating your devices](./Install).
-
-1. Make sure MM is **not** running. In the file explorer go to: **programms > MicroManager2.0**. From the LUMETRIC.zip folder you downloaded and unpacked earlier, drag and drop the '**mmgr_dal_Arduino.dll**' into this folder and choose '**replace file**'.
-2. Open MicroManager and in the **Startup Configuration** Window choose as 'Hardware Configuration File' the LUMETRIC Configuration you generated during [Installing MicroManager and integrating your devices](Install.md).
-3. **Devices > Hardware Configuration Wizard**. Choose '**Modify or explore existing configuration**' and make sure its the **LUMETRIC** configuration.
-
-    !!! Tip "If this does not work or you do not want to use 'Scan Ports'"
-        You find the COM Port also via the Arduino IDE (but always open either MM or Arduino IDE) or in your Windows Device Manager.
-
-4. Add **Arduino (Arduino Hub)** from the list. Choose "**Scan Ports**".
-5. Add the Arduino as hub, shutter and switch.
-6. Connect your lamp to the BNC ports of your LUMETRIC box. A good order is increasing wavelength.
-7. In MM, define a new group for Presets. Choose the Arduino switch states as single property.
-8. Define one Preset per BNC Channel you use. See the table below for the state number to choose.
-
-    !!! Tip "Example: 2 = BNC connector 1"
-        You can also define Presets for illumination with two wavelength at the same time. Lets say you want Channel 1 and 2 together: 2 + 4 = 6. Therefore, you choose switch label 6.
-
-9. Check via Live view or simple 'shutter open' that each Preset does turn on the wavelength you expect and thus, that your settings are correct.
-
-| Function   | Arduino state |
-|------------|------------   |
-| Channel 1  | 2             |
-| Channel 2  | 4             |
-| Channel 3  | 8             |
-| Channel 4  | 16            |
-| Channel 5  | 32            |
-| Channel 6  | 64            |
-| Channel 7  | 128           |
-
-## Completing and saving the Configuration of LUMETRIC
-
-1. Open LUMETRIC via your predefined Quick-Access Button
-2. This time, choose: '**Generate Config**' (Fig. 1 below)
-3. You will see a dialog as depicted in figure 2 below. Be sure to choose the correct Groups and Presets.
-      1. Make sure the "**Camera Snap Preset**" uses the internal Trigger while for the "**Camera Trigger Preset**" you have set the Global Shutter + Level Mode + External Trigger mode. If uncertain, recheck [Integrating your devices](./Install).
-      2. The Arduino Config Group needs to be the one you used when defining your channels in the previous section. LUMETRIC will draw these automatically from your presets.
-
-    !!! Tip "COM Port detection of your Arduino"
-        In most cases the detected Arduino Serial Port will be the correct one. In the special case of you having multiple Arduinos attached and integrated into MM, it might choose falsely. Double check the Port.
-
-4. Leave the Circular Buffer mode checked.
-5. Save and apply your settings.
-
-![Conf1](../assets/images/Conf1.png){width=500}
-/// caption
-**Fig.1:** User dialog if no LUMETRIC Configuration is available.
-///
-
-![Conf2](../assets/images/Conf2.png){width=500}
-/// caption
-**Fig.1:** User dialog of the LUMETRIC Configuration wizard.
-///
-
-## First test experiment of the full LUMETRIC System
-
-If you would like to start with a concise overview of all options you are offered by LUMETRIC, check out [LUMETRIC GUI](../LUMETRIC%20GUI/Interface). A quick introduction in how to set-up an experiment with LUMETRIC can be found in [LUMETRIC](../LUMETRIC%20GUI/Multichannel).
+From here, you can continue with [installing the software](./Install). Make sure to go through all installation steps if you want to use the full LUMETRIC system.

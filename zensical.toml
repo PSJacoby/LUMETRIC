@@ -5,7 +5,7 @@ repo_url = "https://github.com/PSJacoby/LUMETRIC"
 repo_name = "PSJacoby/LUMETRIC"
 nav = [
     {"Home" = "index.md"},
-    {"Configuration" = [
+    {"How to implement LUMETRIC" = [
         "Configuration/Install.md",
         "Configuration/ArduinoAssembly.md"
     ]},
