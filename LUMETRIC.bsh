@@ -1005,17 +1005,17 @@ class LoopSwitchGotoRenderer extends DefaultTableCellRenderer {
 // Table Model for visualization configuration
 class VisualizationTableModel extends DefaultTableModel {
     String currentMode = "Temporal";  // Track current processing mode
-    // Temporal columns: Graph | Type | Numerator (row) | Denominator (row)
-    String[] temporalColumns = {"Graph", "Type", "Numerator", "Denominator"};
-    String[] spatialColumns = {"Graph", "Type", "Row Filter"};  // Spatial mode: graph type + row filter
+    // Temporal columns: Graph | Type | Numerator (row) | Denominator (row) | Window
+    String[] temporalColumns = {"Graph", "Type", "Numerator", "Denominator", "Window"};
+    String[] spatialColumns = {"Graph", "Type", "Row Filter", "Window"};  // Spatial mode: graph type + row filter
 
     public VisualizationTableModel() {
         super(new Object[][]{
-            {"1", "none", "Row 1", "1"},
-            {"2", "none", "Row 1", "1"},
-            {"3", "none", "Row 1", "1"},
-            {"4", "none", "Row 1", "1"}
-        }, new String[]{"Graph", "Type", "Numerator", "Denominator"});
+            {"1", "none", "Row 1", "1", "Main"},
+            {"2", "none", "Row 1", "1", "Main"},
+            {"3", "none", "Row 1", "1", "Main"},
+            {"4", "none", "Row 1", "1", "Main"}
+        }, new String[]{"Graph", "Type", "Numerator", "Denominator", "Window"});
     }
 
     void setProcessingMode(String mode) {
@@ -1028,11 +1028,16 @@ class VisualizationTableModel extends DefaultTableModel {
         setRowCount(0);
         for (int i = 1; i <= 4; i++) {
             if (mode.equals("Temporal")) {
-                addRow(new Object[]{String.valueOf(i), "none", "Row 1", "1"});
+                addRow(new Object[]{String.valueOf(i), "none", "Row 1", "1", "Main"});
             } else {
-                addRow(new Object[]{String.valueOf(i), "none", "All Rows"});
+                addRow(new Object[]{String.valueOf(i), "none", "All Rows", "Main"});
             }
         }
+    }
+
+    // Returns the column index of the "Window" column (last column, mode-dependent index).
+    int getWindowColumnIndex() {
+        return getColumnCount() - 1;
     }
 
     public Class getColumnClass(int col) {
@@ -1041,6 +1046,7 @@ class VisualizationTableModel extends DefaultTableModel {
 
     public boolean isCellEditable(int row, int col) {
         if (col == 0) return false;
+        if (col == getWindowColumnIndex()) return true; // Window always editable
         if (col == 1) return true;
         String type = (String) getValueAt(row, 1);
         if (type.equals("none")) return false;
@@ -1058,6 +1064,11 @@ class VisualizationTableModel extends DefaultTableModel {
     public void setValueAt(Object value, int row, int col) {
         if (col == 0) return;
 
+        if (col == getWindowColumnIndex()) {
+            super.setValueAt(value, row, col);
+            return;
+        }
+
         if (col == 1) {
             String newType = (String) value;
             super.setValueAt(newType, row, col);
@@ -1065,6 +1076,7 @@ class VisualizationTableModel extends DefaultTableModel {
                 if (newType.equals("none")) {
                     super.setValueAt("Row 1", row, 2);
                     super.setValueAt("1",     row, 3);
+                    super.setValueAt("Main",  row, getWindowColumnIndex());
                 } else if (newType.equals("Intensity")) {
                     // Denominator must be constant 1 for plain intensity
                     super.setValueAt("1", row, 3);
@@ -1073,6 +1085,7 @@ class VisualizationTableModel extends DefaultTableModel {
             } else if (currentMode.equals("Spatial")) {
                 if (newType.equals("none")) {
                     super.setValueAt("All Rows", row, 2);
+                    super.setValueAt("Main",     row, getWindowColumnIndex());
                 }
             }
             fireTableRowsUpdated(row, row);
@@ -1125,6 +1138,13 @@ class VisualizationTypeEditor extends DefaultCellEditor {
                 combo.addItem("Intensity Right");
             }
         }
+    }
+}
+
+// Custom cell editor for Window column — simple Main/Extra dropdown.
+class VisualizationWindowEditor extends DefaultCellEditor {
+    public VisualizationWindowEditor() {
+        super(new JComboBox(new String[]{"Main", "Extra"}));
     }
 }
 
@@ -1536,6 +1556,9 @@ visualizationPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 // Create visualization table and model
 vizTableModel = new VisualizationTableModel();
 vizTable = new JTable(vizTableModel);
+// Install Window column editor for initial Temporal mode (column index 4)
+vizTable.getColumnModel().getColumn(4).setCellEditor(new VisualizationWindowEditor());
+vizTable.getColumnModel().getColumn(4).setPreferredWidth(70);
 
 // Title
 vizTitleLabel = new JLabel("Data Visualization Configuration", SwingConstants.CENTER);
@@ -1663,6 +1686,8 @@ processingModeCombo.addActionListener(new ActionListener() {
             for (int r = 1; r <= rCnt; r++) mDenCombo.addItem("Row " + r);
             vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(mDenCombo));
             vizTable.getColumnModel().getColumn(3).setPreferredWidth(120);
+            vizTable.getColumnModel().getColumn(4).setCellEditor(new VisualizationWindowEditor());
+            vizTable.getColumnModel().getColumn(4).setPreferredWidth(70);
         } else if (mode.equals("Spatial")) {
             // Build Row Filter combo for Spatial mode
             int rCnt = tableModel.getRowCount();
@@ -1672,6 +1697,8 @@ processingModeCombo.addActionListener(new ActionListener() {
             for (int r = 1; r <= rCnt; r++) mRowFilterCombo.addItem("Row " + r);
             vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(mRowFilterCombo));
             vizTable.getColumnModel().getColumn(2).setPreferredWidth(120);
+            vizTable.getColumnModel().getColumn(3).setCellEditor(new VisualizationWindowEditor());
+            vizTable.getColumnModel().getColumn(3).setPreferredWidth(70);
         }
     }
 });
@@ -3296,15 +3323,16 @@ void applySettingsFromFile(File csvFile) {
                         vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
                         vizTableModel.setValueAt(vizParts[2], vizRowIndex, 2);
                         vizTableModel.setValueAt(vizParts[3], vizRowIndex, 3);
-                        vizRowIndex++;
-                    } else if (vizParts.length >= 6 && vizRowIndex < vizTableModel.getRowCount()) {
-                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
+                        // Window column (index 4): present in new files, default "Main" for old
+                        vizTableModel.setValueAt(vizParts.length >= 5 ? vizParts[4] : "Main", vizRowIndex, 4);
                         vizRowIndex++;
                     }
                 } else {
                     if (vizParts.length >= 3 && vizRowIndex < vizTableModel.getRowCount()) {
                         vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
                         vizTableModel.setValueAt(vizParts[2], vizRowIndex, 2);
+                        // Window column (index 3): present in new files, default "Main" for old
+                        vizTableModel.setValueAt(vizParts.length >= 4 ? vizParts[3] : "Main", vizRowIndex, 3);
                         vizRowIndex++;
                     } else if (vizParts.length >= 2 && vizRowIndex < vizTableModel.getRowCount()) {
                         vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
@@ -3535,7 +3563,7 @@ void writeSettingsToFile(File csvFile) {
         writer.println("");
         writer.println("# Visualization Settings");
         if (currentMode.equals("Temporal")) {
-            writer.println("Graph,Type,Numerator,Denominator");
+            writer.println("Graph,Type,Numerator,Denominator,Window");
             for (int i = 0; i < vizTableModel.getRowCount(); i++) {
                 StringBuilder vizRow = new StringBuilder();
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString()));
@@ -3545,10 +3573,12 @@ void writeSettingsToFile(File csvFile) {
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 2).toString()));
                 vizRow.append(",");
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 3).toString()));
+                vizRow.append(",");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 4).toString()));
                 writer.println(vizRow.toString());
             }
         } else {
-            writer.println("Graph,Type,Row Filter");
+            writer.println("Graph,Type,Row Filter,Window");
             for (int i = 0; i < vizTableModel.getRowCount(); i++) {
                 StringBuilder vizRow = new StringBuilder();
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString()));
@@ -3556,6 +3586,8 @@ void writeSettingsToFile(File csvFile) {
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString()));
                 vizRow.append(",");
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 2).toString()));
+                vizRow.append(",");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 3).toString()));
                 writer.println(vizRow.toString());
             }
         }
@@ -3608,6 +3640,102 @@ void saveSettingsToCSV() {
 
 // ==================== Acquisition Control Window ====================
 
+// Builds one extra-window JFrame for a single graph.
+// Extracted to a top-level function to avoid BeanShell for-loop anonymous-class naming bug.
+// Event and Quit buttons delegate to the main window buttons so logic lives in one place.
+JFrame buildExtraChartFrame(int graphIdx, JFreeChart chart,
+        java.util.prefs.Preferences prefs,
+        JButton mainEventButton, JButton mainLoopSwitchButton,
+        JButton mainResetAllButton, JButton mainResetXButton,
+        JButton mainQuitButton) {
+    print("[ExtraWin] buildExtraChartFrame called for graph " + (graphIdx+1));
+    String chartTitle = chart.getTitle().getText();
+    int ex = prefs.getInt("extraWin_graph_" + (graphIdx+1) + "_x", -1);
+    int ey = prefs.getInt("extraWin_graph_" + (graphIdx+1) + "_y", -1);
+    int ew = prefs.getInt("extraWin_graph_" + (graphIdx+1) + "_w", 600);
+    int eh = prefs.getInt("extraWin_graph_" + (graphIdx+1) + "_h", 400);
+
+    final JFrame extraFrame = new JFrame(chartTitle);
+    extraFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+    extraFrame.setSize(ew, eh);
+    if (ex >= 0 && ey >= 0) extraFrame.setLocation(ex, ey);
+    else extraFrame.setLocationByPlatform(true);
+
+    final ChartPanel extraChartPanel = new ChartPanel(chart);
+    extraChartPanel.setMouseWheelEnabled(true);
+
+    // Same order as main window: Event | Switch | Rescale All | Rescale X | Quit
+    JPanel extraToolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3));
+    JButton exEventBtn = new JButton("Event");
+    exEventBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exEventBtn.setBackground(new Color(100, 180, 100));
+    JButton exSwitchBtn = new JButton("Switch");
+    exSwitchBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exSwitchBtn.setBackground(new Color(100, 150, 255));
+    JButton exRescaleAllBtn = new JButton("Rescale All");
+    exRescaleAllBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exRescaleAllBtn.setBackground(new Color(200, 200, 200));
+    JButton exRescaleXBtn = new JButton("Rescale X");
+    exRescaleXBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exRescaleXBtn.setBackground(new Color(200, 200, 200));
+    JButton exQuitBtn = new JButton("Quit");
+    exQuitBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exQuitBtn.setBackground(Color.RED);
+    exQuitBtn.setForeground(Color.BLACK);
+    extraToolbar.add(exEventBtn);
+    extraToolbar.add(Box.createHorizontalStrut(3));
+    extraToolbar.add(exSwitchBtn);
+    extraToolbar.add(Box.createHorizontalStrut(15));
+    extraToolbar.add(exRescaleAllBtn);
+    extraToolbar.add(Box.createHorizontalStrut(3));
+    extraToolbar.add(exRescaleXBtn);
+    extraToolbar.add(Box.createHorizontalStrut(15));
+    extraToolbar.add(exQuitBtn);
+
+    // Reuse main window button logic directly
+    exEventBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainEventButton.doClick();
+        }
+    });
+    exSwitchBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainLoopSwitchButton.doClick();
+        }
+    });
+    exRescaleAllBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainResetAllButton.doClick();
+        }
+    });
+    exRescaleXBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainResetXButton.doClick();
+        }
+    });
+    exQuitBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainQuitButton.doClick();
+        }
+    });
+    extraFrame.addWindowListener(new java.awt.event.WindowAdapter() {
+        public void windowClosing(java.awt.event.WindowEvent we) {
+            prefs.putInt("extraWin_graph_" + (graphIdx+1) + "_x", extraFrame.getX());
+            prefs.putInt("extraWin_graph_" + (graphIdx+1) + "_y", extraFrame.getY());
+            prefs.putInt("extraWin_graph_" + (graphIdx+1) + "_w", extraFrame.getWidth());
+            prefs.putInt("extraWin_graph_" + (graphIdx+1) + "_h", extraFrame.getHeight());
+            extraFrame.setVisible(false);
+        }
+    });
+
+    JPanel extraContent = new JPanel(new BorderLayout());
+    extraContent.add(extraToolbar, BorderLayout.NORTH);
+    extraContent.add(extraChartPanel, BorderLayout.CENTER);
+    extraFrame.add(extraContent);
+    print("[ExtraWin] frame built for graph " + (graphIdx+1) + ": " + chartTitle);
+    return extraFrame;
+}
+
 // Create acquisition control window inline (called from EDT)
 void createInlineAcquisitionWindow() {
     // print("DEBUG: createInlineAcquisitionWindow() called");
@@ -3628,6 +3756,9 @@ void createInlineAcquisitionWindow() {
     acqFrame.setLocationRelativeTo(null);
 
     acqFrame.setLayout(new BorderLayout());
+
+    // Shared stop flag — declared early so extra-window Stop buttons can reference it
+    final boolean[] acquisitionRunning = {true};
 
     // Global event tracking
     final long[] acquisitionStartTime = new long[1];
@@ -3730,7 +3861,21 @@ void createInlineAcquisitionWindow() {
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
-
+                // Clean up extra chart windows
+                try {
+                    for (int xi = 0; xi < extraChartFrames.size(); xi++) {
+                        try {
+                            JFrame ef = (JFrame) extraChartFrames.get(xi);
+                            int gIdx = ((Integer) extraChartGraphIndices.get(xi)).intValue();
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_x", ef.getX());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_y", ef.getY());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_w", ef.getWidth());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_h", ef.getHeight());
+                            ef.setVisible(false);
+                            ef.dispose();
+                        } catch (Exception exf) {}
+                    }
+                } catch (Exception exAll) {}
                 acqFrame.dispose();
                 // TODO: Clean up acquisition resources
             }
@@ -3888,8 +4033,42 @@ void createInlineAcquisitionWindow() {
         chartPanels.add(chartPanel); // Store for repaint access
     }
 
+    // ===== EXTRA WINDOW CHARTS =====
+    // Separate chart panels tagged "Extra" so the main layout only sees "Main" ones.
+    // Extra ChartPanels wrap the SAME JFreeChart — live updates propagate automatically.
+    final ArrayList extraChartFrames      = new ArrayList(); // kept for cleanup on acq end
+    final ArrayList extraChartGraphIndices = new ArrayList(); // parallel: graphIdx per extra frame
+    final ArrayList mainChartPanels  = new ArrayList(); // subset of chartPanels for main layout
+    int mainActiveGraphs = 0;
+    print("[ExtraWin] starting extra-window split. visualizationRows.size()=" + config.acqSettings.visualizationRows.size());
+    for (int i = 0; i < 4; i++) {
+        if (chartPanels.get(i) == null) { mainChartPanels.add(null); continue; }
+        ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+        String windowMode = "Main";
+        if (!vizRow.isEmpty()) {
+            Object wm = vizRow.get(vizRow.size() - 1);
+            if (wm != null) windowMode = wm.toString();
+        }
+        print("[ExtraWin] graph " + (i+1) + " windowMode=" + windowMode + " vizRow.size()=" + vizRow.size());
+        if ("Extra".equals(windowMode)) {
+            mainChartPanels.add(null); // placeholder keeps array aligned
+            JFrame extraFrame = buildExtraChartFrame(i, (JFreeChart) charts.get(i), prefs, eventButton, loopSwitchButton, resetAllButton, resetXButton, quitButton);
+            extraChartFrames.add(extraFrame);
+            extraChartGraphIndices.add(new Integer(i));
+        } else {
+            mainChartPanels.add(chartPanels.get(i));
+            mainActiveGraphs++;
+        }
+    }
+    print("[ExtraWin] extra frames built: " + extraChartFrames.size() + ", mainActiveGraphs=" + mainActiveGraphs);
+    // Show all extra frames
+    for (int i = 0; i < extraChartFrames.size(); i++)
+        ((JFrame) extraChartFrames.get(i)).setVisible(true);
 
-    // Event button - adds vertical line markers to all active graphs
+    // Recompute activeGraphs to reflect only main-window graphs
+    activeGraphs = mainActiveGraphs;
+
+    // ===== BUTTON LISTENERS =====
     eventButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             long systemTime = System.currentTimeMillis();
@@ -3919,12 +4098,18 @@ void createInlineAcquisitionWindow() {
     });
 
     // ADAPTIVE LAYOUT STRATEGY
-    if (!hasLiveView && activeGraphs == 1) {
+    if (activeGraphs == 0) {
+        // All graphs are in extra windows — main panel shows placeholder
+        mainPanel.setLayout(new BorderLayout());
+        JLabel noGraphLabel = new JLabel("All graphs are displayed in extra windows.", SwingConstants.CENTER);
+        noGraphLabel.setFont(new Font("SansSerif", Font.ITALIC, 13));
+        mainPanel.add(noGraphLabel, BorderLayout.CENTER);
+    } else if (!hasLiveView && activeGraphs == 1) {
         // CASE 1: Single graph, no live view - ONE BIG WINDOW
         mainPanel.setLayout(new BorderLayout());
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
-                mainPanel.add((ChartPanel) chartPanels.get(i), BorderLayout.CENTER);
+        for (int i = 0; i < mainChartPanels.size(); i++) {
+            if (mainChartPanels.get(i) != null) {
+                mainPanel.add((ChartPanel) mainChartPanels.get(i), BorderLayout.CENTER);
                 break;
             }
         }
@@ -3945,9 +4130,9 @@ void createInlineAcquisitionWindow() {
 
         // Graphs (right, small, stacked with resizable dividers)
         ArrayList activeChartPanels = new ArrayList();
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
-                activeChartPanels.add(chartPanels.get(i));
+        for (int i = 0; i < mainChartPanels.size(); i++) {
+            if (mainChartPanels.get(i) != null) {
+                activeChartPanels.add(mainChartPanels.get(i));
             }
         }
 
@@ -3981,12 +4166,12 @@ void createInlineAcquisitionWindow() {
         ChartPanel firstChart = null;
         ArrayList smallCharts = new ArrayList();
 
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
+        for (int i = 0; i < mainChartPanels.size(); i++) {
+            if (mainChartPanels.get(i) != null) {
                 if (firstChart == null) {
-                    firstChart = (ChartPanel) chartPanels.get(i);
+                    firstChart = (ChartPanel) mainChartPanels.get(i);
                 } else {
-                    smallCharts.add(chartPanels.get(i));
+                    smallCharts.add(mainChartPanels.get(i));
                     if (smallCharts.size() >= 2) break;
                 }
             }
@@ -4029,16 +4214,9 @@ void createInlineAcquisitionWindow() {
 
         // All graphs stacked with resizable dividers
         ArrayList activeChartPanels = new ArrayList();
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
-                activeChartPanels.add(chartPanels.get(i));
-            }
-        }
-        // All graphs stacked with resizable dividers
-        ArrayList activeChartPanels = new ArrayList();
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
-                activeChartPanels.add(chartPanels.get(i));
+        for (int i = 0; i < mainChartPanels.size(); i++) {
+            if (mainChartPanels.get(i) != null) {
+                activeChartPanels.add(mainChartPanels.get(i));
             }
         }
 
@@ -4340,7 +4518,7 @@ void createInlineAcquisitionWindow() {
 
 
     // ===== START ACQUISITION THREAD =====
-    final boolean[] acquisitionRunning = {true};
+    // (acquisitionRunning declared above, near top of function)
     final ArrayList allDataRows = new ArrayList(); // Store RAW rows [frame, timestamp, roi0, roi1, ...]
     final ArrayList allCorrectedDataRows = new ArrayList(); // Parallel BG-corrected rows (empty when BG disabled)
     final ArrayList allBTCorrDataRows = new ArrayList(); // BT-corrected rows (empty when BT disabled)
@@ -4405,9 +4583,9 @@ void createInlineAcquisitionWindow() {
                 print("================================");
 
                 if (useCircularBuffer) {
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, allSwitchEvents, numActiveGraphs, eventTimes);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, allSwitchEvents, numActiveGraphs, eventTimes, extraChartFrames, extraChartGraphIndices);
                 } else {
-                    runAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
+                    runAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, extraChartFrames, extraChartGraphIndices);
                 }
             } catch (Exception ex) {
                 print("ERROR in acquisition thread: " + ex.getMessage());
@@ -5792,7 +5970,7 @@ ArrayList expandPauseRows(ArrayList originalRows) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents, int numActiveGraphs, ArrayList eventTimes) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents, int numActiveGraphs, ArrayList eventTimes, ArrayList extraChartFrames, ArrayList extraChartGraphIndices) {
 
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -6527,6 +6705,19 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     // Dispose the acquisition frame (may already be invisible from quit handler).
     if (acqFrame != null) {
         try {
+            // Save bounds and hide all extra chart windows
+            for (int xi = 0; xi < extraChartFrames.size(); xi++) {
+                try {
+                    JFrame ef = (JFrame) extraChartFrames.get(xi);
+                    int gIdx = ((Integer) extraChartGraphIndices.get(xi)).intValue();
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_x", ef.getX());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_y", ef.getY());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_w", ef.getWidth());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_h", ef.getHeight());
+                    ef.setVisible(false);
+                    ef.dispose();
+                } catch (Exception exf) {}
+            }
             SwingUtilities.invokeAndWait(new Runnable() {
                 public void run() { acqFrame.dispose(); }
             });
@@ -6552,7 +6743,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList extraChartFrames, ArrayList extraChartGraphIndices) {
 
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -6868,6 +7059,19 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
             // ALWAYS dispose the acquisition frame, even if popup fails
             if (acqFrame != null) {
                 try {
+                    // Save bounds and hide all extra chart windows
+                    for (int xi = 0; xi < extraChartFrames.size(); xi++) {
+                        try {
+                            JFrame ef = (JFrame) extraChartFrames.get(xi);
+                            int gIdx = ((Integer) extraChartGraphIndices.get(xi)).intValue();
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_x", ef.getX());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_y", ef.getY());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_w", ef.getWidth());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_h", ef.getHeight());
+                            ef.setVisible(false);
+                            ef.dispose();
+                        } catch (Exception exf) {}
+                    }
                     SwingUtilities.invokeAndWait(new Runnable() {
                         public void run() {
                             acqFrame.dispose();
@@ -7076,6 +7280,19 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
     // Dispose the acquisition frame after acquisition completes (Advanced Mode)
     if (acqFrame != null) {
         try {
+            // Save bounds and hide all extra chart windows
+            for (int xi = 0; xi < extraChartFrames.size(); xi++) {
+                try {
+                    JFrame ef = (JFrame) extraChartFrames.get(xi);
+                    int gIdx = ((Integer) extraChartGraphIndices.get(xi)).intValue();
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_x", ef.getX());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_y", ef.getY());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_w", ef.getWidth());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_h", ef.getHeight());
+                    ef.setVisible(false);
+                    ef.dispose();
+                } catch (Exception exf) {}
+            }
             SwingUtilities.invokeAndWait(new Runnable() {
                 public void run() {
                     acqFrame.dispose();
