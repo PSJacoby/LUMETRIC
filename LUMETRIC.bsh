@@ -3077,59 +3077,8 @@ boolean setupVisualizationROIs() {
 // binning, and pixel size.  The file is intentionally NOT reloadable by LUMETRIC.
 void saveMicroscopeStateLog() {
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) return;
-    File logFile = new File(config.experimentFolder, "MicroscopeState_Log.csv");
-    try {
-        import java.text.SimpleDateFormat;
-        import java.util.Date;
-        PrintWriter pw = new PrintWriter(new FileWriter(logFile));
-        String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
-        pw.println("# LUMETRIC - Micro-Manager State Log");
-        pw.println("# Experiment start: " + timestamp);
-        pw.println("# NOTE: This file is for reference only and is NOT reloadable by LUMETRIC.");
-        pw.println("#");
-
-        // --- Config groups ---
-        // Use getCurrentConfigFromCache to avoid querying hardware (which can block).
-        pw.println("[Config Groups]");
-        pw.println("Group,Active Preset");
-        try {
-            mmcorej.StrVector groups = mmc.getAvailableConfigGroups();
-            for (int gi = 0; gi < groups.size(); gi++) {
-                String grp = groups.get(gi);
-                String preset = "";
-                try { preset = mmc.getCurrentConfigFromCache(grp); } catch (Exception ex) { preset = "?"; }
-                pw.println(escapeCSV(grp) + "," + escapeCSV(preset));
-            }
-        } catch (Exception ex) {
-            pw.println("(error reading config groups: " + ex.getMessage() + ")");
-        }
-        pw.flush();
-
-        // --- Camera ---
-        pw.println("#");
-        pw.println("[Camera]");
-        pw.println("Property,Value");
-        String camDev = "";
-        try { camDev = mmc.getCameraDevice(); } catch (Exception ex) {}
-        pw.println("Device," + escapeCSV(camDev.isEmpty() ? "(none)" : camDev));
-        pw.flush();
-        if (!camDev.isEmpty()) {
-            try {
-                String binning = mmc.getPropertyFromCache(camDev, "Binning");
-                pw.println("Binning," + escapeCSV(binning));
-            } catch (Exception ex) {
-                pw.println("Binning,(not available)");
-            }
-            pw.flush();
-        }
-
-        pw.close();
-    } catch (Exception e) {
-        // Silent failure — log is supplementary, never blocks acquisition
-    }
-
-    // Screenshot of the MM main window — must run on the EDT for printAll() to work.
-    // Rendered entirely in memory so it captures the window even if LUMETRIC is on top.
+    // Screenshot of the MM main window — rendered in memory so it captures the window
+    // even if LUMETRIC is on top. Must run on the EDT for printAll() to work correctly.
     try {
         import java.awt.Frame;
         import java.awt.Graphics2D;
@@ -3149,17 +3098,13 @@ void saveMicroscopeStateLog() {
                             break;
                         }
                     }
-                    if (mmFrame == null) {
-                        print("[Screenshot] No visible Micro-Manager frame found — skipping.");
-                        return;
-                    }
+                    if (mmFrame == null) return;
                     BufferedImage img = new BufferedImage(
                         mmFrame.getWidth(), mmFrame.getHeight(), BufferedImage.TYPE_INT_RGB);
                     Graphics2D g = img.createGraphics();
                     mmFrame.printAll(g);
                     g.dispose();
-                    File outFile = new File(expFolderPath, "MMState_Screenshot.png");
-                    ImageIO.write(img, "png", outFile);
+                    ImageIO.write(img, "png", new File(expFolderPath, "MMState_Screenshot.png"));
                 } catch (Exception ex) {}
             }
         });
@@ -4460,7 +4405,7 @@ void createInlineAcquisitionWindow() {
                 print("================================");
 
                 if (useCircularBuffer) {
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, allSwitchEvents);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, allSwitchEvents, numActiveGraphs, eventTimes);
                 } else {
                     runAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
                 }
@@ -5847,7 +5792,7 @@ ArrayList expandPauseRows(ArrayList originalRows) {
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents, int numActiveGraphs, ArrayList eventTimes) {
 
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -6337,6 +6282,12 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         print("End-sentinel reached - auto-quitting.");
                         running[0] = false;
                         rowTracker.advanceFrame();
+                        // Export graph data now — the Quit button path won't run for natural ends.
+                        exportGraphDataToCSV(dataRows, correctedDataRows, btCorrDataRows, numActiveGraphs, config.acqSettings.visualizationRows);
+                        exportEventTimesToCSV(eventTimes);
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() { acqFrame.setVisible(false); }
+                        });
                         continue;
                     }
 
@@ -7681,13 +7632,14 @@ ArrayList applyDECorrection(ArrayList btCorrValues, ArrayList meanDirExPerRoi) {
 // stacks: list of ImagePlus from the post-processor; iterated in order as one sequence.
 void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
                    ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
-                   ArrayList ppDERows,
+                   ArrayList ppDERows, ArrayList ppMeanDirEx,
                    ArrayList datasets, ArrayList charts, ArrayList chartPanels,
                    ArrayList perStackSeqRows, ArrayList perStackTimestamps) {
     ppDataRows.clear();
     ppCorrRows.clear();
     ppBTRows.clear();
     ppDERows.clear();
+    ppMeanDirEx.clear();
 
     for (int gi = 0; gi < datasets.size(); gi++) {
         if (datasets.get(gi) == null) continue;
@@ -7712,6 +7664,7 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
     ArrayList meanDirEx = new ArrayList();
     if (isSpatial && config.acqSettings.deEnabled) {
         meanDirEx = computeMeanDirEx(stacks);
+        ppMeanDirEx.addAll(meanDirEx); // expose to caller for logging
     }
 
     int frameNum = 0;
@@ -7838,8 +7791,88 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
 }
 
 // Export post-processed data to a new numbered folder next to the original experiment folder.
+// Write a log of all post-processing parameters actually applied.
+void ppSavePostProcessingLog(File outFolder, ArrayList ppMeanDirEx, int totalFrames) {
+    try {
+        import java.text.SimpleDateFormat;
+        import java.util.Date;
+        PrintWriter pw = new PrintWriter(new FileWriter(new File(outFolder, "PostProcessing_Log.csv")));
+        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        pw.println("# LUMETRIC - Post-Processing Parameter Log");
+        pw.println("# Post-processed: " + ts);
+        pw.println("# NOTE: These are the settings ACTUALLY APPLIED during post-processing.");
+        pw.println("# They may differ from the original AquisitionSettings.csv.");
+        pw.println("#");
+
+        // --- Spatial setup ---
+        pw.println("[Spatial Setup]");
+        pw.println("Parameter,Value");
+        pw.println("Processing Mode," + escapeCSV(config.acqSettings.processingMode));
+        if (config.acqSettings.spatialConfig != null) {
+            pw.println("Split Axis," + escapeCSV(config.acqSettings.spatialConfig.splitAxis));
+            pw.println("ROI Source Region," + escapeCSV(config.acqSettings.spatialConfig.roiSourceRegion));
+        }
+        pw.println("Frames Processed," + totalFrames);
+        pw.println("#");
+
+        // --- Background correction ---
+        pw.println("[Background Correction]");
+        pw.println("Parameter,Value");
+        pw.println("BG Correction Enabled," + config.acqSettings.bgCorrectionEnabled);
+        if (config.acqSettings.bgCorrectionEnabled) {
+            int bgIdx = config.acqSettings.bgROIIndex;
+            pw.println("BG ROI Index (1-based)," + (bgIdx + 1));
+        }
+        pw.println("#");
+
+        // --- Bleedthrough correction ---
+        pw.println("[Bleedthrough Correction]");
+        pw.println("Parameter,Value");
+        pw.println("BT Correction Enabled," + config.acqSettings.btCorrectionEnabled);
+        if (config.acqSettings.btCorrectionEnabled) {
+            pw.println("BT Direction," + escapeCSV(config.acqSettings.btDirection));
+            pw.println("BT Factor," + config.acqSettings.btFactor);
+        }
+        pw.println("#");
+
+        // --- Direct excitation correction ---
+        pw.println("[Direct Excitation Correction]");
+        pw.println("Parameter,Value");
+        pw.println("DE Correction Enabled," + config.acqSettings.deEnabled);
+        if (config.acqSettings.deEnabled) {
+            pw.println("DE Factor," + config.acqSettings.deFactor);
+            pw.println("DE Reference Stack Index (1-based)," + (config.acqSettings.deStackIndex + 1));
+            pw.println("DE Frame Range," + config.acqSettings.deFromFrame + " - " + config.acqSettings.deToFrame);
+            // Per-ROI mean DE values actually used for subtraction
+            pw.println("#");
+            pw.println("[DE Mean Values Per ROI (acceptor side)]");
+            pw.println("ROI (acceptor),Mean Intensity Used");
+            for (int i = 0; i < ppMeanDirEx.size(); i++) {
+                double val = ((Double) ppMeanDirEx.get(i)).doubleValue();
+                pw.println((i + 1) + "," + String.format("%.4f", val));
+            }
+        }
+        pw.println("#");
+
+        // --- Graphs computed ---
+        pw.println("[Graphs]");
+        pw.println("Graph,Type");
+        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+        for (int gi = 0; gi < config.acqSettings.visualizationRows.size(); gi++) {
+            ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(gi);
+            String gtype = (String) vizRow.get(1);
+            if (gtype != null && !gtype.equals("none"))
+                pw.println((gi + 1) + "," + escapeCSV(gtype));
+        }
+
+        pw.close();
+    } catch (Exception e) {
+        // Silent failure
+    }
+}
+
 void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
-              ArrayList ppDERows,
+              ArrayList ppDERows, ArrayList ppMeanDirEx,
               File originalExpFolder, ij.plugin.frame.RoiManager rm) {
     int n = 1;
     File outFolder;
@@ -7876,6 +7909,8 @@ void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
 
     if (rm != null && rm.getCount() > 0)
         rm.runCommand("Save", new File(outFolder, "RoiSet.zip").getAbsolutePath());
+
+    ppSavePostProcessingLog(outFolder, ppMeanDirEx, ppDataRows.size());
 
     File srcSettings = new File(originalExpFolder, "AquisitionSettings.csv");
     File dstSettings = new File(outFolder, "AquisitionSettings.csv");
@@ -7925,6 +7960,13 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
             catch (NumberFormatException nfe) {}
         }
     });
+    ppBTFactorField.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { config.acqSettings.btFactor =
+                Double.parseDouble(ppBTFactorField.getText().trim().replace(",", ".")); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
 
     // DE correction requires BT correction to be active and mode to be Spatial.
     final boolean deInitial = btInitial && config.acqSettings.deEnabled;
@@ -7949,10 +7991,27 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
         String.valueOf(config.acqSettings.deToFrame), 5);
     ppDEToField.setEnabled(deInitial);
 
+    // Direction combo — declared here so the ppBTCheckbox listener below can reference it.
+    String splitAxis = config.acqSettings.spatialConfig != null
+        ? config.acqSettings.spatialConfig.splitAxis : "Horizontal";
+    String[] btDirOptions = splitAxis.equals("Vertical")
+        ? new String[]{"Left -> Right", "Right -> Left"}
+        : new String[]{"Upper -> Lower", "Lower -> Upper"};
+    final JComboBox ppBTDirectionCombo = new JComboBox(btDirOptions);
+    ppBTDirectionCombo.setSelectedItem(config.acqSettings.btDirection);
+    ppBTDirectionCombo.setEnabled(btInitial);
+    ppBTDirectionCombo.setToolTipText("Direction of bleedthrough: which region bleeds INTO the other");
+    ppBTDirectionCombo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            config.acqSettings.btDirection = (String) ppBTDirectionCombo.getSelectedItem();
+        }
+    });
+
     ppBTCheckbox.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             config.acqSettings.btCorrectionEnabled = ppBTCheckbox.isSelected();
             ppBTFactorField.setEnabled(config.acqSettings.btCorrectionEnabled);
+            ppBTDirectionCombo.setEnabled(config.acqSettings.btCorrectionEnabled);
             ppDECheckbox.setEnabled(config.acqSettings.btCorrectionEnabled);
             if (!config.acqSettings.btCorrectionEnabled) {
                 ppDECheckbox.setSelected(false);
@@ -7980,6 +8039,13 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
             catch (NumberFormatException nfe) {}
         }
     });
+    ppDEFactorField.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { config.acqSettings.deFactor =
+                Double.parseDouble(ppDEFactorField.getText().trim().replace(",", ".")); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
     ppDEStackCombo.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             if (ppDEStackCombo.getSelectedIndex() >= 0)
@@ -7993,6 +8059,13 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
             catch (NumberFormatException nfe) {}
         }
     });
+    ppDEFromField.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { config.acqSettings.deFromFrame =
+                Integer.parseInt(ppDEFromField.getText().trim()); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
     ppDEToField.addFocusListener(new java.awt.event.FocusAdapter() {
         public void focusLost(java.awt.event.FocusEvent fe) {
             try { config.acqSettings.deToFrame =
@@ -8000,9 +8073,38 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
             catch (NumberFormatException nfe) {}
         }
     });
+    ppDEToField.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { config.acqSettings.deToFrame =
+                Integer.parseInt(ppDEToField.getText().trim()); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+
+    // ROI region combo — which half of the image the ROIs were drawn on.
+    // Changing this lets the user correct a mismatch without re-running the experiment.
+    String[] roiRegionOptions = splitAxis.equals("Vertical")
+        ? new String[]{"Left", "Right"}
+        : new String[]{"Upper", "Lower"};
+    final JComboBox ppROIRegionCombo = new JComboBox(roiRegionOptions);
+    if (config.acqSettings.spatialConfig != null)
+        ppROIRegionCombo.setSelectedItem(config.acqSettings.spatialConfig.roiSourceRegion);
+    ppROIRegionCombo.setToolTipText("Which half of the image the ROIs were drawn on");
+    ppROIRegionCombo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            if (config.acqSettings.spatialConfig != null)
+                config.acqSettings.spatialConfig.roiSourceRegion =
+                    (String) ppROIRegionCombo.getSelectedItem();
+        }
+    });
 
     JPanel ppSpatialPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+    ppSpatialPanel.add(new JLabel("ROI Region:"));
+    ppSpatialPanel.add(ppROIRegionCombo);
+    ppSpatialPanel.add(javax.swing.Box.createHorizontalStrut(8));
     ppSpatialPanel.add(ppBTCheckbox);
+    ppSpatialPanel.add(new JLabel("Direction:"));
+    ppSpatialPanel.add(ppBTDirectionCombo);
     ppSpatialPanel.add(new JLabel("Factor:"));
     ppSpatialPanel.add(ppBTFactorField);
     ppSpatialPanel.add(javax.swing.Box.createHorizontalStrut(16));
@@ -8150,6 +8252,7 @@ void openPostProcessor() {
     final ArrayList ppCorrRows = new ArrayList();
     final ArrayList ppBTRows   = new ArrayList();
     final ArrayList ppDERows   = new ArrayList(); // BG + BT + DE corrected
+    final ArrayList ppMeanDirEx = new ArrayList(); // per-ROI DE means (for log)
 
     // 8. Build chart datasets and panels (same pattern as acquisition window)
     final boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
@@ -8269,7 +8372,7 @@ void openPostProcessor() {
                         });
                     } catch (Exception ex) { ex.printStackTrace(); }
                     ppRecalculate(finalStacks, frameTimestamps,
-                        ppDataRows, ppCorrRows, ppBTRows, ppDERows,
+                        ppDataRows, ppCorrRows, ppBTRows, ppDERows, ppMeanDirEx,
                         ppDatasets, ppCharts, ppChartPanels,
                         finalPerStackSeqRows, finalPerStackTimestamps);
                     SwingUtilities.invokeLater(new Runnable() {
@@ -8302,10 +8405,10 @@ void openPostProcessor() {
                         });
                     } catch (Exception ex) { ex.printStackTrace(); }
                     ppRecalculate(finalStacks, frameTimestamps,
-                        ppDataRows, ppCorrRows, ppBTRows, ppDERows,
+                        ppDataRows, ppCorrRows, ppBTRows, ppDERows, ppMeanDirEx,
                         ppDatasets, ppCharts, ppChartPanels,
                         finalPerStackSeqRows, finalPerStackTimestamps);
-                    ppExport(ppDataRows, ppCorrRows, ppBTRows, ppDERows, expFolder, finalRM);
+                    ppExport(ppDataRows, ppCorrRows, ppBTRows, ppDERows, ppMeanDirEx, expFolder, finalRM);
                     SwingUtilities.invokeLater(new Runnable() {
                         public void run() {
                             ppStatus.setText("Exported");
@@ -8392,7 +8495,7 @@ void openPostProcessor() {
     new Thread(new Runnable() {
         public void run() {
             ppRecalculate(finalStacks, frameTimestamps,
-                ppDataRows, ppCorrRows, ppBTRows, ppDERows,
+                ppDataRows, ppCorrRows, ppBTRows, ppDERows, ppMeanDirEx,
                 ppDatasets, ppCharts, ppChartPanels,
                 finalPerStackSeqRows, finalPerStackTimestamps);
             SwingUtilities.invokeLater(new Runnable() {
