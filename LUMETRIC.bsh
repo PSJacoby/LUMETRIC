@@ -7584,6 +7584,14 @@ ArrayList computeMeanDirEx(ArrayList stacks) {
     int maxSlice = refStack.getStackSize();
     int fromF = Math.max(1, config.acqSettings.deFromFrame);
     int toF   = Math.min(maxSlice, config.acqSettings.deToFrame);
+    if (toF < fromF) {
+        JOptionPane.showMessageDialog(null,
+            "Direct Excitation: frame range out of bounds (" + config.acqSettings.deFromFrame
+            + " \u2013 " + config.acqSettings.deToFrame + ") for stack with "
+            + maxSlice + " frames.\nDE correction not applied.",
+            "Frame Range Out of Bounds", JOptionPane.WARNING_MESSAGE);
+        return result;
+    }
     double[] sums   = new double[half];
     int[]    counts = new int[half];
     for (int f = fromF; f <= toF; f++) {
@@ -7627,19 +7635,101 @@ ArrayList applyDECorrection(ArrayList btCorrValues, ArrayList meanDirExPerRoi) {
     return corrected;
 }
 
+// Compute per-ROI bleach slopes (intensity/frame) via OLS linear regression over BGcorr values.
+// bcConfigs: ArrayList of per-stack config entries — each is ArrayList[Boolean enabled,
+//            Integer fromFrame, Integer toFrame, Double slopeScale].
+// Returns: ArrayList indexed by stackIdx containing ArrayList<Double> slopes per ROI,
+//          or null for disabled/invalid stacks.
+ArrayList computeBleachSlopes(ArrayList stacks, ArrayList bcConfigs) {
+    ArrayList result = new ArrayList();
+    for (int si = 0; si < stacks.size(); si++) {
+        if (si >= bcConfigs.size()) { result.add(null); continue; }
+        ArrayList cfg     = (ArrayList) bcConfigs.get(si);
+        boolean enabled   = ((Boolean)  cfg.get(0)).booleanValue();
+        if (!enabled) { result.add(null); continue; }
+        ImagePlus sk = (ImagePlus) stacks.get(si);
+        int fromF = Math.max(1, ((Integer) cfg.get(1)).intValue());
+        int toF   = Math.min(sk.getStackSize(), ((Integer) cfg.get(2)).intValue());
+        if (toF < fromF) {
+            JOptionPane.showMessageDialog(null,
+                "Bleach Correction: frame range out of bounds ("
+                + ((Integer) cfg.get(1)).intValue() + " \u2013 " + ((Integer) cfg.get(2)).intValue()
+                + ") for stack \"" + sk.getTitle() + "\" with " + sk.getStackSize() + " frames."
+                + "\nBleach correction not applied for this stack.",
+                "Frame Range Out of Bounds", JOptionPane.WARNING_MESSAGE);
+            result.add(null); continue;
+        }
+        int n = config.storedROIs != null ? config.storedROIs.size() : 0;
+        if (n == 0) { result.add(null); continue; }
+        int nFrames = toF - fromF + 1;
+        // Accumulate OLS sums: x = local slice index (fromF..toF), y = BGcorr value per ROI
+        double sumX  = 0.0;
+        double sumX2 = 0.0;
+        double[] sumY  = new double[n];
+        double[] sumXY = new double[n];
+        for (int f = fromF; f <= toF; f++) {
+            try {
+                sk.setSlice(f);
+                ArrayList roiVals = measureROIs(sk.getProcessor());
+                ArrayList bgCorr  = applyBGCorrection(roiVals);
+                double x = (double) f;
+                sumX  += x;
+                sumX2 += x * x;
+                for (int r = 0; r < n && r < bgCorr.size(); r++) {
+                    double y = ((Double) bgCorr.get(r)).doubleValue();
+                    sumY[r]  += y;
+                    sumXY[r] += x * y;
+                }
+            } catch (Exception frameEx) {
+                System.err.println("computeBleachSlopes: error at slice " + f + ": " + frameEx.getMessage());
+            }
+        }
+        // OLS slope: b = (N*sumXY - sumX*sumY) / (N*sumX2 - sumX^2)
+        double denom = (double) nFrames * sumX2 - sumX * sumX;
+        ArrayList slopes = new ArrayList();
+        for (int r = 0; r < n; r++) {
+            double slope = (denom != 0.0)
+                ? ((double) nFrames * sumXY[r] - sumX * sumY[r]) / denom
+                : 0.0;
+            slopes.add(new Double(slope));
+        }
+        result.add(slopes);
+    }
+    return result;
+}
+
+// Apply bleach correction to BGcorr values for one frame.
+// slopes: ArrayList<Double> per ROI from computeBleachSlopes, or null → returns input unchanged.
+// localSlice: 1-based slice index within the stack.
+// slopeScale: user attenuation factor (1.0 = full correction).
+ArrayList applyBleachCorrection(ArrayList bgCorrValues, int localSlice, ArrayList slopes, double slopeScale) {
+    ArrayList corrected = new ArrayList();
+    for (int i = 0; i < bgCorrValues.size(); i++) corrected.add(bgCorrValues.get(i));
+    if (slopes == null || slopes.isEmpty()) return corrected;
+    for (int i = 0; i < corrected.size() && i < slopes.size(); i++) {
+        double val   = ((Double) corrected.get(i)).doubleValue();
+        double slope = ((Double) slopes.get(i)).doubleValue();
+        corrected.set(i, new Double(val - (double) localSlice * slope * slopeScale));
+    }
+    return corrected;
+}
+
 // Re-measure every stack slice with the current config.storedROIs and refresh the charts.
 // Clears and rebuilds ppDataRows / ppCorrRows / ppBTRows in-place.
 // stacks: list of ImagePlus from the post-processor; iterated in order as one sequence.
 void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
-                   ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
+                   ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBCRows, ArrayList ppBTRows,
                    ArrayList ppDERows, ArrayList ppMeanDirEx,
+                   ArrayList ppBleachSlopes, ArrayList bcConfigs,
                    ArrayList datasets, ArrayList charts, ArrayList chartPanels,
                    ArrayList perStackSeqRows, ArrayList perStackTimestamps) {
     ppDataRows.clear();
     ppCorrRows.clear();
+    ppBCRows.clear();
     ppBTRows.clear();
     ppDERows.clear();
     ppMeanDirEx.clear();
+    ppBleachSlopes.clear();
 
     for (int gi = 0; gi < datasets.size(); gi++) {
         if (datasets.get(gi) == null) continue;
@@ -7659,6 +7749,10 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
 
     boolean isSpatial = config.acqSettings.processingMode.equals("Spatial");
     RowTracker rowTracker = new RowTracker(config.acqSettings.sequenceRows);
+
+    // Pre-compute bleach slopes (mini-pass over reference frames per stack, BGcorr values)
+    ArrayList bleachSlopes = computeBleachSlopes(stacks, bcConfigs);
+    ppBleachSlopes.addAll(bleachSlopes);
 
     // Pre-compute per-ROI direct excitation means (spatial + DE enabled only)
     ArrayList meanDirEx = new ArrayList();
@@ -7730,8 +7824,19 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
                 ArrayList bgCorr = applyBGCorrection(roiValues);
                 ppCorrRows.add(buildDataRow(frameNum, timestamp, seqRow, bgCorr));
                 valuesForGraphs = bgCorr;
+                // Bleach correction: uses BGcorr values, local slice index within its stack
+                ArrayList valuesAfterBC = bgCorr;
+                ArrayList bcSlopesForStack = (si < bleachSlopes.size()) ? (ArrayList) bleachSlopes.get(si) : null;
+                ArrayList bcCfg = (si < bcConfigs.size()) ? (ArrayList) bcConfigs.get(si) : null;
+                boolean bcEnabled = bcCfg != null && ((Boolean) bcCfg.get(0)).booleanValue();
+                double bcScale = (bcCfg != null) ? ((Double) bcCfg.get(3)).doubleValue() : 1.0;
+                if (bcEnabled && bcSlopesForStack != null) {
+                    valuesAfterBC = applyBleachCorrection(bgCorr, s, bcSlopesForStack, bcScale);
+                    ppBCRows.add(buildDataRow(frameNum, timestamp, seqRow, valuesAfterBC));
+                    valuesForGraphs = valuesAfterBC;
+                }
                 if (config.acqSettings.btCorrectionEnabled && isSpatial) {
-                    ArrayList btCorr = applyBTCorrection(bgCorr);
+                    ArrayList btCorr = applyBTCorrection(valuesAfterBC);
                     ppBTRows.add(buildDataRow(frameNum, timestamp, seqRow, btCorr));
                     ArrayList valuesAfterBT = btCorr;
                     if (config.acqSettings.deEnabled && !meanDirEx.isEmpty()) {
@@ -7772,8 +7877,19 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
                     ArrayList bgCorr = applyBGCorrection(roiValues);
                     ppCorrRows.add(buildDataRow(frameNum, timestamp, seqRow, bgCorr));
                     valuesForGraphs = bgCorr;
+                    // Bleach correction: uses BGcorr values, local slice index within its stack
+                    ArrayList valuesAfterBC = bgCorr;
+                    ArrayList bcSlopesForStack = (stackIdx < bleachSlopes.size()) ? (ArrayList) bleachSlopes.get(stackIdx) : null;
+                    ArrayList bcCfg = (stackIdx < bcConfigs.size()) ? (ArrayList) bcConfigs.get(stackIdx) : null;
+                    boolean bcEnabled = bcCfg != null && ((Boolean) bcCfg.get(0)).booleanValue();
+                    double bcScale = (bcCfg != null) ? ((Double) bcCfg.get(3)).doubleValue() : 1.0;
+                    if (bcEnabled && bcSlopesForStack != null) {
+                        valuesAfterBC = applyBleachCorrection(bgCorr, s, bcSlopesForStack, bcScale);
+                        ppBCRows.add(buildDataRow(frameNum, timestamp, seqRow, valuesAfterBC));
+                        valuesForGraphs = valuesAfterBC;
+                    }
                     if (config.acqSettings.btCorrectionEnabled && isSpatial) {
-                        ArrayList btCorr = applyBTCorrection(bgCorr);
+                        ArrayList btCorr = applyBTCorrection(valuesAfterBC);
                         ppBTRows.add(buildDataRow(frameNum, timestamp, seqRow, btCorr));
                         ArrayList valuesAfterBT = btCorr;
                         if (config.acqSettings.deEnabled && !meanDirEx.isEmpty()) {
@@ -7792,16 +7908,93 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
 
 // Export post-processed data to a new numbered folder next to the original experiment folder.
 // Write a log of all post-processing parameters actually applied.
-void ppSavePostProcessingLog(File outFolder, ArrayList ppMeanDirEx, int totalFrames) {
+// Writes Correction_Parameters_per_ROI.csv — bleach slopes and DE means in one file
+// so the user can verify the math easily after the fact.
+void ppSaveCorrectionParametersCSV(File outFolder, ArrayList bcConfigs, ArrayList ppBleachSlopes,
+                                    ArrayList ppMeanDirEx, ArrayList stacks) {
+    PrintWriter pw = null;
     try {
         import java.text.SimpleDateFormat;
         import java.util.Date;
-        PrintWriter pw = new PrintWriter(new FileWriter(new File(outFolder, "PostProcessing_Log.csv")));
+        File outFile = new File(outFolder, "Correction_Parameters_per_ROI.csv");
+        pw = new PrintWriter(new FileWriter(outFile));
+        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        pw.println("# LUMETRIC - Correction Parameters per ROI");
+        pw.println("# Generated: " + ts);
+        pw.println("# Use this file to verify the correction math applied during post-processing.");
+        pw.println("#");
+
+        // --- Bleach Correction Slopes ---
+        pw.println("[Bleach Correction Slopes]");
+        pw.println("# slope [intensity/frame] — from OLS linear regression of BGcorr values");
+        pw.println("# Correction applied: BCcorr(roi,frame) = BGcorr(roi,frame) - frame * slope * scale");
+        pw.println("Stack,Enabled,Frames Used,Scale,ROI,Slope [intensity/frame]");
+        boolean anyBCEnabled = false;
+        for (int si = 0; si < stacks.size() && si < bcConfigs.size(); si++) {
+            ArrayList cfg = (ArrayList) bcConfigs.get(si);
+            boolean enabled = ((Boolean) cfg.get(0)).booleanValue();
+            int fromF = ((Integer) cfg.get(1)).intValue();
+            int toF   = ((Integer) cfg.get(2)).intValue();
+            double scale = ((Double) cfg.get(3)).doubleValue();
+            String stackName = ((ImagePlus) stacks.get(si)).getTitle();
+            if (!enabled) {
+                pw.println(escapeCSV(stackName) + ",false,,,");
+                continue;
+            }
+            anyBCEnabled = true;
+            ArrayList slopes = (si < ppBleachSlopes.size()) ? (ArrayList) ppBleachSlopes.get(si) : null;
+            if (slopes == null || slopes.isEmpty()) {
+                pw.println(escapeCSV(stackName) + ",true," + fromF + "-" + toF + "," + scale + ",(no slopes computed),");
+                continue;
+            }
+            for (int r = 0; r < slopes.size(); r++) {
+                double slope = ((Double) slopes.get(r)).doubleValue();
+                String slopeStr = "" + slope;
+                pw.println(escapeCSV(stackName) + ",true,"
+                    + fromF + "-" + toF + "," + scale + ","
+                    + "ROI" + (r + 1) + "," + slopeStr);
+            }
+        }
+        if (!anyBCEnabled) pw.println("# Bleach correction was not enabled for any stack.");
+        pw.println("#");
+
+        // --- Direct Excitation Means ---
+        pw.println("[Direct Excitation Means]");
+        pw.println("# Mean BGcorr acceptor intensity over the reference frame range.");
+        pw.println("# Correction applied: DEcorr(roi) = BTcorr(roi) - deFactor * mean");
+        pw.println("ROI (acceptor side),Mean Intensity Used");
+        if (ppMeanDirEx != null && !ppMeanDirEx.isEmpty()) {
+            for (int i = 0; i < ppMeanDirEx.size(); i++) {
+                double val = ((Double) ppMeanDirEx.get(i)).doubleValue();
+                pw.println((i + 1) + "," + val);
+            }
+        } else {
+            pw.println("# Direct excitation correction was not enabled.");
+        }
+
+        pw.flush();
+        pw.close();
+    } catch (Throwable e) {
+        print("[CorrCSV] ERROR: " + e.getClass().getName() + ": " + e.getMessage());
+        if (pw != null) { try { pw.flush(); pw.close(); } catch (Throwable ignored) {} }
+        JOptionPane.showMessageDialog(null,
+            "Could not write Correction_Parameters_per_ROI.csv:\n" + e.getMessage(),
+            "Export Error", JOptionPane.ERROR_MESSAGE);
+    }
+}
+
+void ppSavePostProcessingLog(File outFolder, ArrayList bcConfigs, ArrayList stacks, int totalFrames) {
+    PrintWriter pw = null;
+    try {
+        import java.text.SimpleDateFormat;
+        import java.util.Date;
+        pw = new PrintWriter(new FileWriter(new File(outFolder, "PostProcessing_Log.csv")));
         String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
         pw.println("# LUMETRIC - Post-Processing Parameter Log");
         pw.println("# Post-processed: " + ts);
         pw.println("# NOTE: These are the settings ACTUALLY APPLIED during post-processing.");
         pw.println("# They may differ from the original AquisitionSettings.csv.");
+        pw.println("# Per-ROI slopes and DE means: see Correction_Parameters_per_ROI.csv");
         pw.println("#");
 
         // --- Spatial setup ---
@@ -7825,6 +8018,24 @@ void ppSavePostProcessingLog(File outFolder, ArrayList ppMeanDirEx, int totalFra
         }
         pw.println("#");
 
+        // --- Bleach correction ---
+        pw.println("[Bleach Correction]");
+        pw.println("Stack,Enabled,Frames Used,Scale");
+        for (int si = 0; si < stacks.size() && si < bcConfigs.size(); si++) {
+            ArrayList cfg  = (ArrayList) bcConfigs.get(si);
+            boolean enabled = ((Boolean) cfg.get(0)).booleanValue();
+            int fromF = ((Integer) cfg.get(1)).intValue();
+            int toF   = ((Integer) cfg.get(2)).intValue();
+            double scale = ((Double) cfg.get(3)).doubleValue();
+            String stackName = ((ImagePlus) stacks.get(si)).getTitle();
+            if (enabled)
+                pw.println(escapeCSV(stackName) + ",true," + fromF + "-" + toF + "," + scale);
+            else
+                pw.println(escapeCSV(stackName) + ",false,,");
+        }
+        pw.println("# Per-ROI slopes: see Correction_Parameters_per_ROI.csv");
+        pw.println("#");
+
         // --- Bleedthrough correction ---
         pw.println("[Bleedthrough Correction]");
         pw.println("Parameter,Value");
@@ -7843,14 +8054,7 @@ void ppSavePostProcessingLog(File outFolder, ArrayList ppMeanDirEx, int totalFra
             pw.println("DE Factor," + config.acqSettings.deFactor);
             pw.println("DE Reference Stack Index (1-based)," + (config.acqSettings.deStackIndex + 1));
             pw.println("DE Frame Range," + config.acqSettings.deFromFrame + " - " + config.acqSettings.deToFrame);
-            // Per-ROI mean DE values actually used for subtraction
-            pw.println("#");
-            pw.println("[DE Mean Values Per ROI (acceptor side)]");
-            pw.println("ROI (acceptor),Mean Intensity Used");
-            for (int i = 0; i < ppMeanDirEx.size(); i++) {
-                double val = ((Double) ppMeanDirEx.get(i)).doubleValue();
-                pw.println((i + 1) + "," + String.format("%.4f", val));
-            }
+            pw.println("# Per-ROI DE means: see Correction_Parameters_per_ROI.csv");
         }
         pw.println("#");
 
@@ -7865,14 +8069,19 @@ void ppSavePostProcessingLog(File outFolder, ArrayList ppMeanDirEx, int totalFra
                 pw.println((gi + 1) + "," + escapeCSV(gtype));
         }
 
+        pw.flush();
         pw.close();
-    } catch (Exception e) {
-        // Silent failure
+    } catch (Throwable e) {
+        if (pw != null) { try { pw.flush(); pw.close(); } catch (Throwable ignored) {} }
+        JOptionPane.showMessageDialog(null,
+            "Could not write PostProcessing_Log.csv:\n" + e.getMessage(),
+            "Export Error", JOptionPane.ERROR_MESSAGE);
     }
 }
 
-void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
-              ArrayList ppDERows, ArrayList ppMeanDirEx,
+void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBCRows, ArrayList ppBTRows,
+              ArrayList ppDERows, ArrayList ppMeanDirEx, ArrayList ppBleachSlopes,
+              ArrayList bcConfigs, ArrayList stacks,
               File originalExpFolder, ij.plugin.frame.RoiManager rm) {
     int n = 1;
     File outFolder;
@@ -7889,6 +8098,21 @@ void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
     exportGraphDataToCSV(ppDataRows, ppCorrRows, ppBTRows,
         config.acqSettings.visualizationRows.size(),
         config.acqSettings.visualizationRows);
+
+    // Export BG+BC corrected data as a separate CSV per graph (post-processor only)
+    if (!ppBCRows.isEmpty()) {
+        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+        File bcOutFolder = new File(config.experimentFolder);
+        for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
+            if (graphIdx >= config.acqSettings.visualizationRows.size()) continue;
+            ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
+            String graphType = (String) vizRow.get(1);
+            if (graphType == null || graphType.equals("none")) continue;
+            String frameLogic = computeFrameLogicLabel(vizRow, isTemporal);
+            exportSingleGraphCSV(ppBCRows, "BCcorr", bcOutFolder,
+                graphIdx, vizRow, graphType, frameLogic, isTemporal);
+        }
+    }
 
     // Export BG+BT+DE corrected data as a separate CSV per graph (post-processor only)
     if (!ppDERows.isEmpty()) {
@@ -7910,7 +8134,8 @@ void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
     if (rm != null && rm.getCount() > 0)
         rm.runCommand("Save", new File(outFolder, "RoiSet.zip").getAbsolutePath());
 
-    ppSavePostProcessingLog(outFolder, ppMeanDirEx, ppDataRows.size());
+    ppSavePostProcessingLog(outFolder, bcConfigs, stacks, ppDataRows.size());
+    ppSaveCorrectionParametersCSV(outFolder, bcConfigs, ppBleachSlopes, ppMeanDirEx, stacks);
 
     File srcSettings = new File(originalExpFolder, "AquisitionSettings.csv");
     File dstSettings = new File(outFolder, "AquisitionSettings.csv");
@@ -7929,6 +8154,103 @@ void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
     JOptionPane.showMessageDialog(null,
         "Exported to:\n" + outFolder.getName(),
         "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+}
+
+// Builds one row of the bleach correction panel for a single stack.
+// All anonymous classes are at the TOP LEVEL of this function to avoid the
+// BeanShell/JDK-11 class-naming bug (anonymous classes inside for-loop blocks
+// get illegal "/" characters in their JVM class names).
+void buildSingleBleachRow(JPanel outerPanel, String stackTitle, ArrayList cfg) {
+    final ArrayList rowCfg    = cfg;
+    final boolean initEnabled = ((Boolean) cfg.get(0)).booleanValue();
+    final int     initFrom    = ((Integer) cfg.get(1)).intValue();
+    final int     initTo      = ((Integer) cfg.get(2)).intValue();
+    final double  initScale   = ((Double)  cfg.get(3)).doubleValue();
+
+    final JCheckBox  cbEnable = new JCheckBox(stackTitle, initEnabled);
+    final JTextField tfFrom   = new JTextField(String.valueOf(initFrom),  5);
+    final JTextField tfTo     = new JTextField(String.valueOf(initTo),    5);
+    final JTextField tfScale  = new JTextField(String.valueOf(initScale), 5);
+    cbEnable.setToolTipText("Enable bleach correction for this stack");
+    tfFrom.setToolTipText("First local slice used for slope regression (1-based)");
+    tfTo.setToolTipText("Last local slice used for slope regression");
+    tfScale.setToolTipText("Scale factor applied to slope (1.0 = full correction)");
+    tfFrom.setEnabled(initEnabled);
+    tfTo.setEnabled(initEnabled);
+    tfScale.setEnabled(initEnabled);
+
+    cbEnable.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            boolean en = cbEnable.isSelected();
+            rowCfg.set(0, Boolean.valueOf(en));
+            tfFrom.setEnabled(en);
+            tfTo.setEnabled(en);
+            tfScale.setEnabled(en);
+        }
+    });
+    tfFrom.addFocusListener(new java.awt.event.FocusAdapter() {
+        public void focusLost(java.awt.event.FocusEvent fe) {
+            try { rowCfg.set(1, new Integer(Integer.parseInt(tfFrom.getText().trim()))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfFrom.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { rowCfg.set(1, new Integer(Integer.parseInt(tfFrom.getText().trim()))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfTo.addFocusListener(new java.awt.event.FocusAdapter() {
+        public void focusLost(java.awt.event.FocusEvent fe) {
+            try { rowCfg.set(2, new Integer(Integer.parseInt(tfTo.getText().trim()))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfTo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { rowCfg.set(2, new Integer(Integer.parseInt(tfTo.getText().trim()))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfScale.addFocusListener(new java.awt.event.FocusAdapter() {
+        public void focusLost(java.awt.event.FocusEvent fe) {
+            try { rowCfg.set(3, new Double(Double.parseDouble(
+                tfScale.getText().trim().replace(",", ".")))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfScale.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { rowCfg.set(3, new Double(Double.parseDouble(
+                tfScale.getText().trim().replace(",", ".")))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+
+    JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+    row.add(cbEnable);
+    row.add(new JLabel("Frames:"));
+    row.add(tfFrom);
+    row.add(new JLabel("\u2013"));
+    row.add(tfTo);
+    row.add(new JLabel("Scale:"));
+    row.add(tfScale);
+    outerPanel.add(row);
+}
+
+// Build the bleach correction panel for the post-processor.
+// One row per stack — delegates to buildSingleBleachRow to keep anonymous
+// classes out of the for-loop body (BeanShell/JDK-11 naming bug avoidance).
+JPanel buildPPBleachPanel(ArrayList stacks, ArrayList bcConfigs) {
+    JPanel outer = new JPanel();
+    outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
+    outer.setBorder(BorderFactory.createTitledBorder("Bleach Correction"));
+    for (int si = 0; si < stacks.size(); si++) {
+        buildSingleBleachRow(outer,
+            ((ImagePlus) stacks.get(si)).getTitle(),
+            (ArrayList) bcConfigs.get(si));
+    }
+    return outer;
 }
 
 // ==================== Post-Processor Entry Point ====================
@@ -8248,11 +8570,25 @@ void openPostProcessor() {
     final ArrayList frameTimestamps = ppReadTimestamps(expFolder);
 
     // 7. Data containers
-    final ArrayList ppDataRows = new ArrayList();
-    final ArrayList ppCorrRows = new ArrayList();
-    final ArrayList ppBTRows   = new ArrayList();
-    final ArrayList ppDERows   = new ArrayList(); // BG + BT + DE corrected
-    final ArrayList ppMeanDirEx = new ArrayList(); // per-ROI DE means (for log)
+    final ArrayList ppDataRows  = new ArrayList();
+    final ArrayList ppCorrRows  = new ArrayList();
+    final ArrayList ppBCRows    = new ArrayList(); // BG + Bleach corrected
+    final ArrayList ppBTRows    = new ArrayList();
+    final ArrayList ppDERows    = new ArrayList(); // BG + BC + BT + DE corrected
+    final ArrayList ppMeanDirEx  = new ArrayList(); // per-ROI DE means (for log)
+    final ArrayList ppBleachSlopes = new ArrayList(); // per-stack OLS slopes (for log)
+
+    // Bleach correction config: one entry per stack.
+    // Each entry: ArrayList[Boolean enabled, Integer fromFrame, Integer toFrame, Double slopeScale]
+    final ArrayList bcConfigs = new ArrayList();
+    for (int si = 0; si < ppStacks.size(); si++) {
+        ArrayList cfg = new ArrayList();
+        cfg.add(Boolean.FALSE);
+        cfg.add(new Integer(1));
+        cfg.add(new Integer(((ImagePlus) ppStacks.get(si)).getStackSize()));
+        cfg.add(new Double(1.0));
+        bcConfigs.add(cfg);
+    }
 
     // 8. Build chart datasets and panels (same pattern as acquisition window)
     final boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
@@ -8372,7 +8708,8 @@ void openPostProcessor() {
                         });
                     } catch (Exception ex) { ex.printStackTrace(); }
                     ppRecalculate(finalStacks, frameTimestamps,
-                        ppDataRows, ppCorrRows, ppBTRows, ppDERows, ppMeanDirEx,
+                        ppDataRows, ppCorrRows, ppBCRows, ppBTRows, ppDERows, ppMeanDirEx,
+                        ppBleachSlopes, bcConfigs,
                         ppDatasets, ppCharts, ppChartPanels,
                         finalPerStackSeqRows, finalPerStackTimestamps);
                     SwingUtilities.invokeLater(new Runnable() {
@@ -8397,24 +8734,37 @@ void openPostProcessor() {
             new Thread(new Runnable() {
                 public void run() {
                     try {
-                        SwingUtilities.invokeAndWait(new Runnable() {
+                        try {
+                            SwingUtilities.invokeAndWait(new Runnable() {
+                                public void run() {
+                                    ppRebuildROIsFromManager(finalRM, imgW, imgH);
+                                    ppUpdateChartSeries(ppDatasets, ppCharts);
+                                }
+                            });
+                        } catch (Exception ex) { ex.printStackTrace(); }
+                        ppRecalculate(finalStacks, frameTimestamps,
+                            ppDataRows, ppCorrRows, ppBCRows, ppBTRows, ppDERows, ppMeanDirEx,
+                            ppBleachSlopes, bcConfigs,
+                            ppDatasets, ppCharts, ppChartPanels,
+                            finalPerStackSeqRows, finalPerStackTimestamps);
+                        ppExport(ppDataRows, ppCorrRows, ppBCRows, ppBTRows, ppDERows, ppMeanDirEx,
+                            ppBleachSlopes, bcConfigs, finalStacks, expFolder, finalRM);
+                        SwingUtilities.invokeLater(new Runnable() {
                             public void run() {
-                                ppRebuildROIsFromManager(finalRM, imgW, imgH);
-                                ppUpdateChartSeries(ppDatasets, ppCharts);
+                                ppStatus.setText("Exported");
+                                ppExportButton.setEnabled(true);
                             }
                         });
-                    } catch (Exception ex) { ex.printStackTrace(); }
-                    ppRecalculate(finalStacks, frameTimestamps,
-                        ppDataRows, ppCorrRows, ppBTRows, ppDERows, ppMeanDirEx,
-                        ppDatasets, ppCharts, ppChartPanels,
-                        finalPerStackSeqRows, finalPerStackTimestamps);
-                    ppExport(ppDataRows, ppCorrRows, ppBTRows, ppDERows, ppMeanDirEx, expFolder, finalRM);
-                    SwingUtilities.invokeLater(new Runnable() {
-                        public void run() {
-                            ppStatus.setText("Exported");
-                            ppExportButton.setEnabled(true);
-                        }
-                    });
+                    } catch (Exception threadEx) {
+                        print("[Export] ERROR: " + threadEx.getClass().getName() + ": " + threadEx.getMessage());
+                        threadEx.printStackTrace();
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() {
+                                ppStatus.setText("Export failed — see terminal");
+                                ppExportButton.setEnabled(true);
+                            }
+                        });
+                    }
                 }
             }).start();
         }
@@ -8447,7 +8797,10 @@ void openPostProcessor() {
     ppButtonPanel.add(ppExportButton);
     ppButtonPanel.add(ppCloseButton);
 
-    // 14b. Spatial-only correction controls (visible only in Spatial mode)
+    // 14b. Bleach correction panel (one row per stack)
+    final JPanel ppBleachPanel = buildPPBleachPanel(finalStacks, bcConfigs);
+
+    // 14c. Spatial-only correction controls (visible only in Spatial mode)
     // Built in a separate function to avoid BeanShell/JDK-11 class-naming bug
     // (anonymous classes inside `if` blocks get illegal "/" in their JVM names).
     JPanel ppSpatialPanel = null;
@@ -8455,12 +8808,14 @@ void openPostProcessor() {
         ppSpatialPanel = buildPPSpatialPanel(finalStacks);
     }
 
-    JPanel ppControlPanel = new JPanel(new BorderLayout());
+    JPanel ppControlPanel = new JPanel();
+    ppControlPanel.setLayout(new BoxLayout(ppControlPanel, BoxLayout.Y_AXIS));
     JPanel ppTopBar = new JPanel(new BorderLayout());
     ppTopBar.add(ppBGPanel, BorderLayout.WEST);
     ppTopBar.add(ppButtonPanel, BorderLayout.EAST);
-    ppControlPanel.add(ppTopBar, BorderLayout.NORTH);
-    if (ppSpatialPanel != null) ppControlPanel.add(ppSpatialPanel, BorderLayout.SOUTH);
+    ppControlPanel.add(ppTopBar);
+    ppControlPanel.add(ppBleachPanel);
+    if (ppSpatialPanel != null) ppControlPanel.add(ppSpatialPanel);
     ppControlPanel.setBorder(BorderFactory.createEtchedBorder());
 
     // 15. Post-processor frame
@@ -8495,7 +8850,8 @@ void openPostProcessor() {
     new Thread(new Runnable() {
         public void run() {
             ppRecalculate(finalStacks, frameTimestamps,
-                ppDataRows, ppCorrRows, ppBTRows, ppDERows, ppMeanDirEx,
+                ppDataRows, ppCorrRows, ppBCRows, ppBTRows, ppDERows, ppMeanDirEx,
+                ppBleachSlopes, bcConfigs,
                 ppDatasets, ppCharts, ppChartPanels,
                 finalPerStackSeqRows, finalPerStackTimestamps);
             SwingUtilities.invokeLater(new Runnable() {
