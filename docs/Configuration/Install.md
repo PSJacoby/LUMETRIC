@@ -64,6 +64,11 @@ Also, it will ask you if you want to **save your Hardware configuration**. Pleas
     !!! Tip "Getting started with MicroManager"
         A detailed description of the Micro-Manager user interface and basic workflows is available in the official user guide: [MM User Guide](https://micro-manager.org/Version_2.0_Users_Guide)
 
+    !!! Tip "Make sure you have set enough memory"
+        Both ImageJ and MM need to have enough memory. What to set depends on your RAM. Restart MM after changing these settings.
+        For ImageJ: Edit > Options > Memory and Threads
+        For MM: Tools > Options > Sequence buffer size
+
 ### Implementing LUMETRIC as Quick-Access-Button
 
 LUMETRIC *lite* is distributed as a Micro-Manager BeanShell script and does not
@@ -114,14 +119,15 @@ Before proceeding here, make sure you completed the installing steps described i
 
 4. Add **Arduino (Arduino Hub)** from the list. Choose "**Scan Ports**".
 5. Add the Arduino as hub: tick **shutter** and **switch**.
-6. Connect your camera external trigger cable to the camera BNC of your Acquisition Control Box. Make sure to use the correct port on the camera.
-7. Connect your lamp to the BNC ports of your LUMETRIC box. A good order is increasing wavelength.
-8. In MM, define a new group for Presets. Choose the Arduino switch label as the only property.
-9. Define one Preset per BNC Channel you use. See the table below for the state number to choose.
+6. Choose the **Arduino as standard shutter** when proceeding through the dialog. For everything else, keep default.
+7. Connect your camera external trigger cable to the camera BNC of your Acquisition Control Box. Make sure to use the correct port on the camera.
+8. Connect your lamp to the BNC ports of your LUMETRIC box. A good order is increasing wavelength.
+9. In MM, define a new group for Presets. Choose the Arduino switch label as the only property.
+10. Define one Preset per BNC Channel you use. See the table below for the state number to choose.
     !!! Tip "Example: 2 = BNC connector 1"
         You can also define Presets for illumination with two wavelength at the same time. Lets say you want Channel 1 and 2 together: 2 + 4 = 6. Therefore, you choose switch label 6.
 
-10. Check via Live view or simple 'shutter open' that each Preset does turn on the wavelength you expect and thus, that your settings are correct.
+11. Check via Live view or simple 'shutter open' that each Preset does turn on the wavelength you expect and thus, that your settings are correct.
 
 | Function   | Arduino state |
 |------------|------------   |

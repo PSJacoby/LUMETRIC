@@ -1,6 +1,6 @@
 # LUMETRIC Architecture Diagrams
 
----
+## UNDER CONSTRUCTION
 
 ## 1. High-Level Acquisition Lifecycle
 
