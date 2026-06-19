@@ -14,10 +14,15 @@ nav = [
         "LUMETRIC GUI/Singlechannel.md",
         "LUMETRIC GUI/Multichannel.md"
     ]},
+    {"Quick Start" = "QuickStart.md"},
     {"Architecture" = [
         "Architecture/Diagrams.md"
     ]},
     {"FAQ" = "FAQ.md"}
+]
+extra_javascript = [
+    "javascripts/mathjax.js",
+    "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"
 ]
 [project.theme]
 features = [
@@ -44,6 +49,8 @@ scheme = "slate"
 toggle.icon = "lucide/moon"
 toogle.name = "Switch to light mode"
 
+[project.markdown_extensions.pymdownx.arithmatex]
+generic = true
 [project.markdown_extensions.pymdownx.caret]
 [project.markdown_extensions.pymdownx.mark]
 [project.markdown_extensions.pymdownx.tilde]

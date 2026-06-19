@@ -121,6 +121,7 @@ class AcquisitionSettings {
     boolean convertToStack = true; // Convert individual TIFFs to stack after acquisition (default: true)
     boolean stackPerRow = false; // Create one stack per sequence row (not yet implemented)
     String saveDirectory = "";
+    String experimentName = ""; // Optional user-provided prefix for experiment folder
     ArrayList sequenceRows = new ArrayList(); // Each row is ArrayList of column values
     ArrayList visualizationRows = new ArrayList();
 
@@ -149,7 +150,8 @@ class AcquisitionSettings {
                        JCheckBox convertToStackCheckbox, JCheckBox stackPerRowCheckbox, String savePath,
                        JComboBox processingModeCombo, JComboBox splitAxisCombo, JComboBox roiSourceCombo,
                        JCheckBox bgCorrectionCheckbox,
-                       JCheckBox btCorrectionCheckbox, JComboBox btDirectionCombo, JTextField btFactorField) {
+                       JCheckBox btCorrectionCheckbox, JComboBox btDirectionCombo, JTextField btFactorField,
+                       JTextField experimentNameField) {
         // Capture mode
         config.useSimpleSnapMode = simpleSnapModeCheckbox.isSelected();
         bgCorrectionEnabled = bgCorrectionCheckbox.isSelected();
@@ -199,6 +201,14 @@ class AcquisitionSettings {
             }
             visualizationRows.add(row);
         }
+
+        // Capture and sanitize experiment name
+        String rawName = (experimentNameField != null) ? experimentNameField.getText() : "";
+        rawName = rawName.trim().replace(" ", "_");
+        rawName = rawName.replaceAll("[^A-Za-z0-9_\\-]", "");
+        rawName = rawName.replaceAll("[_\\-]{2,}", "_");
+        rawName = rawName.replaceAll("^[_\\-]+|[_\\-]+$", "");
+        experimentName = rawName;
     }
 
     boolean isVisualizationNeeded() {
@@ -836,6 +846,15 @@ class RowTracker {
             return row.size() > 9 && "keepAlive".equals(row.get(9).toString().trim());
         } catch (Exception e) { return false; }
     }
+    // True when the CURRENT row is the end-sentinel row injected by expandPauseRows().
+    // When a frame from this row is popped, BeanShell should initiate auto-quit.
+    boolean isEndSentinelRow() {
+        if (currentRow < 0 || currentRow >= nRows) return false;
+        try {
+            ArrayList row = (ArrayList) seqRows.get(currentRow);
+            return row.size() > 9 && "endSentinel".equals(row.get(9).toString().trim());
+        } catch (Exception e) { return false; }
+    }
     // Maps an expanded 1-based row index back to the original (user-visible) 1-based row
     // number stored in col 10.  Falls back to the expanded index when col 10 is absent.
     int getOriginalRowNum(int expandedRow) {
@@ -986,17 +1005,17 @@ class LoopSwitchGotoRenderer extends DefaultTableCellRenderer {
 // Table Model for visualization configuration
 class VisualizationTableModel extends DefaultTableModel {
     String currentMode = "Temporal";  // Track current processing mode
-    // Temporal columns: Graph | Type | Numerator (row) | Denominator (row)
-    String[] temporalColumns = {"Graph", "Type", "Numerator", "Denominator"};
-    String[] spatialColumns = {"Graph", "Type"};  // Spatial mode: no extra columns
+    // Temporal columns: Graph | Type | Numerator (row) | Denominator (row) | Window
+    String[] temporalColumns = {"Graph", "Type", "Numerator", "Denominator", "Window"};
+    String[] spatialColumns = {"Graph", "Type", "Row Filter", "Window"};  // Spatial mode: graph type + row filter
 
     public VisualizationTableModel() {
         super(new Object[][]{
-            {"1", "none", "Row 1", "1"},
-            {"2", "none", "Row 1", "1"},
-            {"3", "none", "Row 1", "1"},
-            {"4", "none", "Row 1", "1"}
-        }, new String[]{"Graph", "Type", "Numerator", "Denominator"});
+            {"1", "none", "Row 1", "1", "Main"},
+            {"2", "none", "Row 1", "1", "Main"},
+            {"3", "none", "Row 1", "1", "Main"},
+            {"4", "none", "Row 1", "1", "Main"}
+        }, new String[]{"Graph", "Type", "Numerator", "Denominator", "Window"});
     }
 
     void setProcessingMode(String mode) {
@@ -1009,11 +1028,16 @@ class VisualizationTableModel extends DefaultTableModel {
         setRowCount(0);
         for (int i = 1; i <= 4; i++) {
             if (mode.equals("Temporal")) {
-                addRow(new Object[]{String.valueOf(i), "none", "Row 1", "1"});
+                addRow(new Object[]{String.valueOf(i), "none", "Row 1", "1", "Main"});
             } else {
-                addRow(new Object[]{String.valueOf(i), "none"});
+                addRow(new Object[]{String.valueOf(i), "none", "All Rows", "Main"});
             }
         }
+    }
+
+    // Returns the column index of the "Window" column (last column, mode-dependent index).
+    int getWindowColumnIndex() {
+        return getColumnCount() - 1;
     }
 
     public Class getColumnClass(int col) {
@@ -1022,12 +1046,14 @@ class VisualizationTableModel extends DefaultTableModel {
 
     public boolean isCellEditable(int row, int col) {
         if (col == 0) return false;
+        if (col == getWindowColumnIndex()) return true; // Window always editable
         if (col == 1) return true;
+        String type = (String) getValueAt(row, 1);
+        if (type.equals("none")) return false;
+        if (col == 2 && currentMode.equals("Spatial")) return true; // Row Filter
         if (currentMode.equals("Spatial")) return false;
 
         // Numerator always editable when type != none
-        String type = (String) getValueAt(row, 1);
-        if (type.equals("none")) return false;
         if (col == 2) return true; // Numerator
 
         // Denominator locked to "1" for Intensity; editable for Ratio
@@ -1038,6 +1064,11 @@ class VisualizationTableModel extends DefaultTableModel {
     public void setValueAt(Object value, int row, int col) {
         if (col == 0) return;
 
+        if (col == getWindowColumnIndex()) {
+            super.setValueAt(value, row, col);
+            return;
+        }
+
         if (col == 1) {
             String newType = (String) value;
             super.setValueAt(newType, row, col);
@@ -1045,17 +1076,23 @@ class VisualizationTableModel extends DefaultTableModel {
                 if (newType.equals("none")) {
                     super.setValueAt("Row 1", row, 2);
                     super.setValueAt("1",     row, 3);
+                    super.setValueAt("Main",  row, getWindowColumnIndex());
                 } else if (newType.equals("Intensity")) {
                     // Denominator must be constant 1 for plain intensity
                     super.setValueAt("1", row, 3);
                 }
                 // For "Ratio": leave existing numerator/denominator as-is
+            } else if (currentMode.equals("Spatial")) {
+                if (newType.equals("none")) {
+                    super.setValueAt("All Rows", row, 2);
+                    super.setValueAt("Main",     row, getWindowColumnIndex());
+                }
             }
             fireTableRowsUpdated(row, row);
             return;
         }
 
-        // Cols 2 (Numerator) and 3 (Denominator): accept any string value
+        // Cols 2 (Numerator/Row Filter) and 3 (Denominator): accept any string value
         super.setValueAt(value, row, col);
     }
 }
@@ -1104,6 +1141,13 @@ class VisualizationTypeEditor extends DefaultCellEditor {
     }
 }
 
+// Custom cell editor for Window column — simple Main/Extra dropdown.
+class VisualizationWindowEditor extends DefaultCellEditor {
+    public VisualizationWindowEditor() {
+        super(new JComboBox(new String[]{"Main", "Extra"}));
+    }
+}
+
 // Row-selector dropdowns for Numerator/Denominator are built inline (see installTemporalRowEditors
 // calls below) so that tableModel is read from the outer script scope where it is always reachable.
 // BeanShell named-class methods cannot reliably access outer-namespace variables;
@@ -1140,6 +1184,9 @@ roiSourceCombo = null;
 btCorrectionCheckbox = null;
 btDirectionCombo = null;
 btFactorField = null;
+
+// Experiment name field (declared at script scope so restartMainGUI can clear it)
+experimentNameField = null;
 
 // ===== SETTINGS TAB =====
 settingsPanel = new JPanel(new BorderLayout(10, 10));
@@ -1346,7 +1393,7 @@ okButton.addActionListener(new ActionListener() {
             }
 
             // Capture all data from GUI before disposal
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField, experimentNameField);
 
             config.useTestTable = useTestTableCheckbox.isSelected();
             // Hide GUI (not dispose — will be restored after acquisition)
@@ -1473,6 +1520,18 @@ dataDirPanel.add(dataDirLabel);
 dataDirPanel.add(dataDirPathLabel);
 dataDirPanel.add(selectFolderButton);
 
+// Experiment name panel
+experimentNamePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+JLabel experimentNameLabel = new JLabel("Experiment Name (optional):");
+experimentNameLabel.setFont(experimentNameLabel.getFont().deriveFont(Font.BOLD));
+experimentNameField = new JTextField(20);
+experimentNameField.setToolTipText("Custom prefix for the experiment folder (replaces 'Experiment'). Invalid characters are stripped automatically.");
+JLabel experimentNameHint = new JLabel("  leave blank for default");
+experimentNameHint.setForeground(Color.GRAY);
+experimentNamePanel.add(experimentNameLabel);
+experimentNamePanel.add(experimentNameField);
+experimentNamePanel.add(experimentNameHint);
+
 // Mode panel with stack conversion options
 modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
 stackLabel = new JLabel("Post-Acquisition:");
@@ -1484,6 +1543,7 @@ modePanel.add(stackPerRow);
 bottomPanel = new JPanel(new BorderLayout());
 topBottomPanel = new JPanel(new BorderLayout());
 topBottomPanel.add(dataDirPanel, BorderLayout.NORTH);
+topBottomPanel.add(experimentNamePanel, BorderLayout.CENTER);
 topBottomPanel.add(modePanel, BorderLayout.SOUTH);
 bottomPanel.add(topBottomPanel, BorderLayout.NORTH);
 bottomPanel.add(controlPanel, BorderLayout.SOUTH);
@@ -1496,6 +1556,9 @@ visualizationPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 // Create visualization table and model
 vizTableModel = new VisualizationTableModel();
 vizTable = new JTable(vizTableModel);
+// Install Window column editor for initial Temporal mode (column index 4)
+vizTable.getColumnModel().getColumn(4).setCellEditor(new VisualizationWindowEditor());
+vizTable.getColumnModel().getColumn(4).setPreferredWidth(70);
 
 // Title
 vizTitleLabel = new JLabel("Data Visualization Configuration", SwingConstants.CENTER);
@@ -1623,6 +1686,19 @@ processingModeCombo.addActionListener(new ActionListener() {
             for (int r = 1; r <= rCnt; r++) mDenCombo.addItem("Row " + r);
             vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(mDenCombo));
             vizTable.getColumnModel().getColumn(3).setPreferredWidth(120);
+            vizTable.getColumnModel().getColumn(4).setCellEditor(new VisualizationWindowEditor());
+            vizTable.getColumnModel().getColumn(4).setPreferredWidth(70);
+        } else if (mode.equals("Spatial")) {
+            // Build Row Filter combo for Spatial mode
+            int rCnt = tableModel.getRowCount();
+            if (rCnt < 1) rCnt = 1;
+            JComboBox mRowFilterCombo = new JComboBox();
+            mRowFilterCombo.addItem("All Rows");
+            for (int r = 1; r <= rCnt; r++) mRowFilterCombo.addItem("Row " + r);
+            vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(mRowFilterCombo));
+            vizTable.getColumnModel().getColumn(2).setPreferredWidth(120);
+            vizTable.getColumnModel().getColumn(3).setCellEditor(new VisualizationWindowEditor());
+            vizTable.getColumnModel().getColumn(3).setPreferredWidth(70);
         }
     }
 });
@@ -1768,19 +1844,25 @@ tableModel.addTableModelListener(new TableModelListener() {
         if (evType != TableModelEvent.INSERT && evType != TableModelEvent.DELETE) return;
         if (vizTable == null || processingModeCombo == null) return;
         String curMode = (String) processingModeCombo.getSelectedItem();
-        if (!"Temporal".equals(curMode)) return;
         try {
             int cnt = tableModel.getRowCount();
             if (cnt < 1) cnt = 1;
-            JComboBox lNumCombo = new JComboBox();
-            lNumCombo.addItem("All Rows");
-            lNumCombo.addItem("1");
-            for (int r = 1; r <= cnt; r++) lNumCombo.addItem("Row " + r);
-            vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(lNumCombo));
-            JComboBox lDenCombo = new JComboBox();
-            lDenCombo.addItem("1");
-            for (int r = 1; r <= cnt; r++) lDenCombo.addItem("Row " + r);
-            vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(lDenCombo));
+            if ("Temporal".equals(curMode)) {
+                JComboBox lNumCombo = new JComboBox();
+                lNumCombo.addItem("All Rows");
+                lNumCombo.addItem("1");
+                for (int r = 1; r <= cnt; r++) lNumCombo.addItem("Row " + r);
+                vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(lNumCombo));
+                JComboBox lDenCombo = new JComboBox();
+                lDenCombo.addItem("1");
+                for (int r = 1; r <= cnt; r++) lDenCombo.addItem("Row " + r);
+                vizTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(lDenCombo));
+            } else if ("Spatial".equals(curMode)) {
+                JComboBox lRowFilterCombo = new JComboBox();
+                lRowFilterCombo.addItem("All Rows");
+                for (int r = 1; r <= cnt; r++) lRowFilterCombo.addItem("Row " + r);
+                vizTable.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(lRowFilterCombo));
+            }
         } catch (Exception ex) { /* ignore if columns not yet available */ }
     }
 });
@@ -1824,7 +1906,7 @@ vizStartButton.addActionListener(new ActionListener() {
             }
 
             // Capture all data from GUI before hiding
-            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
+            config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics, convertToStack, stackPerRow, lastSavePath, processingModeCombo, splitAxisCombo, roiSourceCombo, bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField, experimentNameField);
             // Hide GUI (not dispose — will be restored after acquisition)
             frame.setVisible(false);
 
@@ -2609,7 +2691,10 @@ void createExperimentFolder() {
         throw new IOException("No write permission for save directory");
     }
 
-    File experimentFolder = new File(saveDir, "Experiment_" + timestamp);
+    String expPrefix = (config.acqSettings.experimentName != null && !config.acqSettings.experimentName.isEmpty())
+        ? config.acqSettings.experimentName
+        : "Experiment";
+    File experimentFolder = new File(saveDir, expPrefix + "_" + timestamp);
     boolean created = experimentFolder.mkdir();
 
     if (!created) {
@@ -3014,6 +3099,47 @@ boolean setupVisualizationROIs() {
 }
 
     // Export table to CSV with auto-incrementing filename - uses captured data
+// Write a supplementary Micro-Manager state snapshot to the experiment folder.
+// Lists all config groups with their currently active preset, plus camera device,
+// binning, and pixel size.  The file is intentionally NOT reloadable by LUMETRIC.
+void saveMicroscopeStateLog() {
+    if (config.experimentFolder == null || config.experimentFolder.isEmpty()) return;
+    // Screenshot of the MM main window — rendered in memory so it captures the window
+    // even if LUMETRIC is on top. Must run on the EDT for printAll() to work correctly.
+    try {
+        import java.awt.Frame;
+        import java.awt.Graphics2D;
+        import java.awt.image.BufferedImage;
+        import javax.imageio.ImageIO;
+        final String expFolderPath = config.experimentFolder;
+        SwingUtilities.invokeAndWait(new Runnable() {
+            public void run() {
+                try {
+                    Frame mmFrame = null;
+                    Frame[] frames = Frame.getFrames();
+                    for (int fi = 0; fi < frames.length; fi++) {
+                        String title = frames[fi].getTitle();
+                        if (title != null && title.contains("Micro-Manager")
+                                && frames[fi].getWidth() > 0 && frames[fi].getHeight() > 0) {
+                            mmFrame = frames[fi];
+                            break;
+                        }
+                    }
+                    if (mmFrame == null) return;
+                    BufferedImage img = new BufferedImage(
+                        mmFrame.getWidth(), mmFrame.getHeight(), BufferedImage.TYPE_INT_RGB);
+                    Graphics2D g = img.createGraphics();
+                    mmFrame.printAll(g);
+                    g.dispose();
+                    ImageIO.write(img, "png", new File(expFolderPath, "MMState_Screenshot.png"));
+                } catch (Exception ex) {}
+            }
+        });
+    } catch (Exception e) {
+        // Silent failure
+    }
+}
+
 boolean exportTableToCSV() {
     // Get save directory from captured settings
     String saveDir = config.acqSettings.saveDirectory;
@@ -3128,6 +3254,8 @@ boolean exportTableToCSV() {
         writerArduino.println("# Live Pictures: " + config.acqSettings.livePics);
         writerArduino.close();
 
+        // Save supplementary Micro-Manager state snapshot (non-reloadable)
+        saveMicroscopeStateLog();
 
         // print("  Readable: " + csvFileReadable.getAbsolutePath());
         // print("  Arduino:  " + csvFileArduino.getAbsolutePath());
@@ -3195,13 +3323,18 @@ void applySettingsFromFile(File csvFile) {
                         vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
                         vizTableModel.setValueAt(vizParts[2], vizRowIndex, 2);
                         vizTableModel.setValueAt(vizParts[3], vizRowIndex, 3);
-                        vizRowIndex++;
-                    } else if (vizParts.length >= 6 && vizRowIndex < vizTableModel.getRowCount()) {
-                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
+                        // Window column (index 4): present in new files, default "Main" for old
+                        vizTableModel.setValueAt(vizParts.length >= 5 ? vizParts[4] : "Main", vizRowIndex, 4);
                         vizRowIndex++;
                     }
                 } else {
-                    if (vizParts.length >= 2 && vizRowIndex < vizTableModel.getRowCount()) {
+                    if (vizParts.length >= 3 && vizRowIndex < vizTableModel.getRowCount()) {
+                        vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
+                        vizTableModel.setValueAt(vizParts[2], vizRowIndex, 2);
+                        // Window column (index 3): present in new files, default "Main" for old
+                        vizTableModel.setValueAt(vizParts.length >= 4 ? vizParts[3] : "Main", vizRowIndex, 3);
+                        vizRowIndex++;
+                    } else if (vizParts.length >= 2 && vizRowIndex < vizTableModel.getRowCount()) {
                         vizTableModel.setValueAt(vizParts[1], vizRowIndex, 1);
                         vizRowIndex++;
                     }
@@ -3321,6 +3454,7 @@ void restartMainGUI(String experimentFolder) {
         }
     }
 
+    if (experimentNameField != null) experimentNameField.setText("");
     frame.setVisible(true);
 }
 
@@ -3429,7 +3563,7 @@ void writeSettingsToFile(File csvFile) {
         writer.println("");
         writer.println("# Visualization Settings");
         if (currentMode.equals("Temporal")) {
-            writer.println("Graph,Type,Numerator,Denominator");
+            writer.println("Graph,Type,Numerator,Denominator,Window");
             for (int i = 0; i < vizTableModel.getRowCount(); i++) {
                 StringBuilder vizRow = new StringBuilder();
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString()));
@@ -3439,15 +3573,21 @@ void writeSettingsToFile(File csvFile) {
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 2).toString()));
                 vizRow.append(",");
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 3).toString()));
+                vizRow.append(",");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 4).toString()));
                 writer.println(vizRow.toString());
             }
         } else {
-            writer.println("Graph,Type");
+            writer.println("Graph,Type,Row Filter,Window");
             for (int i = 0; i < vizTableModel.getRowCount(); i++) {
                 StringBuilder vizRow = new StringBuilder();
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 0).toString()));
                 vizRow.append(",");
                 vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 1).toString()));
+                vizRow.append(",");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 2).toString()));
+                vizRow.append(",");
+                vizRow.append(escapeCSV(vizTableModel.getValueAt(i, 3).toString()));
                 writer.println(vizRow.toString());
             }
         }
@@ -3500,6 +3640,102 @@ void saveSettingsToCSV() {
 
 // ==================== Acquisition Control Window ====================
 
+// Builds one extra-window JFrame for a single graph.
+// Extracted to a top-level function to avoid BeanShell for-loop anonymous-class naming bug.
+// Event and Quit buttons delegate to the main window buttons so logic lives in one place.
+JFrame buildExtraChartFrame(int graphIdx, JFreeChart chart,
+        java.util.prefs.Preferences prefs,
+        JButton mainEventButton, JButton mainLoopSwitchButton,
+        JButton mainResetAllButton, JButton mainResetXButton,
+        JButton mainQuitButton) {
+    print("[ExtraWin] buildExtraChartFrame called for graph " + (graphIdx+1));
+    String chartTitle = chart.getTitle().getText();
+    int ex = prefs.getInt("extraWin_graph_" + (graphIdx+1) + "_x", -1);
+    int ey = prefs.getInt("extraWin_graph_" + (graphIdx+1) + "_y", -1);
+    int ew = prefs.getInt("extraWin_graph_" + (graphIdx+1) + "_w", 600);
+    int eh = prefs.getInt("extraWin_graph_" + (graphIdx+1) + "_h", 400);
+
+    final JFrame extraFrame = new JFrame(chartTitle);
+    extraFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+    extraFrame.setSize(ew, eh);
+    if (ex >= 0 && ey >= 0) extraFrame.setLocation(ex, ey);
+    else extraFrame.setLocationByPlatform(true);
+
+    final ChartPanel extraChartPanel = new ChartPanel(chart);
+    extraChartPanel.setMouseWheelEnabled(true);
+
+    // Same order as main window: Event | Switch | Rescale All | Rescale X | Quit
+    JPanel extraToolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3));
+    JButton exEventBtn = new JButton("Event");
+    exEventBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exEventBtn.setBackground(new Color(100, 180, 100));
+    JButton exSwitchBtn = new JButton("Switch");
+    exSwitchBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exSwitchBtn.setBackground(new Color(100, 150, 255));
+    JButton exRescaleAllBtn = new JButton("Rescale All");
+    exRescaleAllBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exRescaleAllBtn.setBackground(new Color(200, 200, 200));
+    JButton exRescaleXBtn = new JButton("Rescale X");
+    exRescaleXBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exRescaleXBtn.setBackground(new Color(200, 200, 200));
+    JButton exQuitBtn = new JButton("Quit");
+    exQuitBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
+    exQuitBtn.setBackground(Color.RED);
+    exQuitBtn.setForeground(Color.BLACK);
+    extraToolbar.add(exEventBtn);
+    extraToolbar.add(Box.createHorizontalStrut(3));
+    extraToolbar.add(exSwitchBtn);
+    extraToolbar.add(Box.createHorizontalStrut(15));
+    extraToolbar.add(exRescaleAllBtn);
+    extraToolbar.add(Box.createHorizontalStrut(3));
+    extraToolbar.add(exRescaleXBtn);
+    extraToolbar.add(Box.createHorizontalStrut(15));
+    extraToolbar.add(exQuitBtn);
+
+    // Reuse main window button logic directly
+    exEventBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainEventButton.doClick();
+        }
+    });
+    exSwitchBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainLoopSwitchButton.doClick();
+        }
+    });
+    exRescaleAllBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainResetAllButton.doClick();
+        }
+    });
+    exRescaleXBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainResetXButton.doClick();
+        }
+    });
+    exQuitBtn.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            mainQuitButton.doClick();
+        }
+    });
+    extraFrame.addWindowListener(new java.awt.event.WindowAdapter() {
+        public void windowClosing(java.awt.event.WindowEvent we) {
+            prefs.putInt("extraWin_graph_" + (graphIdx+1) + "_x", extraFrame.getX());
+            prefs.putInt("extraWin_graph_" + (graphIdx+1) + "_y", extraFrame.getY());
+            prefs.putInt("extraWin_graph_" + (graphIdx+1) + "_w", extraFrame.getWidth());
+            prefs.putInt("extraWin_graph_" + (graphIdx+1) + "_h", extraFrame.getHeight());
+            extraFrame.setVisible(false);
+        }
+    });
+
+    JPanel extraContent = new JPanel(new BorderLayout());
+    extraContent.add(extraToolbar, BorderLayout.NORTH);
+    extraContent.add(extraChartPanel, BorderLayout.CENTER);
+    extraFrame.add(extraContent);
+    print("[ExtraWin] frame built for graph " + (graphIdx+1) + ": " + chartTitle);
+    return extraFrame;
+}
+
 // Create acquisition control window inline (called from EDT)
 void createInlineAcquisitionWindow() {
     // print("DEBUG: createInlineAcquisitionWindow() called");
@@ -3520,6 +3756,9 @@ void createInlineAcquisitionWindow() {
     acqFrame.setLocationRelativeTo(null);
 
     acqFrame.setLayout(new BorderLayout());
+
+    // Shared stop flag — declared early so extra-window Stop buttons can reference it
+    final boolean[] acquisitionRunning = {true};
 
     // Global event tracking
     final long[] acquisitionStartTime = new long[1];
@@ -3566,7 +3805,7 @@ void createInlineAcquisitionWindow() {
         }
     });
 
-    JButton resetAllButton = new JButton("Reset All Zooms");
+    JButton resetAllButton = new JButton("Rescale All Axes");
     resetAllButton.setFont(new Font("SansSerif", Font.BOLD, 11));
     resetAllButton.setBackground(new Color(200, 200, 200));
     resetAllButton.setPreferredSize(new java.awt.Dimension(130, 28));
@@ -3582,7 +3821,7 @@ void createInlineAcquisitionWindow() {
         }
     });
 
-    JButton resetXButton = new JButton("Reset X-Axis");
+    JButton resetXButton = new JButton("Rescale X-Axis");
     resetXButton.setFont(new Font("SansSerif", Font.BOLD, 11));
     resetXButton.setBackground(new Color(200, 200, 200));
     resetXButton.setPreferredSize(new java.awt.Dimension(130, 28));
@@ -3622,7 +3861,21 @@ void createInlineAcquisitionWindow() {
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             if (confirm == JOptionPane.YES_OPTION) {
-
+                // Clean up extra chart windows
+                try {
+                    for (int xi = 0; xi < extraChartFrames.size(); xi++) {
+                        try {
+                            JFrame ef = (JFrame) extraChartFrames.get(xi);
+                            int gIdx = ((Integer) extraChartGraphIndices.get(xi)).intValue();
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_x", ef.getX());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_y", ef.getY());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_w", ef.getWidth());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_h", ef.getHeight());
+                            ef.setVisible(false);
+                            ef.dispose();
+                        } catch (Exception exf) {}
+                    }
+                } catch (Exception exAll) {}
                 acqFrame.dispose();
                 // TODO: Clean up acquisition resources
             }
@@ -3780,8 +4033,42 @@ void createInlineAcquisitionWindow() {
         chartPanels.add(chartPanel); // Store for repaint access
     }
 
+    // ===== EXTRA WINDOW CHARTS =====
+    // Separate chart panels tagged "Extra" so the main layout only sees "Main" ones.
+    // Extra ChartPanels wrap the SAME JFreeChart — live updates propagate automatically.
+    final ArrayList extraChartFrames      = new ArrayList(); // kept for cleanup on acq end
+    final ArrayList extraChartGraphIndices = new ArrayList(); // parallel: graphIdx per extra frame
+    final ArrayList mainChartPanels  = new ArrayList(); // subset of chartPanels for main layout
+    int mainActiveGraphs = 0;
+    print("[ExtraWin] starting extra-window split. visualizationRows.size()=" + config.acqSettings.visualizationRows.size());
+    for (int i = 0; i < 4; i++) {
+        if (chartPanels.get(i) == null) { mainChartPanels.add(null); continue; }
+        ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(i);
+        String windowMode = "Main";
+        if (!vizRow.isEmpty()) {
+            Object wm = vizRow.get(vizRow.size() - 1);
+            if (wm != null) windowMode = wm.toString();
+        }
+        print("[ExtraWin] graph " + (i+1) + " windowMode=" + windowMode + " vizRow.size()=" + vizRow.size());
+        if ("Extra".equals(windowMode)) {
+            mainChartPanels.add(null); // placeholder keeps array aligned
+            JFrame extraFrame = buildExtraChartFrame(i, (JFreeChart) charts.get(i), prefs, eventButton, loopSwitchButton, resetAllButton, resetXButton, quitButton);
+            extraChartFrames.add(extraFrame);
+            extraChartGraphIndices.add(new Integer(i));
+        } else {
+            mainChartPanels.add(chartPanels.get(i));
+            mainActiveGraphs++;
+        }
+    }
+    print("[ExtraWin] extra frames built: " + extraChartFrames.size() + ", mainActiveGraphs=" + mainActiveGraphs);
+    // Show all extra frames
+    for (int i = 0; i < extraChartFrames.size(); i++)
+        ((JFrame) extraChartFrames.get(i)).setVisible(true);
 
-    // Event button - adds vertical line markers to all active graphs
+    // Recompute activeGraphs to reflect only main-window graphs
+    activeGraphs = mainActiveGraphs;
+
+    // ===== BUTTON LISTENERS =====
     eventButton.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             long systemTime = System.currentTimeMillis();
@@ -3811,12 +4098,18 @@ void createInlineAcquisitionWindow() {
     });
 
     // ADAPTIVE LAYOUT STRATEGY
-    if (!hasLiveView && activeGraphs == 1) {
+    if (activeGraphs == 0) {
+        // All graphs are in extra windows — main panel shows placeholder
+        mainPanel.setLayout(new BorderLayout());
+        JLabel noGraphLabel = new JLabel("All graphs are displayed in extra windows.", SwingConstants.CENTER);
+        noGraphLabel.setFont(new Font("SansSerif", Font.ITALIC, 13));
+        mainPanel.add(noGraphLabel, BorderLayout.CENTER);
+    } else if (!hasLiveView && activeGraphs == 1) {
         // CASE 1: Single graph, no live view - ONE BIG WINDOW
         mainPanel.setLayout(new BorderLayout());
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
-                mainPanel.add((ChartPanel) chartPanels.get(i), BorderLayout.CENTER);
+        for (int i = 0; i < mainChartPanels.size(); i++) {
+            if (mainChartPanels.get(i) != null) {
+                mainPanel.add((ChartPanel) mainChartPanels.get(i), BorderLayout.CENTER);
                 break;
             }
         }
@@ -3837,9 +4130,9 @@ void createInlineAcquisitionWindow() {
 
         // Graphs (right, small, stacked with resizable dividers)
         ArrayList activeChartPanels = new ArrayList();
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
-                activeChartPanels.add(chartPanels.get(i));
+        for (int i = 0; i < mainChartPanels.size(); i++) {
+            if (mainChartPanels.get(i) != null) {
+                activeChartPanels.add(mainChartPanels.get(i));
             }
         }
 
@@ -3873,12 +4166,12 @@ void createInlineAcquisitionWindow() {
         ChartPanel firstChart = null;
         ArrayList smallCharts = new ArrayList();
 
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
+        for (int i = 0; i < mainChartPanels.size(); i++) {
+            if (mainChartPanels.get(i) != null) {
                 if (firstChart == null) {
-                    firstChart = (ChartPanel) chartPanels.get(i);
+                    firstChart = (ChartPanel) mainChartPanels.get(i);
                 } else {
-                    smallCharts.add(chartPanels.get(i));
+                    smallCharts.add(mainChartPanels.get(i));
                     if (smallCharts.size() >= 2) break;
                 }
             }
@@ -3921,16 +4214,9 @@ void createInlineAcquisitionWindow() {
 
         // All graphs stacked with resizable dividers
         ArrayList activeChartPanels = new ArrayList();
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
-                activeChartPanels.add(chartPanels.get(i));
-            }
-        }
-        // All graphs stacked with resizable dividers
-        ArrayList activeChartPanels = new ArrayList();
-        for (int i = 0; i < chartPanels.size(); i++) {
-            if (chartPanels.get(i) != null) {
-                activeChartPanels.add(chartPanels.get(i));
+        for (int i = 0; i < mainChartPanels.size(); i++) {
+            if (mainChartPanels.get(i) != null) {
+                activeChartPanels.add(mainChartPanels.get(i));
             }
         }
 
@@ -4232,7 +4518,7 @@ void createInlineAcquisitionWindow() {
 
 
     // ===== START ACQUISITION THREAD =====
-    final boolean[] acquisitionRunning = {true};
+    // (acquisitionRunning declared above, near top of function)
     final ArrayList allDataRows = new ArrayList(); // Store RAW rows [frame, timestamp, roi0, roi1, ...]
     final ArrayList allCorrectedDataRows = new ArrayList(); // Parallel BG-corrected rows (empty when BG disabled)
     final ArrayList allBTCorrDataRows = new ArrayList(); // BT-corrected rows (empty when BT disabled)
@@ -4297,9 +4583,9 @@ void createInlineAcquisitionWindow() {
                 print("================================");
 
                 if (useCircularBuffer) {
-                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, allSwitchEvents);
+                    runCircularBufferAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, allSwitchEvents, numActiveGraphs, eventTimes, extraChartFrames, extraChartGraphIndices);
                 } else {
-                    runAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel);
+                    runAcquisition(acquisitionRunning, allDataRows, allCorrectedDataRows, allBTCorrDataRows, datasets, acquisitionStartTime, liveViewPanelRef[0], charts, chartPanels, acqFrame, frameCounterLabel, extraChartFrames, extraChartGraphIndices);
                 }
             } catch (Exception ex) {
                 print("ERROR in acquisition thread: " + ex.getMessage());
@@ -4330,7 +4616,17 @@ int parseRowNumber(String s) {
 // For Ratio:     accept frames matching either Numerator or Denominator (both needed for caching).
 // Spatial mode:  always true (unchanged).
 boolean shouldProcessFrame(int seqRow, ArrayList vizRow) {
-    if (config.acqSettings.processingMode.equals("Spatial")) return true;
+    if (config.acqSettings.processingMode.equals("Spatial")) {
+        // Apply Row Filter if set (col 2 exists and is not "All Rows")
+        if (vizRow.size() > 2) {
+            String rowFilter = (String) vizRow.get(2);
+            if (rowFilter != null && !rowFilter.trim().equals("All Rows")) {
+                int filterRow = parseRowNumber(rowFilter);
+                return (filterRow > 0 && seqRow == filterRow);
+            }
+        }
+        return true;
+    }
 
     String graphType = (String) vizRow.get(1);
     if (graphType == null || graphType.equals("none")) return false;
@@ -5641,6 +5937,19 @@ ArrayList expandPauseRows(ArrayList originalRows) {
         expanded.add(nr);
     }
 
+    // Append end-sentinel row (always last, before the flush prepend).
+    // The Arduino loops this row indefinitely (frames=0, exposure=1ms, interval=500ms),
+    // keeping the camera receiving triggers after all real imaging rows are done.
+    // When BeanShell's frame-pop detects a frame from this row (col9="endSentinel")
+    // it sets running[0]=false while the Arduino is still active, so
+    // stopSequenceAcquisition() returns immediately instead of blocking for ~40s.
+    ArrayList sentinelRow = new ArrayList();
+    sentinelRow.add(""); sentinelRow.add(""); sentinelRow.add(String.valueOf(KA_EXPOSURE_MS));
+    sentinelRow.add("500"); sentinelRow.add("0"); // frames=0: infinite until byte 66
+    sentinelRow.add(""); sentinelRow.add(""); sentinelRow.add("0"); sentinelRow.add("");
+    sentinelRow.add("endSentinel"); sentinelRow.add("");
+    expanded.add(sentinelRow);
+
     // Prepend the pre-acquisition flush trigger as expanded row 0 (Arduino row 1).
     // This fires one short camera trigger (1 ms) with a 60 ms total interval just
     // before the very first real imaging frame, resetting the sensor and eliminating
@@ -5654,14 +5963,14 @@ ArrayList expandPauseRows(ArrayList originalRows) {
     expanded.add(0, flushRow0);
 
     print("expandPauseRows: " + N + " original rows → " + expanded.size()
-        + " expanded rows (pre-acq flush + "
+        + " expanded rows (pre-acq flush + end-sentinel + "
         + (anyExpansion ? "keep-alive + pause flush triggers" : "no pause expansion")
         + " injected).");
     return expanded;
 }
 
 // ==================== Main Acquisition Loop (Circular Buffer) ====================
-void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents) {
+void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList switchEvents, int numActiveGraphs, ArrayList eventTimes, ArrayList extraChartFrames, ArrayList extraChartGraphIndices) {
 
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -6144,6 +6453,22 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
                         continue;
                     }
 
+                    // End-sentinel frame: all real imaging rows are done.
+                    // Set running[0]=false while the Arduino is still actively triggering
+                    // so stopSequenceAcquisition() in the drain block returns immediately.
+                    if (rowTracker.isEndSentinelRow()) {
+                        print("End-sentinel reached - auto-quitting.");
+                        running[0] = false;
+                        rowTracker.advanceFrame();
+                        // Export graph data now — the Quit button path won't run for natural ends.
+                        exportGraphDataToCSV(dataRows, correctedDataRows, btCorrDataRows, numActiveGraphs, config.acqSettings.visualizationRows);
+                        exportEventTimesToCSV(eventTimes);
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() { acqFrame.setVisible(false); }
+                        });
+                        continue;
+                    }
+
                     framesProcessed++;
                     final int currentFrameCount = framesProcessed;
                     SwingUtilities.invokeLater(new Runnable() {
@@ -6380,6 +6705,19 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
     // Dispose the acquisition frame (may already be invisible from quit handler).
     if (acqFrame != null) {
         try {
+            // Save bounds and hide all extra chart windows
+            for (int xi = 0; xi < extraChartFrames.size(); xi++) {
+                try {
+                    JFrame ef = (JFrame) extraChartFrames.get(xi);
+                    int gIdx = ((Integer) extraChartGraphIndices.get(xi)).intValue();
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_x", ef.getX());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_y", ef.getY());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_w", ef.getWidth());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_h", ef.getHeight());
+                    ef.setVisible(false);
+                    ef.dispose();
+                } catch (Exception exf) {}
+            }
             SwingUtilities.invokeAndWait(new Runnable() {
                 public void run() { acqFrame.dispose(); }
             });
@@ -6405,7 +6743,7 @@ void runCircularBufferAcquisition(boolean[] running, ArrayList dataRows, ArrayLi
 }
 
 // ==================== Main Acquisition Loop (Snap Mode with Full Sequence Logic) ====================
-void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel) {
+void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDataRows, ArrayList btCorrDataRows, ArrayList datasets, long[] startTime, JPanel liveViewPanel, ArrayList chartsList, ArrayList chartPanels, JFrame acqFrame, JLabel frameCounterLabel, ArrayList extraChartFrames, ArrayList extraChartGraphIndices) {
 
     // Verify experiment folder exists
     if (config.experimentFolder == null || config.experimentFolder.isEmpty()) {
@@ -6721,6 +7059,19 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
             // ALWAYS dispose the acquisition frame, even if popup fails
             if (acqFrame != null) {
                 try {
+                    // Save bounds and hide all extra chart windows
+                    for (int xi = 0; xi < extraChartFrames.size(); xi++) {
+                        try {
+                            JFrame ef = (JFrame) extraChartFrames.get(xi);
+                            int gIdx = ((Integer) extraChartGraphIndices.get(xi)).intValue();
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_x", ef.getX());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_y", ef.getY());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_w", ef.getWidth());
+                            prefs.putInt("extraWin_graph_" + (gIdx+1) + "_h", ef.getHeight());
+                            ef.setVisible(false);
+                            ef.dispose();
+                        } catch (Exception exf) {}
+                    }
                     SwingUtilities.invokeAndWait(new Runnable() {
                         public void run() {
                             acqFrame.dispose();
@@ -6929,6 +7280,19 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
     // Dispose the acquisition frame after acquisition completes (Advanced Mode)
     if (acqFrame != null) {
         try {
+            // Save bounds and hide all extra chart windows
+            for (int xi = 0; xi < extraChartFrames.size(); xi++) {
+                try {
+                    JFrame ef = (JFrame) extraChartFrames.get(xi);
+                    int gIdx = ((Integer) extraChartGraphIndices.get(xi)).intValue();
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_x", ef.getX());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_y", ef.getY());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_w", ef.getWidth());
+                    prefs.putInt("extraWin_graph_" + (gIdx+1) + "_h", ef.getHeight());
+                    ef.setVisible(false);
+                    ef.dispose();
+                } catch (Exception exf) {}
+            }
             SwingUtilities.invokeAndWait(new Runnable() {
                 public void run() {
                     acqFrame.dispose();
@@ -6949,7 +7313,16 @@ void runAcquisition(boolean[] running, ArrayList dataRows, ArrayList correctedDa
 
 // Helper: compute the frame-selection label used in CSV filenames.
 String computeFrameLogicLabel(ArrayList vizRow, boolean isTemporal) {
-    if (!isTemporal) return "every";
+    if (!isTemporal) {
+        // Spatial mode: use Row Filter value for label
+        if (vizRow.size() > 2) {
+            String rowFilter = (String) vizRow.get(2);
+            if (rowFilter != null && !rowFilter.trim().equals("All Rows")) {
+                return rowFilter.replace(" ", ""); // e.g. "Row1"
+            }
+        }
+        return "every";
+    }
     String type  = (String) vizRow.get(1);
     String numer = (String) vizRow.get(2);
     String denom = (String) vizRow.get(3);
@@ -7428,6 +7801,14 @@ ArrayList computeMeanDirEx(ArrayList stacks) {
     int maxSlice = refStack.getStackSize();
     int fromF = Math.max(1, config.acqSettings.deFromFrame);
     int toF   = Math.min(maxSlice, config.acqSettings.deToFrame);
+    if (toF < fromF) {
+        JOptionPane.showMessageDialog(null,
+            "Direct Excitation: frame range out of bounds (" + config.acqSettings.deFromFrame
+            + " \u2013 " + config.acqSettings.deToFrame + ") for stack with "
+            + maxSlice + " frames.\nDE correction not applied.",
+            "Frame Range Out of Bounds", JOptionPane.WARNING_MESSAGE);
+        return result;
+    }
     double[] sums   = new double[half];
     int[]    counts = new int[half];
     for (int f = fromF; f <= toF; f++) {
@@ -7471,18 +7852,101 @@ ArrayList applyDECorrection(ArrayList btCorrValues, ArrayList meanDirExPerRoi) {
     return corrected;
 }
 
+// Compute per-ROI bleach slopes (intensity/frame) via OLS linear regression over BGcorr values.
+// bcConfigs: ArrayList of per-stack config entries — each is ArrayList[Boolean enabled,
+//            Integer fromFrame, Integer toFrame, Double slopeScale].
+// Returns: ArrayList indexed by stackIdx containing ArrayList<Double> slopes per ROI,
+//          or null for disabled/invalid stacks.
+ArrayList computeBleachSlopes(ArrayList stacks, ArrayList bcConfigs) {
+    ArrayList result = new ArrayList();
+    for (int si = 0; si < stacks.size(); si++) {
+        if (si >= bcConfigs.size()) { result.add(null); continue; }
+        ArrayList cfg     = (ArrayList) bcConfigs.get(si);
+        boolean enabled   = ((Boolean)  cfg.get(0)).booleanValue();
+        if (!enabled) { result.add(null); continue; }
+        ImagePlus sk = (ImagePlus) stacks.get(si);
+        int fromF = Math.max(1, ((Integer) cfg.get(1)).intValue());
+        int toF   = Math.min(sk.getStackSize(), ((Integer) cfg.get(2)).intValue());
+        if (toF < fromF) {
+            JOptionPane.showMessageDialog(null,
+                "Bleach Correction: frame range out of bounds ("
+                + ((Integer) cfg.get(1)).intValue() + " \u2013 " + ((Integer) cfg.get(2)).intValue()
+                + ") for stack \"" + sk.getTitle() + "\" with " + sk.getStackSize() + " frames."
+                + "\nBleach correction not applied for this stack.",
+                "Frame Range Out of Bounds", JOptionPane.WARNING_MESSAGE);
+            result.add(null); continue;
+        }
+        int n = config.storedROIs != null ? config.storedROIs.size() : 0;
+        if (n == 0) { result.add(null); continue; }
+        int nFrames = toF - fromF + 1;
+        // Accumulate OLS sums: x = local slice index (fromF..toF), y = BGcorr value per ROI
+        double sumX  = 0.0;
+        double sumX2 = 0.0;
+        double[] sumY  = new double[n];
+        double[] sumXY = new double[n];
+        for (int f = fromF; f <= toF; f++) {
+            try {
+                sk.setSlice(f);
+                ArrayList roiVals = measureROIs(sk.getProcessor());
+                ArrayList bgCorr  = applyBGCorrection(roiVals);
+                double x = (double) f;
+                sumX  += x;
+                sumX2 += x * x;
+                for (int r = 0; r < n && r < bgCorr.size(); r++) {
+                    double y = ((Double) bgCorr.get(r)).doubleValue();
+                    sumY[r]  += y;
+                    sumXY[r] += x * y;
+                }
+            } catch (Exception frameEx) {
+                System.err.println("computeBleachSlopes: error at slice " + f + ": " + frameEx.getMessage());
+            }
+        }
+        // OLS slope: b = (N*sumXY - sumX*sumY) / (N*sumX2 - sumX^2)
+        double denom = (double) nFrames * sumX2 - sumX * sumX;
+        ArrayList slopes = new ArrayList();
+        for (int r = 0; r < n; r++) {
+            double slope = (denom != 0.0)
+                ? ((double) nFrames * sumXY[r] - sumX * sumY[r]) / denom
+                : 0.0;
+            slopes.add(new Double(slope));
+        }
+        result.add(slopes);
+    }
+    return result;
+}
+
+// Apply bleach correction to BGcorr values for one frame.
+// slopes: ArrayList<Double> per ROI from computeBleachSlopes, or null → returns input unchanged.
+// localSlice: 1-based slice index within the stack.
+// slopeScale: user attenuation factor (1.0 = full correction).
+ArrayList applyBleachCorrection(ArrayList bgCorrValues, int localSlice, ArrayList slopes, double slopeScale) {
+    ArrayList corrected = new ArrayList();
+    for (int i = 0; i < bgCorrValues.size(); i++) corrected.add(bgCorrValues.get(i));
+    if (slopes == null || slopes.isEmpty()) return corrected;
+    for (int i = 0; i < corrected.size() && i < slopes.size(); i++) {
+        double val   = ((Double) corrected.get(i)).doubleValue();
+        double slope = ((Double) slopes.get(i)).doubleValue();
+        corrected.set(i, new Double(val - (double) localSlice * slope * slopeScale));
+    }
+    return corrected;
+}
+
 // Re-measure every stack slice with the current config.storedROIs and refresh the charts.
 // Clears and rebuilds ppDataRows / ppCorrRows / ppBTRows in-place.
 // stacks: list of ImagePlus from the post-processor; iterated in order as one sequence.
 void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
-                   ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
-                   ArrayList ppDERows,
+                   ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBCRows, ArrayList ppBTRows,
+                   ArrayList ppDERows, ArrayList ppMeanDirEx,
+                   ArrayList ppBleachSlopes, ArrayList bcConfigs,
                    ArrayList datasets, ArrayList charts, ArrayList chartPanels,
                    ArrayList perStackSeqRows, ArrayList perStackTimestamps) {
     ppDataRows.clear();
     ppCorrRows.clear();
+    ppBCRows.clear();
     ppBTRows.clear();
     ppDERows.clear();
+    ppMeanDirEx.clear();
+    ppBleachSlopes.clear();
 
     for (int gi = 0; gi < datasets.size(); gi++) {
         if (datasets.get(gi) == null) continue;
@@ -7503,10 +7967,15 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
     boolean isSpatial = config.acqSettings.processingMode.equals("Spatial");
     RowTracker rowTracker = new RowTracker(config.acqSettings.sequenceRows);
 
+    // Pre-compute bleach slopes (mini-pass over reference frames per stack, BGcorr values)
+    ArrayList bleachSlopes = computeBleachSlopes(stacks, bcConfigs);
+    ppBleachSlopes.addAll(bleachSlopes);
+
     // Pre-compute per-ROI direct excitation means (spatial + DE enabled only)
     ArrayList meanDirEx = new ArrayList();
     if (isSpatial && config.acqSettings.deEnabled) {
         meanDirEx = computeMeanDirEx(stacks);
+        ppMeanDirEx.addAll(meanDirEx); // expose to caller for logging
     }
 
     int frameNum = 0;
@@ -7572,8 +8041,19 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
                 ArrayList bgCorr = applyBGCorrection(roiValues);
                 ppCorrRows.add(buildDataRow(frameNum, timestamp, seqRow, bgCorr));
                 valuesForGraphs = bgCorr;
+                // Bleach correction: uses BGcorr values, local slice index within its stack
+                ArrayList valuesAfterBC = bgCorr;
+                ArrayList bcSlopesForStack = (si < bleachSlopes.size()) ? (ArrayList) bleachSlopes.get(si) : null;
+                ArrayList bcCfg = (si < bcConfigs.size()) ? (ArrayList) bcConfigs.get(si) : null;
+                boolean bcEnabled = bcCfg != null && ((Boolean) bcCfg.get(0)).booleanValue();
+                double bcScale = (bcCfg != null) ? ((Double) bcCfg.get(3)).doubleValue() : 1.0;
+                if (bcEnabled && bcSlopesForStack != null) {
+                    valuesAfterBC = applyBleachCorrection(bgCorr, s, bcSlopesForStack, bcScale);
+                    ppBCRows.add(buildDataRow(frameNum, timestamp, seqRow, valuesAfterBC));
+                    valuesForGraphs = valuesAfterBC;
+                }
                 if (config.acqSettings.btCorrectionEnabled && isSpatial) {
-                    ArrayList btCorr = applyBTCorrection(bgCorr);
+                    ArrayList btCorr = applyBTCorrection(valuesAfterBC);
                     ppBTRows.add(buildDataRow(frameNum, timestamp, seqRow, btCorr));
                     ArrayList valuesAfterBT = btCorr;
                     if (config.acqSettings.deEnabled && !meanDirEx.isEmpty()) {
@@ -7614,8 +8094,19 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
                     ArrayList bgCorr = applyBGCorrection(roiValues);
                     ppCorrRows.add(buildDataRow(frameNum, timestamp, seqRow, bgCorr));
                     valuesForGraphs = bgCorr;
+                    // Bleach correction: uses BGcorr values, local slice index within its stack
+                    ArrayList valuesAfterBC = bgCorr;
+                    ArrayList bcSlopesForStack = (stackIdx < bleachSlopes.size()) ? (ArrayList) bleachSlopes.get(stackIdx) : null;
+                    ArrayList bcCfg = (stackIdx < bcConfigs.size()) ? (ArrayList) bcConfigs.get(stackIdx) : null;
+                    boolean bcEnabled = bcCfg != null && ((Boolean) bcCfg.get(0)).booleanValue();
+                    double bcScale = (bcCfg != null) ? ((Double) bcCfg.get(3)).doubleValue() : 1.0;
+                    if (bcEnabled && bcSlopesForStack != null) {
+                        valuesAfterBC = applyBleachCorrection(bgCorr, s, bcSlopesForStack, bcScale);
+                        ppBCRows.add(buildDataRow(frameNum, timestamp, seqRow, valuesAfterBC));
+                        valuesForGraphs = valuesAfterBC;
+                    }
                     if (config.acqSettings.btCorrectionEnabled && isSpatial) {
-                        ArrayList btCorr = applyBTCorrection(bgCorr);
+                        ArrayList btCorr = applyBTCorrection(valuesAfterBC);
                         ppBTRows.add(buildDataRow(frameNum, timestamp, seqRow, btCorr));
                         ArrayList valuesAfterBT = btCorr;
                         if (config.acqSettings.deEnabled && !meanDirEx.isEmpty()) {
@@ -7633,8 +8124,181 @@ void ppRecalculate(ArrayList stacks, ArrayList frameTimestamps,
 }
 
 // Export post-processed data to a new numbered folder next to the original experiment folder.
-void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
-              ArrayList ppDERows,
+// Write a log of all post-processing parameters actually applied.
+// Writes Correction_Parameters_per_ROI.csv — bleach slopes and DE means in one file
+// so the user can verify the math easily after the fact.
+void ppSaveCorrectionParametersCSV(File outFolder, ArrayList bcConfigs, ArrayList ppBleachSlopes,
+                                    ArrayList ppMeanDirEx, ArrayList stacks) {
+    PrintWriter pw = null;
+    try {
+        import java.text.SimpleDateFormat;
+        import java.util.Date;
+        File outFile = new File(outFolder, "Correction_Parameters_per_ROI.csv");
+        pw = new PrintWriter(new FileWriter(outFile));
+        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        pw.println("# LUMETRIC - Correction Parameters per ROI");
+        pw.println("# Generated: " + ts);
+        pw.println("# Use this file to verify the correction math applied during post-processing.");
+        pw.println("#");
+
+        // --- Bleach Correction Slopes ---
+        pw.println("[Bleach Correction Slopes]");
+        pw.println("# slope [intensity/frame] — from OLS linear regression of BGcorr values");
+        pw.println("# Correction applied: BCcorr(roi,frame) = BGcorr(roi,frame) - frame * slope * scale");
+        pw.println("Stack,Enabled,Frames Used,Scale,ROI,Slope [intensity/frame]");
+        boolean anyBCEnabled = false;
+        for (int si = 0; si < stacks.size() && si < bcConfigs.size(); si++) {
+            ArrayList cfg = (ArrayList) bcConfigs.get(si);
+            boolean enabled = ((Boolean) cfg.get(0)).booleanValue();
+            int fromF = ((Integer) cfg.get(1)).intValue();
+            int toF   = ((Integer) cfg.get(2)).intValue();
+            double scale = ((Double) cfg.get(3)).doubleValue();
+            String stackName = ((ImagePlus) stacks.get(si)).getTitle();
+            if (!enabled) {
+                pw.println(escapeCSV(stackName) + ",false,,,");
+                continue;
+            }
+            anyBCEnabled = true;
+            ArrayList slopes = (si < ppBleachSlopes.size()) ? (ArrayList) ppBleachSlopes.get(si) : null;
+            if (slopes == null || slopes.isEmpty()) {
+                pw.println(escapeCSV(stackName) + ",true," + fromF + "-" + toF + "," + scale + ",(no slopes computed),");
+                continue;
+            }
+            for (int r = 0; r < slopes.size(); r++) {
+                double slope = ((Double) slopes.get(r)).doubleValue();
+                String slopeStr = "" + slope;
+                pw.println(escapeCSV(stackName) + ",true,"
+                    + fromF + "-" + toF + "," + scale + ","
+                    + "ROI" + (r + 1) + "," + slopeStr);
+            }
+        }
+        if (!anyBCEnabled) pw.println("# Bleach correction was not enabled for any stack.");
+        pw.println("#");
+
+        // --- Direct Excitation Means ---
+        pw.println("[Direct Excitation Means]");
+        pw.println("# Mean BGcorr acceptor intensity over the reference frame range.");
+        pw.println("# Correction applied: DEcorr(roi) = BTcorr(roi) - deFactor * mean");
+        pw.println("ROI (acceptor side),Mean Intensity Used");
+        if (ppMeanDirEx != null && !ppMeanDirEx.isEmpty()) {
+            for (int i = 0; i < ppMeanDirEx.size(); i++) {
+                double val = ((Double) ppMeanDirEx.get(i)).doubleValue();
+                pw.println((i + 1) + "," + val);
+            }
+        } else {
+            pw.println("# Direct excitation correction was not enabled.");
+        }
+
+        pw.flush();
+        pw.close();
+    } catch (Throwable e) {
+        print("[CorrCSV] ERROR: " + e.getClass().getName() + ": " + e.getMessage());
+        if (pw != null) { try { pw.flush(); pw.close(); } catch (Throwable ignored) {} }
+        JOptionPane.showMessageDialog(null,
+            "Could not write Correction_Parameters_per_ROI.csv:\n" + e.getMessage(),
+            "Export Error", JOptionPane.ERROR_MESSAGE);
+    }
+}
+
+void ppSavePostProcessingLog(File outFolder, ArrayList bcConfigs, ArrayList stacks, int totalFrames) {
+    PrintWriter pw = null;
+    try {
+        import java.text.SimpleDateFormat;
+        import java.util.Date;
+        pw = new PrintWriter(new FileWriter(new File(outFolder, "PostProcessing_Log.csv")));
+        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        pw.println("# LUMETRIC - Post-Processing Parameter Log");
+        pw.println("# Post-processed: " + ts);
+        pw.println("# NOTE: These are the settings ACTUALLY APPLIED during post-processing.");
+        pw.println("# They may differ from the original AquisitionSettings.csv.");
+        pw.println("# Per-ROI slopes and DE means: see Correction_Parameters_per_ROI.csv");
+        pw.println("#");
+
+        // --- Spatial setup ---
+        pw.println("[Spatial Setup]");
+        pw.println("Parameter,Value");
+        pw.println("Processing Mode," + escapeCSV(config.acqSettings.processingMode));
+        if (config.acqSettings.spatialConfig != null) {
+            pw.println("Split Axis," + escapeCSV(config.acqSettings.spatialConfig.splitAxis));
+            pw.println("ROI Source Region," + escapeCSV(config.acqSettings.spatialConfig.roiSourceRegion));
+        }
+        pw.println("Frames Processed," + totalFrames);
+        pw.println("#");
+
+        // --- Background correction ---
+        pw.println("[Background Correction]");
+        pw.println("Parameter,Value");
+        pw.println("BG Correction Enabled," + config.acqSettings.bgCorrectionEnabled);
+        if (config.acqSettings.bgCorrectionEnabled) {
+            int bgIdx = config.acqSettings.bgROIIndex;
+            pw.println("BG ROI Index (1-based)," + (bgIdx + 1));
+        }
+        pw.println("#");
+
+        // --- Bleach correction ---
+        pw.println("[Bleach Correction]");
+        pw.println("Stack,Enabled,Frames Used,Scale");
+        for (int si = 0; si < stacks.size() && si < bcConfigs.size(); si++) {
+            ArrayList cfg  = (ArrayList) bcConfigs.get(si);
+            boolean enabled = ((Boolean) cfg.get(0)).booleanValue();
+            int fromF = ((Integer) cfg.get(1)).intValue();
+            int toF   = ((Integer) cfg.get(2)).intValue();
+            double scale = ((Double) cfg.get(3)).doubleValue();
+            String stackName = ((ImagePlus) stacks.get(si)).getTitle();
+            if (enabled)
+                pw.println(escapeCSV(stackName) + ",true," + fromF + "-" + toF + "," + scale);
+            else
+                pw.println(escapeCSV(stackName) + ",false,,");
+        }
+        pw.println("# Per-ROI slopes: see Correction_Parameters_per_ROI.csv");
+        pw.println("#");
+
+        // --- Bleedthrough correction ---
+        pw.println("[Bleedthrough Correction]");
+        pw.println("Parameter,Value");
+        pw.println("BT Correction Enabled," + config.acqSettings.btCorrectionEnabled);
+        if (config.acqSettings.btCorrectionEnabled) {
+            pw.println("BT Direction," + escapeCSV(config.acqSettings.btDirection));
+            pw.println("BT Factor," + config.acqSettings.btFactor);
+        }
+        pw.println("#");
+
+        // --- Direct excitation correction ---
+        pw.println("[Direct Excitation Correction]");
+        pw.println("Parameter,Value");
+        pw.println("DE Correction Enabled," + config.acqSettings.deEnabled);
+        if (config.acqSettings.deEnabled) {
+            pw.println("DE Factor," + config.acqSettings.deFactor);
+            pw.println("DE Reference Stack Index (1-based)," + (config.acqSettings.deStackIndex + 1));
+            pw.println("DE Frame Range," + config.acqSettings.deFromFrame + " - " + config.acqSettings.deToFrame);
+            pw.println("# Per-ROI DE means: see Correction_Parameters_per_ROI.csv");
+        }
+        pw.println("#");
+
+        // --- Graphs computed ---
+        pw.println("[Graphs]");
+        pw.println("Graph,Type");
+        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+        for (int gi = 0; gi < config.acqSettings.visualizationRows.size(); gi++) {
+            ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(gi);
+            String gtype = (String) vizRow.get(1);
+            if (gtype != null && !gtype.equals("none"))
+                pw.println((gi + 1) + "," + escapeCSV(gtype));
+        }
+
+        pw.flush();
+        pw.close();
+    } catch (Throwable e) {
+        if (pw != null) { try { pw.flush(); pw.close(); } catch (Throwable ignored) {} }
+        JOptionPane.showMessageDialog(null,
+            "Could not write PostProcessing_Log.csv:\n" + e.getMessage(),
+            "Export Error", JOptionPane.ERROR_MESSAGE);
+    }
+}
+
+void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBCRows, ArrayList ppBTRows,
+              ArrayList ppDERows, ArrayList ppMeanDirEx, ArrayList ppBleachSlopes,
+              ArrayList bcConfigs, ArrayList stacks,
               File originalExpFolder, ij.plugin.frame.RoiManager rm) {
     int n = 1;
     File outFolder;
@@ -7651,6 +8315,21 @@ void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
     exportGraphDataToCSV(ppDataRows, ppCorrRows, ppBTRows,
         config.acqSettings.visualizationRows.size(),
         config.acqSettings.visualizationRows);
+
+    // Export BG+BC corrected data as a separate CSV per graph (post-processor only)
+    if (!ppBCRows.isEmpty()) {
+        boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
+        File bcOutFolder = new File(config.experimentFolder);
+        for (int graphIdx = 0; graphIdx < 4; graphIdx++) {
+            if (graphIdx >= config.acqSettings.visualizationRows.size()) continue;
+            ArrayList vizRow = (ArrayList) config.acqSettings.visualizationRows.get(graphIdx);
+            String graphType = (String) vizRow.get(1);
+            if (graphType == null || graphType.equals("none")) continue;
+            String frameLogic = computeFrameLogicLabel(vizRow, isTemporal);
+            exportSingleGraphCSV(ppBCRows, "BCcorr", bcOutFolder,
+                graphIdx, vizRow, graphType, frameLogic, isTemporal);
+        }
+    }
 
     // Export BG+BT+DE corrected data as a separate CSV per graph (post-processor only)
     if (!ppDERows.isEmpty()) {
@@ -7672,6 +8351,9 @@ void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
     if (rm != null && rm.getCount() > 0)
         rm.runCommand("Save", new File(outFolder, "RoiSet.zip").getAbsolutePath());
 
+    ppSavePostProcessingLog(outFolder, bcConfigs, stacks, ppDataRows.size());
+    ppSaveCorrectionParametersCSV(outFolder, bcConfigs, ppBleachSlopes, ppMeanDirEx, stacks);
+
     File srcSettings = new File(originalExpFolder, "AquisitionSettings.csv");
     File dstSettings = new File(outFolder, "AquisitionSettings.csv");
     if (srcSettings.exists()) {
@@ -7689,6 +8371,103 @@ void ppExport(ArrayList ppDataRows, ArrayList ppCorrRows, ArrayList ppBTRows,
     JOptionPane.showMessageDialog(null,
         "Exported to:\n" + outFolder.getName(),
         "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+}
+
+// Builds one row of the bleach correction panel for a single stack.
+// All anonymous classes are at the TOP LEVEL of this function to avoid the
+// BeanShell/JDK-11 class-naming bug (anonymous classes inside for-loop blocks
+// get illegal "/" characters in their JVM class names).
+void buildSingleBleachRow(JPanel outerPanel, String stackTitle, ArrayList cfg) {
+    final ArrayList rowCfg    = cfg;
+    final boolean initEnabled = ((Boolean) cfg.get(0)).booleanValue();
+    final int     initFrom    = ((Integer) cfg.get(1)).intValue();
+    final int     initTo      = ((Integer) cfg.get(2)).intValue();
+    final double  initScale   = ((Double)  cfg.get(3)).doubleValue();
+
+    final JCheckBox  cbEnable = new JCheckBox(stackTitle, initEnabled);
+    final JTextField tfFrom   = new JTextField(String.valueOf(initFrom),  5);
+    final JTextField tfTo     = new JTextField(String.valueOf(initTo),    5);
+    final JTextField tfScale  = new JTextField(String.valueOf(initScale), 5);
+    cbEnable.setToolTipText("Enable bleach correction for this stack");
+    tfFrom.setToolTipText("First local slice used for slope regression (1-based)");
+    tfTo.setToolTipText("Last local slice used for slope regression");
+    tfScale.setToolTipText("Scale factor applied to slope (1.0 = full correction)");
+    tfFrom.setEnabled(initEnabled);
+    tfTo.setEnabled(initEnabled);
+    tfScale.setEnabled(initEnabled);
+
+    cbEnable.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            boolean en = cbEnable.isSelected();
+            rowCfg.set(0, Boolean.valueOf(en));
+            tfFrom.setEnabled(en);
+            tfTo.setEnabled(en);
+            tfScale.setEnabled(en);
+        }
+    });
+    tfFrom.addFocusListener(new java.awt.event.FocusAdapter() {
+        public void focusLost(java.awt.event.FocusEvent fe) {
+            try { rowCfg.set(1, new Integer(Integer.parseInt(tfFrom.getText().trim()))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfFrom.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { rowCfg.set(1, new Integer(Integer.parseInt(tfFrom.getText().trim()))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfTo.addFocusListener(new java.awt.event.FocusAdapter() {
+        public void focusLost(java.awt.event.FocusEvent fe) {
+            try { rowCfg.set(2, new Integer(Integer.parseInt(tfTo.getText().trim()))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfTo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { rowCfg.set(2, new Integer(Integer.parseInt(tfTo.getText().trim()))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfScale.addFocusListener(new java.awt.event.FocusAdapter() {
+        public void focusLost(java.awt.event.FocusEvent fe) {
+            try { rowCfg.set(3, new Double(Double.parseDouble(
+                tfScale.getText().trim().replace(",", ".")))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+    tfScale.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { rowCfg.set(3, new Double(Double.parseDouble(
+                tfScale.getText().trim().replace(",", ".")))); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+
+    JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+    row.add(cbEnable);
+    row.add(new JLabel("Frames:"));
+    row.add(tfFrom);
+    row.add(new JLabel("\u2013"));
+    row.add(tfTo);
+    row.add(new JLabel("Scale:"));
+    row.add(tfScale);
+    outerPanel.add(row);
+}
+
+// Build the bleach correction panel for the post-processor.
+// One row per stack — delegates to buildSingleBleachRow to keep anonymous
+// classes out of the for-loop body (BeanShell/JDK-11 naming bug avoidance).
+JPanel buildPPBleachPanel(ArrayList stacks, ArrayList bcConfigs) {
+    JPanel outer = new JPanel();
+    outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
+    outer.setBorder(BorderFactory.createTitledBorder("Bleach Correction"));
+    for (int si = 0; si < stacks.size(); si++) {
+        buildSingleBleachRow(outer,
+            ((ImagePlus) stacks.get(si)).getTitle(),
+            (ArrayList) bcConfigs.get(si));
+    }
+    return outer;
 }
 
 // ==================== Post-Processor Entry Point ====================
@@ -7720,6 +8499,13 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
             catch (NumberFormatException nfe) {}
         }
     });
+    ppBTFactorField.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { config.acqSettings.btFactor =
+                Double.parseDouble(ppBTFactorField.getText().trim().replace(",", ".")); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
 
     // DE correction requires BT correction to be active and mode to be Spatial.
     final boolean deInitial = btInitial && config.acqSettings.deEnabled;
@@ -7744,10 +8530,27 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
         String.valueOf(config.acqSettings.deToFrame), 5);
     ppDEToField.setEnabled(deInitial);
 
+    // Direction combo — declared here so the ppBTCheckbox listener below can reference it.
+    String splitAxis = config.acqSettings.spatialConfig != null
+        ? config.acqSettings.spatialConfig.splitAxis : "Horizontal";
+    String[] btDirOptions = splitAxis.equals("Vertical")
+        ? new String[]{"Left -> Right", "Right -> Left"}
+        : new String[]{"Upper -> Lower", "Lower -> Upper"};
+    final JComboBox ppBTDirectionCombo = new JComboBox(btDirOptions);
+    ppBTDirectionCombo.setSelectedItem(config.acqSettings.btDirection);
+    ppBTDirectionCombo.setEnabled(btInitial);
+    ppBTDirectionCombo.setToolTipText("Direction of bleedthrough: which region bleeds INTO the other");
+    ppBTDirectionCombo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            config.acqSettings.btDirection = (String) ppBTDirectionCombo.getSelectedItem();
+        }
+    });
+
     ppBTCheckbox.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             config.acqSettings.btCorrectionEnabled = ppBTCheckbox.isSelected();
             ppBTFactorField.setEnabled(config.acqSettings.btCorrectionEnabled);
+            ppBTDirectionCombo.setEnabled(config.acqSettings.btCorrectionEnabled);
             ppDECheckbox.setEnabled(config.acqSettings.btCorrectionEnabled);
             if (!config.acqSettings.btCorrectionEnabled) {
                 ppDECheckbox.setSelected(false);
@@ -7775,6 +8578,13 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
             catch (NumberFormatException nfe) {}
         }
     });
+    ppDEFactorField.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { config.acqSettings.deFactor =
+                Double.parseDouble(ppDEFactorField.getText().trim().replace(",", ".")); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
     ppDEStackCombo.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
             if (ppDEStackCombo.getSelectedIndex() >= 0)
@@ -7788,6 +8598,13 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
             catch (NumberFormatException nfe) {}
         }
     });
+    ppDEFromField.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { config.acqSettings.deFromFrame =
+                Integer.parseInt(ppDEFromField.getText().trim()); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
     ppDEToField.addFocusListener(new java.awt.event.FocusAdapter() {
         public void focusLost(java.awt.event.FocusEvent fe) {
             try { config.acqSettings.deToFrame =
@@ -7795,9 +8612,38 @@ JPanel buildPPSpatialPanel(ArrayList stacks) {
             catch (NumberFormatException nfe) {}
         }
     });
+    ppDEToField.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            try { config.acqSettings.deToFrame =
+                Integer.parseInt(ppDEToField.getText().trim()); }
+            catch (NumberFormatException nfe) {}
+        }
+    });
+
+    // ROI region combo — which half of the image the ROIs were drawn on.
+    // Changing this lets the user correct a mismatch without re-running the experiment.
+    String[] roiRegionOptions = splitAxis.equals("Vertical")
+        ? new String[]{"Left", "Right"}
+        : new String[]{"Upper", "Lower"};
+    final JComboBox ppROIRegionCombo = new JComboBox(roiRegionOptions);
+    if (config.acqSettings.spatialConfig != null)
+        ppROIRegionCombo.setSelectedItem(config.acqSettings.spatialConfig.roiSourceRegion);
+    ppROIRegionCombo.setToolTipText("Which half of the image the ROIs were drawn on");
+    ppROIRegionCombo.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            if (config.acqSettings.spatialConfig != null)
+                config.acqSettings.spatialConfig.roiSourceRegion =
+                    (String) ppROIRegionCombo.getSelectedItem();
+        }
+    });
 
     JPanel ppSpatialPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+    ppSpatialPanel.add(new JLabel("ROI Region:"));
+    ppSpatialPanel.add(ppROIRegionCombo);
+    ppSpatialPanel.add(javax.swing.Box.createHorizontalStrut(8));
     ppSpatialPanel.add(ppBTCheckbox);
+    ppSpatialPanel.add(new JLabel("Direction:"));
+    ppSpatialPanel.add(ppBTDirectionCombo);
     ppSpatialPanel.add(new JLabel("Factor:"));
     ppSpatialPanel.add(ppBTFactorField);
     ppSpatialPanel.add(javax.swing.Box.createHorizontalStrut(16));
@@ -7840,7 +8686,7 @@ void openPostProcessor() {
     config.acqSettings.captureFromGUI(tableModel, vizTableModel, simpleSnapMode, livePics,
         convertToStack, stackPerRow, prefs.get("lastSavePath", ""),
         processingModeCombo, splitAxisCombo, roiSourceCombo,
-        bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField);
+        bgCorrectionCheckbox, btCorrectionCheckbox, btDirectionCombo, btFactorField, experimentNameField);
     config.experimentFolder = expFolder.getAbsolutePath();
 
     // 4. Find image source (images/ subfolder → Image_Stack.tif → Stack_Row_N.tif)
@@ -7941,10 +8787,25 @@ void openPostProcessor() {
     final ArrayList frameTimestamps = ppReadTimestamps(expFolder);
 
     // 7. Data containers
-    final ArrayList ppDataRows = new ArrayList();
-    final ArrayList ppCorrRows = new ArrayList();
-    final ArrayList ppBTRows   = new ArrayList();
-    final ArrayList ppDERows   = new ArrayList(); // BG + BT + DE corrected
+    final ArrayList ppDataRows  = new ArrayList();
+    final ArrayList ppCorrRows  = new ArrayList();
+    final ArrayList ppBCRows    = new ArrayList(); // BG + Bleach corrected
+    final ArrayList ppBTRows    = new ArrayList();
+    final ArrayList ppDERows    = new ArrayList(); // BG + BC + BT + DE corrected
+    final ArrayList ppMeanDirEx  = new ArrayList(); // per-ROI DE means (for log)
+    final ArrayList ppBleachSlopes = new ArrayList(); // per-stack OLS slopes (for log)
+
+    // Bleach correction config: one entry per stack.
+    // Each entry: ArrayList[Boolean enabled, Integer fromFrame, Integer toFrame, Double slopeScale]
+    final ArrayList bcConfigs = new ArrayList();
+    for (int si = 0; si < ppStacks.size(); si++) {
+        ArrayList cfg = new ArrayList();
+        cfg.add(Boolean.FALSE);
+        cfg.add(new Integer(1));
+        cfg.add(new Integer(((ImagePlus) ppStacks.get(si)).getStackSize()));
+        cfg.add(new Double(1.0));
+        bcConfigs.add(cfg);
+    }
 
     // 8. Build chart datasets and panels (same pattern as acquisition window)
     final boolean isTemporal = config.acqSettings.processingMode.equals("Temporal");
@@ -8064,7 +8925,8 @@ void openPostProcessor() {
                         });
                     } catch (Exception ex) { ex.printStackTrace(); }
                     ppRecalculate(finalStacks, frameTimestamps,
-                        ppDataRows, ppCorrRows, ppBTRows, ppDERows,
+                        ppDataRows, ppCorrRows, ppBCRows, ppBTRows, ppDERows, ppMeanDirEx,
+                        ppBleachSlopes, bcConfigs,
                         ppDatasets, ppCharts, ppChartPanels,
                         finalPerStackSeqRows, finalPerStackTimestamps);
                     SwingUtilities.invokeLater(new Runnable() {
@@ -8089,24 +8951,37 @@ void openPostProcessor() {
             new Thread(new Runnable() {
                 public void run() {
                     try {
-                        SwingUtilities.invokeAndWait(new Runnable() {
+                        try {
+                            SwingUtilities.invokeAndWait(new Runnable() {
+                                public void run() {
+                                    ppRebuildROIsFromManager(finalRM, imgW, imgH);
+                                    ppUpdateChartSeries(ppDatasets, ppCharts);
+                                }
+                            });
+                        } catch (Exception ex) { ex.printStackTrace(); }
+                        ppRecalculate(finalStacks, frameTimestamps,
+                            ppDataRows, ppCorrRows, ppBCRows, ppBTRows, ppDERows, ppMeanDirEx,
+                            ppBleachSlopes, bcConfigs,
+                            ppDatasets, ppCharts, ppChartPanels,
+                            finalPerStackSeqRows, finalPerStackTimestamps);
+                        ppExport(ppDataRows, ppCorrRows, ppBCRows, ppBTRows, ppDERows, ppMeanDirEx,
+                            ppBleachSlopes, bcConfigs, finalStacks, expFolder, finalRM);
+                        SwingUtilities.invokeLater(new Runnable() {
                             public void run() {
-                                ppRebuildROIsFromManager(finalRM, imgW, imgH);
-                                ppUpdateChartSeries(ppDatasets, ppCharts);
+                                ppStatus.setText("Exported");
+                                ppExportButton.setEnabled(true);
                             }
                         });
-                    } catch (Exception ex) { ex.printStackTrace(); }
-                    ppRecalculate(finalStacks, frameTimestamps,
-                        ppDataRows, ppCorrRows, ppBTRows, ppDERows,
-                        ppDatasets, ppCharts, ppChartPanels,
-                        finalPerStackSeqRows, finalPerStackTimestamps);
-                    ppExport(ppDataRows, ppCorrRows, ppBTRows, ppDERows, expFolder, finalRM);
-                    SwingUtilities.invokeLater(new Runnable() {
-                        public void run() {
-                            ppStatus.setText("Exported");
-                            ppExportButton.setEnabled(true);
-                        }
-                    });
+                    } catch (Exception threadEx) {
+                        print("[Export] ERROR: " + threadEx.getClass().getName() + ": " + threadEx.getMessage());
+                        threadEx.printStackTrace();
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() {
+                                ppStatus.setText("Export failed — see terminal");
+                                ppExportButton.setEnabled(true);
+                            }
+                        });
+                    }
                 }
             }).start();
         }
@@ -8139,7 +9014,10 @@ void openPostProcessor() {
     ppButtonPanel.add(ppExportButton);
     ppButtonPanel.add(ppCloseButton);
 
-    // 14b. Spatial-only correction controls (visible only in Spatial mode)
+    // 14b. Bleach correction panel (one row per stack)
+    final JPanel ppBleachPanel = buildPPBleachPanel(finalStacks, bcConfigs);
+
+    // 14c. Spatial-only correction controls (visible only in Spatial mode)
     // Built in a separate function to avoid BeanShell/JDK-11 class-naming bug
     // (anonymous classes inside `if` blocks get illegal "/" in their JVM names).
     JPanel ppSpatialPanel = null;
@@ -8147,12 +9025,14 @@ void openPostProcessor() {
         ppSpatialPanel = buildPPSpatialPanel(finalStacks);
     }
 
-    JPanel ppControlPanel = new JPanel(new BorderLayout());
+    JPanel ppControlPanel = new JPanel();
+    ppControlPanel.setLayout(new BoxLayout(ppControlPanel, BoxLayout.Y_AXIS));
     JPanel ppTopBar = new JPanel(new BorderLayout());
     ppTopBar.add(ppBGPanel, BorderLayout.WEST);
     ppTopBar.add(ppButtonPanel, BorderLayout.EAST);
-    ppControlPanel.add(ppTopBar, BorderLayout.NORTH);
-    if (ppSpatialPanel != null) ppControlPanel.add(ppSpatialPanel, BorderLayout.SOUTH);
+    ppControlPanel.add(ppTopBar);
+    ppControlPanel.add(ppBleachPanel);
+    if (ppSpatialPanel != null) ppControlPanel.add(ppSpatialPanel);
     ppControlPanel.setBorder(BorderFactory.createEtchedBorder());
 
     // 15. Post-processor frame
@@ -8187,7 +9067,8 @@ void openPostProcessor() {
     new Thread(new Runnable() {
         public void run() {
             ppRecalculate(finalStacks, frameTimestamps,
-                ppDataRows, ppCorrRows, ppBTRows, ppDERows,
+                ppDataRows, ppCorrRows, ppBCRows, ppBTRows, ppDERows, ppMeanDirEx,
+                ppBleachSlopes, bcConfigs,
                 ppDatasets, ppCharts, ppChartPanels,
                 finalPerStackSeqRows, finalPerStackTimestamps);
             SwingUtilities.invokeLater(new Runnable() {

@@ -44,7 +44,7 @@ This tab displays the active configuration and the channel list, and provides th
 
 This tab is the main control. It builds the acquisition sequence,starts the run and grands access to post-processing.
 
-![Acquisition Setting](../assets/images/AcquTab.png){width=750}
+![Acquisition Setting](../assets/images/Tab2.png){width=750}
 /// caption
 **Fig.2:** Tab 2 - Acquisition Setting.
 ///
@@ -63,7 +63,7 @@ Each row defines one acquisition setting. Up to 20 rows are supported.
 | **Exposure [ms]** | LED on-time and camera exposure per frame. Be aware that the true exposure times are curbed by the cameras. Typical limits are around 2000 ms. 0 ms creates a pause row (no camera trigger). Helpful for additions or incubation times. |
 | **Frame Interval [ms]** | Full frame period including exposure and the inter-frame gap (0–60000). Must be > exposure. |
 | **Frames** | Number of frames to capture with these settings (0–60000) before triggering a switch to the "Loop Goto". 0 works as infinity (no looping to Loop Goto). Stops only if Quit is pressed or Loop Switch if configured. |
-| **Loop Goto** | Row to jump back to once the frame count is reached. Auto-filled to the next row; the last row defaults to looping back to the first. |
+| **Loop Goto** | Row to jump back to once the frame count is reached. Auto-filled to the next row. If left empty in the last Row, the imaging will automatically quit and save at that point. |
 | **Loop Times** | Number of loop repetitions. It will jump these many times to the Row set in Loop Goto. Empty or 0 means infinite (shown as 0 ). After the number of Loop Times is reached, the acquisition jumps to the row underneath it. |
 | **Constant Illum** | Channel(s) held on during the inter-frame gap and the Exposure time. A channel already in the Exposure Channel list cannot also be a constant-illumination channel. |
 | **Loop Switch Goto** | Row to jump to when the **Loop Switch** button is pressed during acquisition. Empty means disabled (shown as none). |
@@ -104,14 +104,14 @@ This tab configures the real-time analysis and graphs. Up to four graphs can be 
 
 ### Temporal mode
 
-![Temporal mode](../assets/images/TemporalMode.png){width=750}
+![Temporal mode](../assets/images/Temporal.png){width=750}
 /// caption
 **Fig.3:** Tab 3 - Temporal mode.
 ///
 
 ### Spatial mode
 
-![Spatial mode](../assets/images/SpatialMode.png){width=750}
+![Spatial mode](../assets/images/Spatial_Tab3.png){width=750}
 /// caption
 **Fig.4:** Tab 3 - Spatial mode.
 ///
@@ -125,6 +125,8 @@ This tab configures the real-time analysis and graphs. Up to four graphs can be 
 |--------|---------|
 | **Graph** | Graph number (1–4). |
 | **Type** | Graph type for this row. In Temporal mode: Intensity or temporal ratio. In Spatial mode: split-ratio directions (e.g. Upper/Lower) and intensities (e.g. Intensity Upper). |
+| **Window** | Allows you to choose if you want the graph to be in the main window or as uncoupled extra window during the acquisition. |
+| **Row Filter** | (Spatial only) Sequence row whose frames feed the graph. All Rows accepts frames from any row. |
 | **Numerator** | (Temporal only) Sequence row whose frames feed the graph. All Rows accepts frames from any row — useful for single-row experiments or plain intensity graphs. |
 | **Denominator** | (Temporal only) Sequence row used as the divisor for ratio graphs. Locked to 1 for Intensity. |
 
@@ -149,13 +151,22 @@ The Numerator/Denominator dropdowns list the available sequence rows and update 
 
 If no ROIs are defined, the calculations are made as one ROI over the whole field of view.
 
+![Spatial mode](../assets/images/ROIs3.png){width=300}
+/// caption
+**Fig.5:** ROI selection.
+///
+
 ## Acquisition Window
 
 Starting an acquisition opens an inline window containing the live camera view (if **Live Pictures** is enabled) and the configured graphs. ROIs drawn at the start are overlaid on the live image. Graphs update in real time, throttled to roughly 250 ms.
 
-![Temporal mode](../assets/images/Acquisition.png){width=750}
+![FRET](../assets/images/FRET.png){width=750}
 /// caption
-**Fig.4:** Aquisition Window.
+**Fig.6:** Aquisition Window - Set to one Window only.
+///
+![FRET](../assets/images/FRET2.png){width=750}
+/// caption
+**Fig.7:** Aquisition Window - Set to Ratio in an extra window.
 ///
 
 ### Controls
@@ -174,10 +185,16 @@ Each run creates a timestamped experiment folder containing:
 - `Graph{N}_{type}_{frameFilter}_{corrLevel}.csv` for each active graph (corrLevel: RAW, BGcorr, BTcorr, BTDEcorr)
 - Event timestamps as CSV
 - `RoiSet.zip` (ImageJ format)
+- A snapshot of your main MM window as log of your general settings
 
 ## Post-Production Window
 
 Opened via **Open Post-Production**, this window re-analyzes a completed experiment without re-acquiring.
+
+![PP](../assets/images/Postprocessing1.png){width=750}
+/// caption
+**Fig.8:** Postprocessing window.
+///
 
 ### Workflow and controls
 
@@ -190,5 +207,52 @@ Correction levels exported depend on what is enabled:
 
 - **RAW** — always exported.
 - **BGcorr** — when Background Correction is enabled.
+- **BCcorr** — when Bleach Correction is enabled (post-processor only).
 - **BTcorr** — when Bleedthrough Correction is enabled (Spatial only).
-- **BTDEcorr** — when **Direct Excitation correction** is enabled. This post-processor-only correction subtracts a scaled acceptor offset to remove direct excitation of the acceptor by the donor laser. It requires Bleedthrough Correction, uses a reference stack and a frame range to compute the per-ROI offset, and follows the same correction direction setting as bleedthrough.
+- **BTDEcorr** — when Direct Excitation Correction is enabled (Spatial only, post-processor only).
+- Log of the applied Correction Values and calculated correction values where applicable.
+
+### Applied calculations
+
+Corrections are applied in a fixed pipeline order. Each level uses the output of the previous step as its input. Bleach-correction is not a prerequisite to any of the downstream corrections. Bleed-through and Direct excitation corrections do need a background correction first.
+
+#### Background Correction (BGcorr)
+
+A designated background ROI is subtracted from every measured ROI per frame.
+
+**Temporal mode** — one shared BG ROI:
+
+$$I_{BGcorr[i]} = I_{raw[i]} - I_{raw[bgROI]}$$
+
+**Spatial mode** — paired BG ROIs, one per half:
+
+$$I_\text{BGcorr[i]} = \begin{cases} I_\text{raw[i]} - I_\text{raw[bgROI(source)]} & i < N/2 \\ I_\text{raw[i]} - I_\text{raw[bgROI(mirror)]} & i \geq N/2 \end{cases}$$
+
+#### Bleach Correction (BCcorr) — post-processor only
+
+A linear photobleaching trend is estimated per ROI over a user-defined reference frame range using ordinary least-squares regression on BGcorr Intensity values. The fitted line is then subtracted from every frame.
+
+$$I_\text{BCcorr}[i, f] = I_\text{BGcorr}[i, f] - f \cdot \hat{m}_i \cdot s$$
+
+where $f$ is the slice index within the stack,
+$\hat{m}_i$ is the fitted slope for ROI $i$,
+and $s$ is the user-supplied slope scale factor (1.0 = full correction).
+
+#### Bleedthrough Correction (BTcorr) — Spatial mode only
+
+One half of the image bleeds signal into the other half. The correction is applied to the receiving half only, leaving the source half unchanged. The direction (source → mirror or mirror → source) is set by the **Direction** parameter.
+
+If the **source** half bleeds into the mirror half:
+
+$$I_\text{BTcorr}[\text{mirror}_i] = I_\text{prev}[\text{mirror}_i] - \alpha \cdot I_\text{prev}[\text{source}_i]$$
+
+where $\alpha$ is the bleedthrough correction factor
+and $I_\text{prev}$ is the output of the previous correction step (BCcorr if enabled, otherwise BGcorr).
+
+#### Direct Excitation Correction (BT and DEcorr) — Spatial mode only, post-processor only
+
+The donor laser directly excites the acceptor fluorophore. A per-ROI mean acceptor signal is computed from a user-defined reference frame range in a reference stack (using BGcorr values). This mean is then scaled and subtracted from the acceptor side of every frame.
+
+$$I_\text{DEcorr}[\text{acceptor}_i] = I_\text{BTcorr}[\text{acceptor}_i] - \beta \cdot \overline{DE}_i$$
+
+where $\beta$ is the direct-excitation factor, $F_\text{from}$ and $F_\text{to}$ define the reference frame window, and the acceptor index follows the same direction logic as BTcorr.
