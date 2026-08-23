@@ -703,6 +703,8 @@ void loop() {
        //  Protocol: [61]
        //  During run: byte 66 = quit, byte 67 = switch
        //  Reply when done/quit: [61] [totalFramesHi] [totalFramesLo]
+       //  Natural end is handled by the end-sentinel row appended by expandPauseRows:
+       //  BeanShell detects the sentinel frame and sends byte 66 to stop the Arduino.
        // ============================================================
        case 61: {
          if (acqRowCount_ == 0) { break; }
